@@ -145,6 +145,12 @@
     [(list 'unsafe-expr inner)
      (unsafe-expr (parse-expr inner))]
 
+    ;; (unsafe "string") works in expression position too — emits the string
+    ;; verbatim at this point. Previously only handled at top-level via
+    ;; parse-top; now LLMs can drop into Clojure from any expression slot.
+    [(list 'unsafe (? string? str))
+     (unsafe-clj str)]
+
     [(list 'def (? symbol? name) marker type-expr value)
      #:when (annotation-marker? marker)
      (def-form name (parse-type type-expr) (parse-expr value))]

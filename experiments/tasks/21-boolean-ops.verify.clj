@@ -1,0 +1,5 @@
+(when-not (true?  (boolean (r/valid-age? 25))) (System/exit 1))
+(when-not (true?  (boolean (r/valid-age? 0))) (System/exit 1))
+(when-not (false? (boolean (r/valid-age? 200))) (System/exit 1))
+(when-not (false? (boolean (r/valid-age? -1))) (System/exit 1))
+(System/exit 0)

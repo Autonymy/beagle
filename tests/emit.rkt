@@ -89,6 +89,12 @@
   (define out (compile '(unsafe "(d/q '[:find ?n :where [?e :name ?n]] @conn)")))
   (check-true (matches? #rx"\\[:find \\?n :where \\[\\?e :name \\?n\\]\\]" out)))
 
+(test-case "inline unsafe emits inside an expression"
+  (define out (compile '(def x (+ 1 (unsafe "(double sum)") 2))))
+  (check-true (matches? #rx"\\(\\+ 1 \\(double sum\\) 2\\)" out))
+  ;; Must NOT emit (unsafe ...) as a Clojure call:
+  (check-false (matches? #rx"\\(unsafe " out)))
+
 ;; --- macro expansion shows up in emitted code ------------------------------
 
 (test-case "safe macro expansion emits as direct Clojure"

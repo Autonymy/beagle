@@ -189,6 +189,19 @@
   (check-true (unsafe-clj? f))
   (check-equal? (unsafe-clj-clj-string f) "(println :hi)"))
 
+(test-case "unsafe in expression position (inside def)"
+  (define f (car (parse-one '(def x (unsafe "(double 5)")))))
+  (check-true  (def-form? f))
+  (check-true  (unsafe-clj? (def-form-value f)))
+  (check-equal? (unsafe-clj-clj-string (def-form-value f)) "(double 5)"))
+
+(test-case "unsafe in expression position (inside fn call)"
+  (define f (car (parse-one '(def y (+ 1 (unsafe "(double sum)"))))))
+  (define add-call (def-form-value f))
+  (check-true (call-form? add-call))
+  ;; The unsafe is the second arg
+  (check-true (unsafe-clj? (cadr (call-form-args add-call)))))
+
 (test-case "unsafe rejects non-string"
   (check-exn exn:fail?
              (lambda () (parse-one '(unsafe (println :hi))))))
