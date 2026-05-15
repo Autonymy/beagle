@@ -15,6 +15,9 @@ if [[ ! -d "$resp_dir" ]]; then
     exit 1
 fi
 
+# Force fresh expansion so lint warnings actually emit.
+rm -rf "$resp_dir/compiled" 2>/dev/null || true
+
 # Tally per variant
 declare -A variant_total
 declare -A variant_pass
@@ -24,7 +27,7 @@ declare -A variant_pass
     echo ""
     echo "Generated $(date '+%Y-%m-%d %H:%M:%S')."
     echo ""
-    echo "| response | variant | compiles | tokens | error (if any) |"
+    echo "| response | variant | compiles | tokens | lint warnings / error |"
     echo "|---|---|---|---|---|"
 
     shopt -s nullglob
@@ -42,14 +45,26 @@ declare -A variant_pass
             fi
         done
 
-        if compile_err="$(racket "$resp" 2>&1 >/dev/null)"; then
+        # Run with lint enabled (default) so we can count warnings, but
+        # separate stderr (lint+errors) from stdout (Clojure output).
+        stderr_capture=$(mktemp)
+        if racket "$resp" >/dev/null 2>"$stderr_capture"; then
             compiles="✓"
-            err_summary=""
+            # Count lint lines (they start with "beagle [lint]:")
+            lint_count=$(grep -c '^beagle \[lint\]:' "$stderr_capture" 2>/dev/null || true)
+            lint_count=$(echo "$lint_count" | tr -d '\n\r ')
+            [[ -z "$lint_count" ]] && lint_count="0"
+            if [[ "$lint_count" == "0" ]]; then
+                err_summary="clean"
+            else
+                err_summary="${lint_count} lint warning(s)"
+            fi
         else
             compiles="✗"
-            # First line of error, cropped
-            err_summary="$(echo "$compile_err" | head -1 | cut -c1-80)"
+            err_summary="$(head -1 "$stderr_capture" | cut -c1-80)"
+            lint_count="-"
         fi
+        rm -f "$stderr_capture"
 
         tokens="$(wc -w < "$resp" | tr -d ' ')"
 

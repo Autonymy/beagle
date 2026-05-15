@@ -64,6 +64,18 @@ parse → check → emit
 - `raco test tests/` — test suite
 - `experiments/` — benchmark framework (see `experiments/README.md`)
 
+## Lint warnings
+
+Beagle prints lint warnings to stderr during compile (strict mode only):
+
+- `untyped def NAME` — `(def x 42)` without type annotation
+- `defn NAME has no return type annotation` — missing `: Ret`
+- `defn NAME has untyped parameter(s): ...` — missing `(name : Type)`
+- `(unsafe "...") inline escape` — beagle can't validate that code
+
+Suppress with `BEAGLE_NO_LINT=1`. Warnings don't fail compile. Dynamic
+mode skips lint (types are optional there by definition).
+
 ## Design decisions
 
 ### Confident (committed, well-reasoned)

@@ -18,7 +18,8 @@
 (require (for-syntax racket/base
                      "private/parse.rkt"
                      "private/check.rkt"
-                     "private/emit.rkt"))
+                     "private/emit.rkt"
+                     "private/lint.rkt"))
 
 (provide #%datum
          #%app
@@ -36,6 +37,11 @@
        (define forms  (syntax->list #'(form ...)))
        (define prog   (parse-program forms))
        (type-check! prog)
+       ;; Lint passes after type-check so warnings only appear on programs
+       ;; that are otherwise valid. Skipped via BEAGLE_NO_LINT env var (for
+       ;; benchmark scoring where stderr noise distorts results).
+       (unless (getenv "BEAGLE_NO_LINT")
+         (lint-program! prog))
        (define source (emit-program prog))
        #`(#%module-begin
           (display #,source)))]))

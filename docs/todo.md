@@ -9,10 +9,9 @@ Architecture supports adding these without API breaks.
   (JSON, EDN, or a structured form like `[error: category, in: file:line:col,
   expected: ..., got: ..., hint: ...]`). Lets agent runners feed precise
   feedback to the model.
-- **Lint warnings ("best practice").** Things that aren't errors but are
-  suspect: untyped `def` in strict mode, shadowed bindings, dead code,
-  `unsafe` use without justification comment. Print as warnings, don't fail
-  compile. LLMs benefit from "you probably want X instead."
+- **More lint rules.** v0 lints: untyped def/defn, unsafe escape usage.
+  Extend with: shadowed bindings, dead code, suspicious wrapped-vs-inline
+  inconsistencies, unused imports/externs, macros with capture-prone names.
 - **Per-statement source locations.** Threading syntax objects through parse
   into AST so check-time errors point at the specific form (currently they
   point at the module).
@@ -57,6 +56,11 @@ Speculative; no commitment.
 - Custom reader preserving `[]`/`()`
 - Stdlib extern catalog (~60 functions)
 - `bin/beagle-build`, `bin/beagle-build-all`, `bin/beagle-expand`
-- 91-test suite
-- `experiments/` benchmark framework (15 tasks × 3 variants, gen-prompts + score)
+- 104-test suite
+- `experiments/` benchmark framework (25 tasks × 6 variants, gen-prompts + score)
+- Both `:` and `:-` annotation markers, wrapped + inline param styles
+- Wrapped let-binding form: `(let [(name : Type) value ...] ...)`
+- Lint pass: untyped def/defn, return-type missing, unsafe escape warnings
+- First empirical benchmark sample (23 calls, 2 bugs caught + fixed)
+- `docs/findings.md` empirical log
 - Form catalog (`docs/forms.md`)
