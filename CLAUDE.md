@@ -13,11 +13,6 @@ when there's tension, AI-friendliness wins.
 summary designed to be loaded as system context for LLM workflows. Treat
 it as canonical when explaining the language.
 
-## What this is — and what it isn't
-
-Beagle is a **general typed Clojure DSL** with LLM authoring as a first-class concern. It
-is NOT a graph-database tool. A future `#lang beaglelog` layer for graph-DB
-work would be built **on top of** beagle, not as beagle primitives.
 
 ## Status
 
