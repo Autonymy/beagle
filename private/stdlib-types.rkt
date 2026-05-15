@@ -56,10 +56,12 @@
    'keyword    (fn-of '(String) 'Keyword)
    'symbol     (fn-of '(String) 'Symbol)
    ;; --- math (variadic on Long; Clojure's are polymorphic, v0 narrows) -----
-   '+          (fn-of '() 'Long #:rest 'Long)
-   '-          (fn-of '(Long) 'Long #:rest 'Long)
-   '*          (fn-of '() 'Long #:rest 'Long)
-   '/          (fn-of '(Long) 'Long #:rest 'Long)
+   ;; Math operators are polymorphic in real Clojure (Long/Double/Ratio).
+   ;; v0 types them as variadic Any to avoid spurious type errors on FP work.
+   '+          (fn-of '() 'Any #:rest 'Any)
+   '-          (fn-of '(Any) 'Any #:rest 'Any)
+   '*          (fn-of '() 'Any #:rest 'Any)
+   '/          (fn-of '(Any) 'Any #:rest 'Any)
    'mod        (fn-of '(Long Long) 'Long)
    'quot       (fn-of '(Long Long) 'Long)
    'rem        (fn-of '(Long Long) 'Long)

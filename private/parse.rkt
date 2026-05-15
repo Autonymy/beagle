@@ -241,7 +241,18 @@
   (let loop ([rest items] [acc '()])
     (cond
       [(null? rest) (reverse acc)]
-      ;; Annotated: name marker Type value (4 tokens), where marker is : or :-
+      ;; Wrapped annotated: (name : Type) value  (consistent with param style)
+      [(and (>= (length rest) 2)
+            (list? (car rest))
+            (= (length (car rest)) 3)
+            (symbol? (car (car rest)))
+            (annotation-marker? (cadr (car rest))))
+       (loop (cddr rest)
+             (cons (let-binding (car (car rest))
+                                (parse-type (caddr (car rest)))
+                                (parse-expr (cadr rest)))
+                   acc))]
+      ;; Inline annotated: name marker Type value (4 tokens)
       [(and (>= (length rest) 4)
             (symbol? (car rest))
             (annotation-marker? (cadr rest)))

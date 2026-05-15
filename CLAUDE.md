@@ -115,6 +115,22 @@ Clojure idioms whose cost > benefit for beagle's goals:
 - **Single canonical idiom per concept** — no `#(...)` alongside `fn`, no
   threading alongside nesting. One way to do each thing.
 
+## Benchmark findings (running log)
+
+Empirical results from running variants through the LLM live in
+`docs/findings.md`. First sample (2026-05-15, 17 agent calls) caught two
+real design bugs and validated:
+- High self-consistency on simple tasks (byte-identical output across runs)
+- Variants don't discriminate at low task complexity
+- Hard tasks surface variant-specific gaps fast
+
+The benchmark fixed two beagle issues that argument would have missed:
+- Let bindings now accept wrapped typed form `(name : Type) value`
+  (consistent with param syntax — LLMs expected this)
+- Math operators (`+`, `-`, `*`, `/`) loosened from `[Long Long -> Long]`
+  to variadic Any (Clojure's math is polymorphic; narrow typing blocked
+  real FP work)
+
 ## Hard scope cap
 
 If a month in we are deep in compiler infrastructure with no real Clojure

@@ -86,8 +86,12 @@
   (check-not-exn (lambda () (check-prog '(def x : Long (+))))))
 
 (test-case "variadic call rejects wrong rest-type"
+  ;; Use a strictly-typed builtin (inc) so the test isolates rest-type check.
+  ;; `+` is intentionally `Any` in v0 because Clojure's `+` is polymorphic.
   (check-exn exn:fail?
-             (lambda () (check-prog '(def x : Long (+ 1 "two" 3))))))
+             (lambda ()
+               (check-prog '(declare-extern strict-sum [Long & Long -> Long])
+                           '(def x : Long (strict-sum 1 "two" 3))))))
 
 (test-case "variadic call rejects below minimum fixed args"
   (check-exn exn:fail?
