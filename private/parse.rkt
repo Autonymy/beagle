@@ -179,7 +179,7 @@
     [(list 'when c body ...) (when-form (parse-expr c) (parse-body body))]
     [(list 'do body ...)     (do-form (parse-body body))]
 
-    [(list 'cond clauses ...) (cond-form (map parse-cond-clause clauses))]
+    [(list 'cond clauses ...) (cond-form (parse-cond-clauses clauses))]
 
     [(list (? symbol? f) args ...)
      (call-form f (map parse-expr args))]
@@ -198,6 +198,29 @@
      (when (null? body) (error 'beagle "cond clause is empty"))
      (cond-clause (parse-expr (car body)) (parse-body (cdr body)))]
     [else (error 'beagle "cond clause must be a bracketed [test body ...] form, got: ~v" c)]))
+
+;; Cond accepts two styles:
+;;   (cond [test1 body1...] [test2 body2...] ...)   — bracketed (beagle default)
+;;   (cond test1 body1 test2 body2 ...)             — Clojure-style flat pairs
+;;
+;; If the first clause is bracketed, all must be (existing behavior).
+;; Otherwise treat them as test/body pairs.
+(define (parse-cond-clauses clauses)
+  (cond
+    [(null? clauses) '()]
+    [(bracketed? (car clauses))
+     (map parse-cond-clause clauses)]
+    [else
+     (unless (even? (length clauses))
+       (error 'beagle
+              "cond with unbracketed clauses must have an even number of forms (test/body pairs)"))
+     (let loop ([rest clauses] [acc '()])
+       (cond
+         [(null? rest) (reverse acc)]
+         [else (loop (cddr rest)
+                     (cons (cond-clause (parse-expr (car rest))
+                                        (list (parse-expr (cadr rest))))
+                           acc))]))]))
 
 ;; --- params + bindings -----------------------------------------------------
 

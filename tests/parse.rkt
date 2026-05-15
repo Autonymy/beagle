@@ -151,11 +151,21 @@
   (check-true (cond-form? f))
   (check-equal? (length (cond-form-clauses f)) 3))
 
-(test-case "cond without bracketed clause errors"
+(test-case "cond with bare-form clauses (Clojure-style)"
+  (define f (car (parse-one
+                  '(cond
+                     (zero? n) "zero"
+                     (pos? n) "pos"
+                     :else "neg"))))
+  (check-true (cond-form? f))
+  (check-equal? (length (cond-form-clauses f)) 3))
+
+(test-case "bare-form cond requires even number of forms"
   (check-exn exn:fail?
              (lambda () (parse-one
                          '(cond
-                            ((< n 0) "neg"))))))
+                            (zero? n) "zero"
+                            "missing-test")))))
 
 (test-case "when"
   (define f (car (parse-one '(when (> x 0) (println x) x))))
