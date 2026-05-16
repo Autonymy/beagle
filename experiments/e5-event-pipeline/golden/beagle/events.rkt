@@ -73,6 +73,37 @@
                              (template : String) (sent-at : Long)])
 
 ;; =============================================================================
+;; Closed Unions (exhaustive match enforcement)
+;; =============================================================================
+
+(defunion OrderEvent
+  OrderPlaced OrderConfirmed PaymentReceived PaymentFailed
+  ItemShipped OrderDelivered OrderCancelled)
+
+(defunion CustomerEvent
+  CustomerRegistered CustomerTierChanged)
+
+(defunion PaymentEvent
+  PaymentReceived PaymentFailed RefundIssued)
+
+(defunion InventoryEvent
+  InventoryReserved InventoryReleased)
+
+(defunion PipelineEvent
+  OrderPlaced OrderConfirmed PaymentReceived PaymentFailed
+  ItemShipped OrderDelivered OrderCancelled
+  InventoryReserved InventoryReleased
+  CustomerRegistered CustomerTierChanged
+  RefundIssued NotificationSent)
+
+;; Per-projection input unions (what each projection must handle)
+(defunion CustomerProjectionInput
+  CustomerRegistered CustomerTierChanged OrderPlaced PaymentReceived)
+
+(defunion PaymentProjectionInput
+  PaymentReceived PaymentFailed RefundIssued)
+
+;; =============================================================================
 ;; Projection State Records (nullable fields for incremental state)
 ;; =============================================================================
 

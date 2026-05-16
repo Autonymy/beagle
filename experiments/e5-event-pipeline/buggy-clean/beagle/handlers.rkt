@@ -288,7 +288,7 @@
 ;; Master Event Dispatcher
 ;; =============================================================================
 
-(defn dispatch-event [(event : Any) (projections : Any)
+(defn dispatch-event [(event : PipelineEvent) (projections : Any)
                       (all-events : Any)] : Any
   (match event
     [(OrderPlaced oid cid items total ts)

@@ -4,6 +4,11 @@
 
 Speculative; no commitment.
 
+- **Reader normalization pass.** The reader currently emits `#%brackets`
+  tags that leak into the compiler. Add a post-read normalization step
+  that resolves bracket semantics (vector vs. grouping) in one place,
+  so downstream parse/check/emit never see `#%brackets` — just typed
+  AST nodes. Eliminates "delimiter astrology" from the compiler core.
 - **LSP / editor integration.** Type-aware completion, jump-to-def, etc.
 - **Typed REPL.** Connect to a live Clojure socket-repl, evaluate
   beagle forms with full type checking before sending.

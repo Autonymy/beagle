@@ -287,11 +287,12 @@
 ;; Master Event Dispatcher
 ;; =============================================================================
 
-(defn dispatch-event [(event : Any) (projections : Any)
+(defn dispatch-event [(event : PipelineEvent) (projections : Any)
                       (all-events : Any)] : Any
   (match event
     [(OrderPlaced oid cid items total ts)
      (handle-order-placed event projections)]
+    [(OrderConfirmed oid ts) []]
     [(PaymentReceived oid amt meth tid ts)
      (handle-payment-received event projections)]
     [(PaymentFailed oid reason ts)
@@ -304,11 +305,13 @@
      (handle-order-cancelled event projections)]
     [(CustomerRegistered cid name email ts)
      (handle-customer-registered event projections)]
+    [(CustomerTierChanged cid old-t new-t ts) []]
     [(RefundIssued oid amt reason ts)
      (handle-refund-issued event projections)]
     [(InventoryReserved oid iid qty wid)
      (handle-inventory-reserved event projections)]
-    [_ []]))
+    [(InventoryReleased oid iid qty reason) []]
+    [(NotificationSent r ch tmpl ts) []]))
 
 ;; =============================================================================
 ;; Batch Handler Helpers

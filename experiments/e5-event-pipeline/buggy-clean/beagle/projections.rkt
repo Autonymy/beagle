@@ -119,7 +119,7 @@
     [:total-spent (+ (customerstate-total-spent state) amount)]))
 
 ;; apply-customer-event: main dispatcher for customer state projection.
-(defn apply-customer-event [(state : Any) (event : Any)] : Any
+(defn apply-customer-event [(state : Any) (event : CustomerProjectionInput)] : Any
   (match event
     [(CustomerRegistered cid name email ts)
      (apply-customer-registered event)]
@@ -233,7 +233,7 @@
       [:status new-status])))
 
 ;; apply-payment-event: main dispatcher for payment state projection.
-(defn apply-payment-event [(state : Any) (event : Any)] : Any
+(defn apply-payment-event [(state : Any) (event : PaymentProjectionInput)] : Any
   (match event
     [(PaymentReceived oid amt meth tid ts)
      (if (nil? state)

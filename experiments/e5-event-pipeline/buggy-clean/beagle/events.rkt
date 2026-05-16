@@ -73,6 +73,37 @@
                              (template : String) (sent-at : Long)])
 
 ;; =============================================================================
+;; Closed Unions (exhaustive match enforcement)
+;; =============================================================================
+
+(defunion OrderEvent
+  OrderPlaced OrderConfirmed PaymentReceived PaymentFailed
+  ItemShipped OrderDelivered OrderCancelled)
+
+(defunion CustomerEvent
+  CustomerRegistered CustomerTierChanged)
+
+(defunion PaymentEvent
+  PaymentReceived PaymentFailed RefundIssued)
+
+(defunion InventoryEvent
+  InventoryReserved InventoryReleased)
+
+(defunion PipelineEvent
+  OrderPlaced OrderConfirmed PaymentReceived PaymentFailed
+  ItemShipped OrderDelivered OrderCancelled
+  InventoryReserved InventoryReleased
+  CustomerRegistered CustomerTierChanged
+  RefundIssued NotificationSent)
+
+;; Per-projection input unions (what each projection must handle)
+(defunion CustomerProjectionInput
+  CustomerRegistered CustomerTierChanged OrderPlaced PaymentReceived)
+
+(defunion PaymentProjectionInput
+  PaymentReceived PaymentFailed RefundIssued)
+
+;; =============================================================================
 ;; Projection State Records (nullable fields for incremental state)
 ;; =============================================================================
 
@@ -226,7 +257,7 @@
 
 (defn make-order-item [(item-id : Long) (product-name : String)
                        (quantity : Long) (unit-price : Long)] : OrderItem
-  (->OrderItem product-name item-id quantity unit-price))
+  (->OrderItem item-id product-name quantity unit-price))
 
 ;; item-total: compute line total for a single item
 (defn item-total [(item : OrderItem)] : Long
@@ -246,7 +277,7 @@
 (defn empty-order-state [(order-id : Long) (customer-id : Long)
                          (items : (Vec OrderItem)) (total : Long)
                          (placed-at : Long)] : OrderState
-  (->OrderState order-id "placed" customer-id items total placed-at
+  (->OrderState order-id customer-id "placed" items total placed-at
                 nil nil nil nil 0 nil nil nil))
 
 (defn empty-customer-state [(customer-id : Long) (name : String)
@@ -291,12 +322,12 @@
 
 ;; order-paid-amount-or-zero: returns paid-amount or 0 if nil.
 (defn order-paid-amount-or-zero [(state : OrderState)] : Long
-  (let [amt (customerstate-total-spent state)]
+  (let [amt (orderstate-paid-amount state)]
     (if (nil? amt) 0 amt)))
 
 ;; order-remaining-balance: computes outstanding balance.
 (defn order-remaining-balance [(state : OrderState)] : Long
-  (- (inventorystate-available state) (order-paid-amount-or-zero state)))
+  (- (orderstate-total state) (order-paid-amount-or-zero state)))
 
 ;; order-is-paid?: returns true if paid-amount >= total.
 (defn order-is-paid? [(state : OrderState)] : Boolean
@@ -304,7 +335,7 @@
 
 ;; order-is-cancelled?: returns true if status is "cancelled".
 (defn order-is-cancelled? [(state : OrderState)] : Boolean
-  (= (paymentstate-status state) "cancelled"))
+  (= (orderstate-status state) "cancelled"))
 
 ;; order-is-delivered?: returns true if status is "delivered".
 (defn order-is-delivered? [(state : OrderState)] : Boolean
@@ -312,8 +343,8 @@
 
 ;; order-is-active?: returns true if order is not cancelled or delivered.
 (defn order-is-active? [(state : OrderState)] : Boolean
-  (let [remaining (- (orderstate-total state) (orderstate-paid-amount state))]
-    (and (> remaining 0) (not= (orderstate-status state) "cancelled"))))
+  (let [s (orderstate-status state)]
+    (and (not= s "cancelled") (not= s "delivered"))))
 
 ;; order-item-count: number of distinct items in the order.
 (defn order-item-count [(state : OrderState)] : Long
@@ -344,7 +375,7 @@
 (defn customer-average-order-value [(state : CustomerState)] : Long
   (if (= (customerstate-order-count state) 0)
       0
-      (quot (orderstate-total state)
+      (quot (customerstate-total-spent state)
             (customerstate-order-count state))))
 
 ;; =============================================================================
@@ -353,7 +384,7 @@
 
 ;; inventory-total-units: available + reserved.
 (defn inventory-total-units [(state : InventoryState)] : Long
-  (+ (orderstate-total state) (inventorystate-reserved state)))
+  (+ (inventorystate-available state) (inventorystate-reserved state)))
 
 ;; inventory-utilization-pct: percentage of total units that are reserved.
 (defn inventory-utilization-pct [(state : InventoryState)] : Long
@@ -371,14 +402,13 @@
 
 ;; payment-remaining: how much more is owed.
 (defn payment-remaining [(state : PaymentState)] : Long
-  (let [diff (- (orderstate-placed-at state)
+  (let [diff (- (paymentstate-amount-due state)
                 (paymentstate-amount-paid state))]
     (if (< diff 0) 0 diff)))
 
 ;; payment-is-complete?: synonym for status = "paid".
 (defn payment-is-complete? [(state : PaymentState)] : Boolean
-  (and (> (count (paymentstate-method state)) 0)
-       (= (paymentstate-status state) "paid")))
+  (= (paymentstate-status state) "paid"))
 
 ;; payment-is-failed?: synonym for status = "failed".
 (defn payment-is-failed? [(state : PaymentState)] : Boolean
@@ -404,4 +434,6 @@
 (defn shipment-transit-time [(state : ShipmentState)] : Long?
   (let [shipped (shipmentstate-shipped-at state)
         delivered (shipmentstate-delivered-at state)]
-    (- delivered shipped)))
+    (if (or (nil? shipped) (nil? delivered))
+        nil
+        (- delivered shipped))))
