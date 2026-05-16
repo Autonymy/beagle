@@ -162,6 +162,7 @@
 (struct with-form   (target updates)                          #:transparent)
 (struct with-update (field-kw value)                          #:transparent)
 (struct defenum-form (name values)                            #:transparent)
+(struct defunion-form (name members)                          #:transparent)
 
 (struct match-form  (target clauses)                         #:transparent)
 (struct match-clause (pattern body)                          #:transparent)
@@ -634,6 +635,9 @@
 
     [(list 'defenum (? symbol? name) values ...)
      (defenum-form name (map ->datum (or (stx-tail subs 2) values)))]
+
+    [(list 'defunion (? symbol? name) members ...)
+     (defunion-form name (map ->datum (or (stx-tail subs 2) members)))]
 
     [(list 'match target-expr clauses ...)
      (parse-match-form (or (stx-ref subs 1) target-expr)
@@ -1138,6 +1142,7 @@
  (struct-out with-form)
  (struct-out with-update)
  (struct-out defenum-form)
+ (struct-out defunion-form)
  parse-program
  DEFAULT-MODE
  DEFAULT-TARGET

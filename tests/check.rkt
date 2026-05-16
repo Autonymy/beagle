@@ -792,3 +792,64 @@
             ,(br '(X3 c) 'c)
             ,(br '_ 0)))))
     (check-equal? "" (get-output-string output))))
+
+;; --- defunion ----------------------------------------------------------------
+
+(test-case "defunion type-checks without error"
+  (check-not-exn
+   (lambda ()
+     (check-prog
+      '(defrecord Foo [(x : Long)])
+      '(defrecord Bar [(y : String)])
+      '(defunion MyUnion Foo Bar)))))
+
+(test-case "defunion match with all members passes"
+  (check-not-exn
+   (lambda ()
+     (check-prog
+      `(defrecord A ,(br '(x : Long)))
+      `(defrecord B ,(br '(y : String)))
+      '(defunion AB A B)
+      `(defn handle ,(br '(e : AB)) : Long
+         (match e
+           ,(br '(A x) 'x)
+           ,(br '(B y) 0)))))))
+
+(test-case "defunion match missing member raises error"
+  (check-exn
+   #rx"not exhaustive"
+   (lambda ()
+     (check-prog
+      `(defrecord X ,(br '(a : Long)))
+      `(defrecord Y ,(br '(b : String)))
+      `(defrecord Z ,(br '(c : Boolean)))
+      '(defunion XYZ X Y Z)
+      `(defn handle ,(br '(e : XYZ)) : Long
+         (match e
+           ,(br '(X a) 'a)
+           ,(br '(Y b) 0)))))))
+
+(test-case "defunion match with wildcard still raises error"
+  (check-exn
+   #rx"not exhaustive"
+   (lambda ()
+     (check-prog
+      `(defrecord P ,(br '(x : Long)))
+      `(defrecord Q ,(br '(y : Long)))
+      `(defrecord R ,(br '(z : Long)))
+      '(defunion PQR P Q R)
+      `(defn handle ,(br '(e : PQR)) : Long
+         (match e
+           ,(br '(P x) 'x)
+           ,(br '_ 0)))))))
+
+(test-case "defunion member is compatible with union type"
+  (check-not-exn
+   (lambda ()
+     (check-prog
+      `(defrecord Cat ,(br '(name : String)))
+      `(defrecord Dog ,(br '(name : String)))
+      '(defunion Animal Cat Dog)
+      `(defn process ,(br '(a : Animal)) : Long 0)
+      `(defn test [] : Long
+         (process (->Cat "whiskers")))))))

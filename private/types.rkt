@@ -47,6 +47,8 @@
       (type-var? x) (type-poly? x)))
 
 (define current-type-vars (make-parameter '()))
+;; Set by checker: maps union-name → (listof member-symbol) for subtype checks
+(define current-union-members (make-parameter (hash)))
 
 ;; --- parsing types from source datums --------------------------------------
 
@@ -180,9 +182,11 @@
      (andmap (lambda (alt) (type-compatible? alt expected))
              (type-union-alts actual))]
 
-    ;; Primitives match by canonical name.
+    ;; Primitives match by canonical name or union membership.
     [(and (type-prim? actual) (type-prim? expected))
-     (eq? (type-prim-name actual) (type-prim-name expected))]
+     (or (eq? (type-prim-name actual) (type-prim-name expected))
+         (let ([members (hash-ref (current-union-members) (type-prim-name expected) #f)])
+           (and members (memq (type-prim-name actual) members) #t)))]
 
     ;; Function compatibility: same fixed-arity, compatible params, compatible
     ;; rest-types (or both absent), compatible return.
@@ -317,6 +321,7 @@
  (struct-out type-var)
  (struct-out type-poly)
  current-type-vars
+ current-union-members
  type?
  any-type?
  parse-type

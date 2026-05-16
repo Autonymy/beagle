@@ -27,6 +27,8 @@
 (define ENUM-VALUES (make-hash))
 ;; Record origin: record-type-name -> module-symbol (or 'local)
 (define RECORD-ORIGIN (make-hash))
+;; Closed union members: union-name -> (listof symbol) of record type names
+(define UNION-MEMBERS (make-hash))
 
 ;; Expression-level source locations from the parser.
 (define current-check-src-table (make-parameter #f))
@@ -118,9 +120,11 @@
     (hash-clear! RECORD-FIELD-ORDER)
     (hash-clear! ENUM-VALUES)
     (hash-clear! RECORD-ORIGIN)
+    (hash-clear! UNION-MEMBERS)
     (define env (build-initial-env prog))
-    (for ([form (in-list (program-forms prog))])
-      (check-form form env))))
+    (parameterize ([current-union-members UNION-MEMBERS])
+      (for ([form (in-list (program-forms prog))])
+        (check-form form env)))))
 
 ;; --- environment -----------------------------------------------------------
 
@@ -195,6 +199,12 @@
        (void)]
       [(defenum-form name values)
        (hash-set! ENUM-VALUES name values)]
+      [(defunion-form name members)
+       (hash-set! UNION-MEMBERS name members)
+       ;; Register as a union type so type-compatible? works:
+       ;; OrderEvent typed as (U OrderPlaced OrderConfirmed ...)
+       (hash-set! env name
+                  (type-union (map (lambda (m) (type-prim m)) members)))]
       [_ (void)]))
   env)
 
@@ -272,6 +282,7 @@
      (define body-env (extend-with-params env params))
      (last-expr-type body body-env)]
     [(defenum-form _ _) (void)]
+    [(defunion-form _ _) (void)]
 
     [_ (infer-expr form env)]))
 
@@ -462,54 +473,83 @@
                                                (list->set (hash-keys flds)))))))
           rt)])]))
 
-(define (check-match-exhaustiveness e env)
+(define (check-match-exhaustiveness e env target-type)
   (define clauses (match-form-clauses e))
   (define record-pats
     (filter pat-record?
             (map match-clause-pattern clauses)))
-  (when (not (null? record-pats))
-    (define has-wildcard?
-      (ormap (lambda (c)
-               (or (pat-wildcard? (match-clause-pattern c))
-                   (pat-var? (match-clause-pattern c))))
-             clauses))
-    (define matched-types
-      (map pat-record-type-name record-pats))
-    (define all-record-types (hash-keys RECORD-FIELDS))
-    (define matched-set (list->set matched-types))
-    (define universe-candidates
-      (for/list ([rt (in-list all-record-types)]
-                 #:when (not (set-member? matched-set rt)))
-        rt))
-    (define src (src-for e))
-    (define file (and src (src-loc-source src)))
-    (define line (and src (src-loc-line src)))
-    (cond
-      [(and (not has-wildcard?)
-            (>= (length matched-types) 2)
-            (not (null? universe-candidates)))
-       (fprintf (current-error-port)
-                "warning: match may be non-exhaustive~a\n  matched: ~a\n  possibly missing: ~a\n"
-                (if line (format " at ~a:~a" (or file "?") line) "")
-                (string-join (map symbol->string matched-types) ", ")
-                (string-join (map symbol->string universe-candidates) ", "))]
-      [(and has-wildcard?
-            (>= (length matched-types) 3))
-       (define siblings (find-sibling-records matched-types))
-       (when (not (null? siblings))
-         (define sibling-strs (map symbol->string siblings))
-         (define display-strs
-           (if (> (length sibling-strs) 6)
-             (append (take sibling-strs 6)
-                     (list (format "(+~a more)" (- (length sibling-strs) 6))))
-             sibling-strs))
-         (fprintf (current-error-port)
-                  "note: match wildcard covers ~a sibling record type~a~a\n  matched: ~a\n  wildcard catches: ~a\n"
-                  (length siblings)
-                  (if (= 1 (length siblings)) "" "s")
-                  (if line (format " at ~a:~a" (or file "?") line) "")
-                  (string-join (map symbol->string matched-types) ", ")
-                  (string-join display-strs ", ")))])))
+  (define matched-types
+    (map pat-record-type-name record-pats))
+  (define matched-set (list->set matched-types))
+  (define has-wildcard?
+    (ormap (lambda (c)
+             (or (pat-wildcard? (match-clause-pattern c))
+                 (pat-var? (match-clause-pattern c))))
+           clauses))
+  (define src (src-for e))
+  (define file (and src (src-loc-source src)))
+  (define line (and src (src-loc-line src)))
+
+  ;; Strict check: if target type is a defunion, ALL members must be covered.
+  ;; Wildcard does NOT satisfy this — every case must be explicit.
+  (define union-name
+    (and (type-prim? target-type)
+         (hash-ref UNION-MEMBERS (type-prim-name target-type) #f)
+         (type-prim-name target-type)))
+  (define union-members
+    (and union-name (hash-ref UNION-MEMBERS union-name)))
+
+  (cond
+    ;; Strict exhaustive check for defunion types
+    [union-members
+     (define missing
+       (for/list ([m (in-list union-members)]
+                  #:when (not (set-member? matched-set m)))
+         m))
+     (when (not (null? missing))
+       (raise-diag 'exhaustive-match
+         (format "match on ~a is not exhaustive~a\n  missing cases: ~a"
+                 union-name
+                 (if line (format " at ~a:~a" (or file "?") line) "")
+                 (string-join (map symbol->string missing) ", "))
+         (hasheq 'union-name union-name
+                 'missing missing
+                 'matched matched-types)
+         #:src src))]
+
+    ;; Heuristic checks for non-union matches
+    [(not (null? record-pats))
+     (define all-record-types (hash-keys RECORD-FIELDS))
+     (define universe-candidates
+       (for/list ([rt (in-list all-record-types)]
+                  #:when (not (set-member? matched-set rt)))
+         rt))
+     (cond
+       [(and (not has-wildcard?)
+             (>= (length matched-types) 2)
+             (not (null? universe-candidates)))
+        (fprintf (current-error-port)
+                 "warning: match may be non-exhaustive~a\n  matched: ~a\n  possibly missing: ~a\n"
+                 (if line (format " at ~a:~a" (or file "?") line) "")
+                 (string-join (map symbol->string matched-types) ", ")
+                 (string-join (map symbol->string universe-candidates) ", "))]
+       [(and has-wildcard?
+             (>= (length matched-types) 3))
+        (define siblings (find-sibling-records matched-types))
+        (when (not (null? siblings))
+          (define sibling-strs (map symbol->string siblings))
+          (define display-strs
+            (if (> (length sibling-strs) 6)
+              (append (take sibling-strs 6)
+                      (list (format "(+~a more)" (- (length sibling-strs) 6))))
+              sibling-strs))
+          (fprintf (current-error-port)
+                   "note: match wildcard covers ~a sibling record type~a~a\n  matched: ~a\n  wildcard catches: ~a\n"
+                   (length siblings)
+                   (if (= 1 (length siblings)) "" "s")
+                   (if line (format " at ~a:~a" (or file "?") line) "")
+                   (string-join (map symbol->string matched-types) ", ")
+                   (string-join display-strs ", ")))])]))
 
 ;; --- keyword field lookup --------------------------------------------------
 
@@ -642,7 +682,7 @@
        (for/list ([c (in-list (match-form-clauses e))])
          (define arm-env (narrow-env-for-match c target-type env))
          (last-expr-type (match-clause-body c) arm-env)))
-     (check-match-exhaustiveness e env)
+     (check-match-exhaustiveness e env target-type)
      (cond
        [(null? arm-types) ANY]
        [(andmap (lambda (t) (type-compatible? t (car arm-types))) (cdr arm-types))
@@ -677,13 +717,27 @@
             [(hash-has-key? field-map kw)
              (define expected (hash-ref field-map kw))
              (unless (type-compatible? val-type expected)
+               (define alt-fields
+                 (for/list ([(f t) (in-hash field-map)]
+                            #:when (and (not (equal? f kw))
+                                        (type-compatible? val-type t)))
+                   (symbol->string f)))
+               (define suggestion
+                 (cond
+                   [(not (null? alt-fields))
+                    (format "\n   = note: ~a fields of type ~a: ~a"
+                            rec-name (type->string val-type)
+                            (string-join alt-fields ", "))]
+                   [else ""]))
                (raise-diag 'type-mismatch
-                           (format "with ~a: field ~a expected ~a, got ~a"
-                                   rec-name kw (type->string expected) (type->string val-type))
+                           (format "with ~a: field ~a expected ~a, got ~a~a"
+                                   rec-name kw (type->string expected) (type->string val-type)
+                                   suggestion)
                            (hasheq 'record (symbol->string rec-name)
                                    'field (symbol->string kw)
                                    'expected (type->string expected)
-                                   'actual (type->string val-type))
+                                   'actual (type->string val-type)
+                                   'alternatives alt-fields)
                            #:src (src-for e)))]
             [else
              (raise-diag 'type-mismatch

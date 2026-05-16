@@ -168,6 +168,9 @@
     [(defenum-form? f)
      (emit-defenum f)]
 
+    [(defunion-form? f)
+     (emit-defunion f)]
+
     [else (emit-expr-core f)]))
 
 ;; --- expressions -----------------------------------------------------------
@@ -329,6 +332,12 @@
   (define vals (defenum-form-values f))
   (define val-strs (map (lambda (v) (symbol->string v)) vals))
   (format "(def ~a-values #{~a})" name (string-join val-strs " ")))
+
+(define (emit-defunion f)
+  (define name (defunion-form-name f))
+  (define members (defunion-form-members f))
+  (define member-strs (map symbol->string members))
+  (format ";; ~a = ~a" name (string-join member-strs " | ")))
 
 (define (emit-match e)
   (define target-str (emit-expr (match-form-target e)))
