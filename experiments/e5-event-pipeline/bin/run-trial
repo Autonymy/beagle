@@ -11,7 +11,8 @@ RUN="${2:?Usage: bin/run-trial <track> <run>}"
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$SCRIPT_DIR"
 
-TRIAL_DIR="trials/e5c-${TRACK}-run${RUN}"
+EXPT="${3:-e5c}"
+TRIAL_DIR="trials/${EXPT}-${TRACK}-run${RUN}"
 
 if [ -d "$TRIAL_DIR" ]; then
   echo "Trial dir already exists: $TRIAL_DIR"
@@ -33,7 +34,7 @@ fi
 # Record metadata
 cat > "$TRIAL_DIR/metadata.json" <<EOF
 {
-  "experiment": "e5c",
+  "experiment": "$EXPT",
   "track": "$TRACK",
   "run": $RUN,
   "beagle_version": "$(git -C ../.. describe --tags --always 2>/dev/null || echo 'unknown')",

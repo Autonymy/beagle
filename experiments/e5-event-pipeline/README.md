@@ -38,22 +38,23 @@ events (leaf)
 └── analytics (requires events, projections, queries)
 ```
 
-## E5c Results (3 runs per track, unlabeled bugs)
+## Results (3 runs per track, unlabeled bugs)
 
-| Metric | Beagle | Clojure |
-|--------|--------|---------|
-| Mean accuracy | 63.7% | 68.3% |
-| Std deviation | 1.5% | 5.5% |
-| Mean time | 319s | 226s |
-| Checker errors | 0 (all runs) | n/a |
+### E5c (positional constructors) → E5d (`with` form)
 
-The type checker catches 25/40 bugs at compile time and verifies fixes with
-certainty. But on raw line-level accuracy, the clojure agent scores higher —
-Claude Opus 4 is good enough at code reading to find most bugs by inspection.
+| Metric | Beagle (E5c) | Beagle (E5d) | Clojure (E5c) | Clojure (E5d) |
+|--------|:---:|:---:|:---:|:---:|
+| Mean accuracy | 63.7% | 66.0% | 68.3% | 70.3% |
+| Std deviation | 1.5% | 1.7% | 5.5% | 2.1% |
+| Checker errors | 0 | 0 | n/a | n/a |
 
-Beagle's advantage is **verification** (0 proven checker errors) and
-**consistency** (1.5% std dev vs 5.5%). Clojure's advantage is **speed** and
-**higher peak accuracy**.
+The `with` form eliminated the bug-surface asymmetry and improved beagle's
+score by +2.3pp, but clojure still wins on raw line-level accuracy. The gap
+narrowed from -4.6pp to -4.3pp.
+
+Beagle's advantage: **verification** (0 proven checker errors, all runs) and
+**consistency** (1.7% std dev). The remaining gap comes from "correct but
+different" fixes — agents make type-valid repairs that don't match golden intent.
 
 See `results.md` for full analysis, per-module breakdown, and confounding factors.
 
@@ -72,4 +73,4 @@ bin/run-experiment e5a beagle 1
 
 ## Beagle version
 
-Built against: v0.2.0 (commit f91b70a)
+Built against: v0.3.0 (commit b4c4427, with/defenum/exhaustive-match)
