@@ -69,7 +69,17 @@ echo ""
 
 # Step 2: Build task prompt
 if [ "$TRACK" = "beagle" ]; then
-  TASK_PROMPT="Fix all bugs in $TRIAL_DIR/. Read experiments/e5-event-pipeline/spec/domain.md for intended behavior. Read all source files first to understand the codebase, then fix bugs by inspection. After all fixes, run bin/beagle-check-all $TRIAL_DIR/ once to catch anything you missed."
+  # Pre-compute checker report so agent starts with full signal — no wasted tool call
+  CHECKER_OUTPUT=$("$BEAGLE_ROOT/bin/beagle-check-all" "$TRIAL_DIR/" 2>&1 || true)
+  TASK_PROMPT="Fix all bugs in $TRIAL_DIR/.
+
+Here is the type checker output (already run for you):
+
+\`\`\`
+$CHECKER_OUTPUT
+\`\`\`
+
+Read experiments/e5-event-pipeline/spec/domain.md for intended behavior. Fix ALL errors above, and pay close attention to the note: lines — they flag semantic bugs (wrong accessor, missing field update) that are real bugs even though they type-check. Also inspect all source files for logic bugs the checker cannot catch (wrong filter direction, wrong arithmetic, wrong comparison)."
 else
   TASK_PROMPT="Fix all bugs in $TRIAL_DIR/. Read each module and fix all bugs you can find. Check experiments/e5-event-pipeline/spec/domain.md for intended behavior."
 fi
