@@ -63,7 +63,7 @@
                            orders)]
     (reduce (fn [acc o] (+ acc (orderstate-total o))) 0 in-period)))
 
-;; total-revenue: sum of all delivered order totals.
+;; total-revenue: sum of all non-cancelled order totals.
 (defn total-revenue [(orders : (Vec OrderState))] : Long
   (let [delivered (filterv (fn [o] (= (orderstate-status o) "cancelled"))
                            orders)]
