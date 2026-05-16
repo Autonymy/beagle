@@ -266,6 +266,11 @@
     [(kw-access _ target default)
      (check-shadow target scope ctx)
      (when default (check-shadow default scope ctx))]
+    [(with-form target updates)
+     (check-shadow target scope ctx)
+     (for ([u (in-list updates)])
+       (check-shadow (with-update-value u) scope ctx))]
+    [(defenum-form _ _) (void)]
     [_ (void)]))
 
 (define (warn-shadow kind name ctx)
@@ -361,6 +366,11 @@
     [(kw-access _ target default)
      (collect-symbols target used)
      (when default (collect-symbols default used))]
+    [(with-form target updates)
+     (collect-symbols target used)
+     (for ([u (in-list updates)])
+       (collect-symbols (with-update-value u) used))]
+    [(defenum-form _ _) (void)]
     [(defmethod-form _ _ _ body)
      (for ([e (in-list body)]) (collect-symbols e used))]
     [(deftype-form _ _ impls)

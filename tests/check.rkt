@@ -694,3 +694,52 @@
   (check-not-exn
    (lambda ()
      (check-prog '(def x (->> "hello" (str " world") (str "!")))))))
+
+;; --- with form type checking ------------------------------------------------
+
+(test-case "with on known record type passes"
+  (check-not-exn
+   (lambda ()
+     (check-prog
+      `(defrecord Person ,(br '(name : String) '(age : Long)))
+      `(defn update-name ,(br '(p : Person)) : Person
+         (with p ,(br ':name "bob")))))))
+
+(test-case "with returns same record type"
+  (check-not-exn
+   (lambda ()
+     (check-prog
+      `(defrecord Person ,(br '(name : String) '(age : Long)))
+      '(def p : Person (->Person "alice" 25))
+      `(def q : Person (with p ,(br ':age 30)))))))
+
+(test-case "with catches wrong field type"
+  (check-exn exn:fail?
+             (lambda ()
+               (check-prog
+                `(defrecord Person ,(br '(name : String) '(age : Long)))
+                '(def p : Person (->Person "alice" 25))
+                `(def q (with p ,(br ':age "thirty")))))))
+
+(test-case "with catches unknown field"
+  (check-exn exn:fail?
+             (lambda ()
+               (check-prog
+                `(defrecord Person ,(br '(name : String) '(age : Long)))
+                '(def p : Person (->Person "alice" 25))
+                `(def q (with p ,(br ':email "a@b.com")))))))
+
+(test-case "with in defn with typed param"
+  (check-not-exn
+   (lambda ()
+     (check-prog
+      `(defrecord Order ,(br '(status : String) '(total : Long)))
+      `(defn confirm-order ,(br '(o : Order)) : Order
+         (with o ,(br ':status "confirmed")))))))
+
+;; --- defenum ----------------------------------------------------------------
+
+(test-case "defenum type-checks without error"
+  (check-not-exn
+   (lambda ()
+     (check-prog '(defenum Color :red :green :blue)))))

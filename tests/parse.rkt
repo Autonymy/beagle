@@ -672,3 +672,37 @@
   (define f (car (parse-one '(->> coll (map inc) (filter even?)))))
   (check-true (call-form? f))
   (check-eq? (call-form-fn f) '->>))
+
+;; --- with form ---------------------------------------------------------------
+
+(test-case "with parses target and updates"
+  (define f (car (parse-one `(with p ,(br ':name "alice") ,(br ':age 30)))))
+  (check-true (with-form? f))
+  (check-equal? (length (with-form-updates f)) 2)
+  (define u1 (car (with-form-updates f)))
+  (check-eq? (with-update-field-kw u1) ':name))
+
+(test-case "with single update"
+  (define f (car (parse-one `(with x ,(br ':status "done")))))
+  (check-true (with-form? f))
+  (check-equal? (length (with-form-updates f)) 1))
+
+(test-case "with rejects non-keyword field"
+  (check-exn #rx"field name must be a keyword"
+             (lambda () (parse-one `(with p ,(br 'name "alice"))))))
+
+(test-case "with rejects malformed update"
+  (check-exn #rx"each update must be"
+             (lambda () (parse-one '(with p 42)))))
+
+;; --- defenum form ------------------------------------------------------------
+
+(test-case "defenum parses name and keyword values"
+  (define f (car (parse-one '(defenum Color :red :green :blue))))
+  (check-true (defenum-form? f))
+  (check-eq? (defenum-form-name f) 'Color)
+  (check-equal? (defenum-form-values f) '(:red :green :blue)))
+
+(test-case "defenum with two values"
+  (define f (car (parse-one '(defenum Status :active :inactive))))
+  (check-equal? (length (defenum-form-values f)) 2))

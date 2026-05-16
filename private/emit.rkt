@@ -153,6 +153,9 @@
     [(extend-type-form? f)
      (emit-extend-type f)]
 
+    [(defenum-form? f)
+     (emit-defenum f)]
+
     [else (emit-expr-core f)]))
 
 ;; --- expressions -----------------------------------------------------------
@@ -273,6 +276,8 @@
        (format "(~a ~a)" (symbol->string (kw-access-kw e)) (emit-expr (kw-access-target e))))]
     [(match-form? e)
      (emit-match e)]
+    [(with-form? e)
+     (emit-with e)]
     [(call-form? e)
      (format "(~a~a)"
              (symbol->string (call-form-fn e))
@@ -293,6 +298,20 @@
       (define fname (symbol->string (param-name p)))
       (format "(defn ~a-~a [r] (:~a r))" name-lower fname fname)))
   (string-join (cons record-line accessor-lines) "\n\n"))
+
+(define (emit-with e)
+  (define target-str (emit-expr (with-form-target e)))
+  (define update-strs
+    (for/list ([u (in-list (with-form-updates e))])
+      (format "~a ~a" (symbol->string (with-update-field-kw u))
+                       (emit-expr (with-update-value u)))))
+  (format "(assoc ~a ~a)" target-str (string-join update-strs " ")))
+
+(define (emit-defenum f)
+  (define name (defenum-form-name f))
+  (define vals (defenum-form-values f))
+  (define val-strs (map (lambda (v) (symbol->string v)) vals))
+  (format "(def ~a-values #{~a})" name (string-join val-strs " ")))
 
 (define (emit-match e)
   (define target-str (emit-expr (match-form-target e)))

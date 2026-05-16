@@ -82,3 +82,15 @@
                          '(defn foo [(x : Long)] : Long
                             (let [y (helper x)] y))))
   (check-false (regexp-match? #rx"unused declare-extern" out)))
+
+;; --- with and defenum lint traversal -----------------------------------------
+
+(test-case "with form does not crash lint"
+  (define out (lint-prog `(defrecord P ,(list '#%brackets '(x : Long)))
+                         `(def p (->P 1))
+                         `(def q (with p ,(list '#%brackets ':x 2)))))
+  (check-true (string? out)))
+
+(test-case "defenum does not crash lint"
+  (define out (lint-prog '(defenum Color :red :green :blue)))
+  (check-true (string? out)))

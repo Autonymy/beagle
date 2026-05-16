@@ -159,6 +159,10 @@
 (struct defmulti-form (name dispatch-fn)                   #:transparent)
 (struct defmethod-form (name dispatch-val params body)     #:transparent)
 
+(struct with-form   (target updates)                          #:transparent)
+(struct with-update (field-kw value)                          #:transparent)
+(struct defenum-form (name values)                            #:transparent)
+
 (struct match-form  (target clauses)                         #:transparent)
 (struct match-clause (pattern body)                          #:transparent)
 (struct pat-wildcard ()                                      #:transparent)
@@ -604,6 +608,13 @@
      (doseq-form (parse-for-clauses (or (stx-ref subs 1) bindings-form))
                  (parse-body (or (stx-tail subs 2) body)))]
 
+    [(list 'with target-expr updates ...)
+     (parse-with-form (or (stx-ref subs 1) target-expr)
+                      (or (stx-tail subs 2) updates))]
+
+    [(list 'defenum (? symbol? name) values ...)
+     (defenum-form name (map ->datum (or (stx-tail subs 2) values)))]
+
     [(list 'match target-expr clauses ...)
      (parse-match-form (or (stx-ref subs 1) target-expr)
                        (or (stx-tail subs 2) clauses))]
@@ -641,6 +652,23 @@
     [(list (? symbol? name) params-form)
      (protocol-method name (parse-params params-form) #f)]
     [_ (error 'beagle "defprotocol method signature must be (name [params] : RetType) or (name [params]), got: ~v" d)]))
+
+(define (parse-with-form target-stx updates)
+  (define target (parse-expr target-stx))
+  (define parsed-updates
+    (for/list ([u (in-list updates)])
+      (define d (->datum u))
+      (define u-subs (stx-subs u))
+      (cond
+        [(and (bracketed? d) (>= (length (bracket-body d)) 2))
+         (define items (or (stx-tail u-subs 1) (bracket-body d)))
+         (define kw (->datum (car items)))
+         (unless (keyword-sym? kw)
+           (error 'beagle "with: field name must be a keyword, got: ~v" kw))
+         (with-update kw (parse-expr (or (and u-subs (cadr items)) (cadr items))))]
+        [else
+         (error 'beagle "with: each update must be [:field value], got: ~v" d)])))
+  (with-form target parsed-updates))
 
 (define (parse-body forms)
   (when (null? forms)
@@ -1087,6 +1115,9 @@
  (struct-out pat-var)
  (struct-out defn-multi)
  (struct-out arity-clause)
+ (struct-out with-form)
+ (struct-out with-update)
+ (struct-out defenum-form)
  parse-program
  DEFAULT-MODE
  DEFAULT-NAMESPACE

@@ -482,3 +482,26 @@
 (test-case "expression-level: no metadata when syntax has no source location"
   (define out (compile '(defn f [x] (+ x 1))))
   (check-false (matches? #rx"\\^\\{" out)))
+
+;; --- with form emission ------------------------------------------------------
+
+(test-case "with emits assoc"
+  (define out (compile `(defrecord P ,(br '(x : Long)))
+                       `(def p (->P 1))
+                       `(def q (with p ,(br ':x 2)))))
+  (check-true (matches? #rx"\\(assoc p :x 2\\)" out)))
+
+(test-case "with multi-field emits multi-arg assoc"
+  (define out (compile `(defrecord P ,(br '(x : Long) '(y : Long)))
+                       `(def p (->P 1 2))
+                       `(def q (with p ,(br ':x 10) ,(br ':y 20)))))
+  (check-true (matches? #rx"\\(assoc p :x 10 :y 20\\)" out)))
+
+;; --- defenum emission --------------------------------------------------------
+
+(test-case "defenum emits set def"
+  (define out (compile '(defenum Color :red :green :blue)))
+  (check-true (matches? #rx"\\(def Color-values #\\{" out))
+  (check-true (matches? #rx":red" out))
+  (check-true (matches? #rx":green" out))
+  (check-true (matches? #rx":blue" out)))

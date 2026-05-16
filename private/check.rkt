@@ -8,6 +8,8 @@
 ;; dynamic mode.
 
 (require racket/match
+         racket/string
+         racket/set
          "parse.rkt"
          "types.rkt"
          "stdlib-types.rkt")
@@ -20,6 +22,8 @@
 (define RECORD-FIELDS (make-hash))
 ;; Ordered field names for positional destructuring in match
 (define RECORD-FIELD-ORDER (make-hash))
+;; Enum value registry: enum-name -> list of keyword symbols
+(define ENUM-VALUES (make-hash))
 
 ;; Expression-level source locations from the parser.
 (define current-check-src-table (make-parameter #f))
@@ -182,6 +186,8 @@
        (hash-set! env name (type-fn (list ANY) (type-prim 'Any) ANY))]
       [(defmethod-form name _ params body)
        (void)]
+      [(defenum-form name values)
+       (hash-set! ENUM-VALUES name values)]
       [_ (void)]))
   env)
 
@@ -258,6 +264,7 @@
     [(defmethod-form name _ params body)
      (define body-env (extend-with-params env params))
      (last-expr-type body body-env)]
+    [(defenum-form _ _) (void)]
 
     [_ (infer-expr form env)]))
 
@@ -420,6 +427,37 @@
      arm-env]
     [else env]))
 
+;; --- exhaustive match checking ----------------------------------------------
+
+(define (check-match-exhaustiveness e env)
+  (define clauses (match-form-clauses e))
+  (define record-pats
+    (filter pat-record?
+            (map match-clause-pattern clauses)))
+  (when (and (not (null? record-pats))
+             (not (ormap (lambda (c)
+                           (or (pat-wildcard? (match-clause-pattern c))
+                               (pat-var? (match-clause-pattern c))))
+                         clauses)))
+    (define matched-types
+      (map pat-record-type-name record-pats))
+    (define all-record-types (hash-keys RECORD-FIELDS))
+    (define matched-set (list->set matched-types))
+    (define universe-candidates
+      (for/list ([rt (in-list all-record-types)]
+                 #:when (not (set-member? matched-set rt)))
+        rt))
+    (when (and (>= (length matched-types) 2)
+               (not (null? universe-candidates)))
+      (define src (src-for e))
+      (define file (and src (src-loc-source src)))
+      (define line (and src (src-loc-line src)))
+      (fprintf (current-error-port)
+               "warning: match may be non-exhaustive~a\n  matched: ~a\n  possibly missing: ~a\n"
+               (if line (format " at ~a:~a" (or file "?") line) "")
+               (string-join (map symbol->string matched-types) ", ")
+               (string-join (map symbol->string universe-candidates) ", ")))))
+
 ;; --- keyword field lookup --------------------------------------------------
 
 (define (lookup-kw-field-type kw-sym target-type env)
@@ -551,6 +589,7 @@
        (for/list ([c (in-list (match-form-clauses e))])
          (define arm-env (narrow-env-for-match c target-type env))
          (last-expr-type (match-clause-body c) arm-env)))
+     (check-match-exhaustiveness e env)
      (cond
        [(null? arm-types) ANY]
        [(andmap (lambda (t) (type-compatible? t (car arm-types))) (cdr arm-types))
@@ -571,6 +610,40 @@
      (infer-expr (kw-access-target e) env)
      (when (kw-access-default e) (infer-expr (kw-access-default e) env))
      (lookup-kw-field-type (kw-access-kw e) (infer-expr (kw-access-target e) env) env)]
+    [(with-form? e)
+     (define target-type (infer-expr (with-form-target e) env))
+     (cond
+       [(and (type-prim? target-type)
+             (hash-has-key? RECORD-FIELDS (type-prim-name target-type)))
+        (define rec-name (type-prim-name target-type))
+        (define field-map (hash-ref RECORD-FIELDS rec-name))
+        (for ([u (in-list (with-form-updates e))])
+          (define kw (with-update-field-kw u))
+          (define val-type (infer-expr (with-update-value u) env))
+          (cond
+            [(hash-has-key? field-map kw)
+             (define expected (hash-ref field-map kw))
+             (unless (type-compatible? val-type expected)
+               (raise-diag 'type-mismatch
+                           (format "with ~a: field ~a expected ~a, got ~a"
+                                   rec-name kw (type->string expected) (type->string val-type))
+                           (hasheq 'record (symbol->string rec-name)
+                                   'field (symbol->string kw)
+                                   'expected (type->string expected)
+                                   'actual (type->string val-type))
+                           #:src (src-for e)))]
+            [else
+             (raise-diag 'type-mismatch
+                         (format "with ~a: no field ~a on record ~a"
+                                 rec-name kw rec-name)
+                         (hasheq 'record (symbol->string rec-name)
+                                 'field (symbol->string kw))
+                         #:src (src-for e))]))
+        target-type]
+       [else
+        (for ([u (in-list (with-form-updates e))])
+          (infer-expr (with-update-value u) env))
+        ANY])]
     [(call-form? e)
      (define raw-type (hash-ref env (call-form-fn e) ANY))
      (define fn-type
