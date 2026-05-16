@@ -10,10 +10,14 @@ for being included as system context.
 
 (ns my.namespace)              ; canonical: matches Clojure (ns ...)
 (define-mode strict)            ; default; or `dynamic` to skip type checks
-(require some.clojure.ns)       ; or (require some.ns :as alias)
-(declare-extern fn [Args -> Ret])  ; type a Clojure function from elsewhere
+(require some.module :as mod)   ; imports all types/fns from another beagle module
+(declare-extern fn [Args -> Ret])  ; ONLY needed for Java interop or non-beagle fns
 (import java.io.File)          ; Java class import
 ```
+
+**NOTE:** `(require module :as alias)` imports all typed defs, defns, records,
+and macros from the required beagle module. You do NOT need `declare-extern`
+for cross-module beagle calls — the types are imported automatically.
 
 ## Top-level forms
 
@@ -112,11 +116,15 @@ idiom per concept.
 ## Let binding syntax
 
 ```racket
-(let [x 1 y 2] ...)                       ; untyped
-(let [(x : Long) 1 (y : Long) 2] ...)     ; typed (wrapped — same shape as params)
-(let [(x : Long) 1 y 2] ...)              ; mix
+(let [x (some-fn arg)] ...)               ; type inferred from RHS (preferred)
+(let [(x : Long) 1 (y : Long) 2] ...)     ; explicit type (only when narrowing)
 (let [[a b] pair] ...)                     ; sequential destructuring
+(let [{:keys [name age]} person] ...)      ; map destructuring
 ```
+
+**Let bindings infer types automatically.** If `some-fn` returns `Long`, then
+`x` has type `Long` without annotation. Only annotate when you want to narrow
+(e.g., force a union to a specific branch).
 
 ## Types
 
@@ -143,7 +151,11 @@ Parametric:
 - `(Vec T)`, `(List T)`, `(Set T)`, `(Map K V)`
 
 Union:
-- `(U String Nil)` — value is one of the alternatives
+- `(U String Long)` — value is one of the alternatives
+
+Nullable (sugar for `(U T Nil)`):
+- `String?` — shorthand for `(U String Nil)`
+- `Product?` — shorthand for `(U Product Nil)`
 
 ## Macros
 
@@ -302,21 +314,40 @@ Pre-typed in stdlib: `.exists`, `.trim`, `.startsWith`, `.endsWith`,
 - `defn NAME has untyped parameter(s): names`
 - `(unsafe "...") inline escape — beagle cannot type-check this code`
 
-## Errors (compile-time, fail with hint)
+## Errors (compile-time, fail with rich diagnostics)
 
-Set `BEAGLE_ERROR_FORMAT=json` to emit single-line JSON with fields:
-`tool`, `kind`, `message`, `hint`, `file`, `line`, `col`.
+Set `BEAGLE_ERROR_FORMAT=json` for structured output. JSON fields:
+`tool`, `kind`, `message`, `file`, `line`, `col`, `signature`,
+`expected`, `actual`, `arg-position`, `arg-expr`, `arg-signature`,
+`suggestions[]` (with `replace`/`with`/`signature`), `help`.
 
-Error kinds include: `unknown-type`, `unknown-form`, `type-mismatch`,
-`arity-mismatch`, `arity-too-few`, `duplicate-definition`, `macro-arity`,
-`syntax`, `unknown-mode`.
+Error kinds: `arity`, `type-mismatch`, `return-type`, `def-type`,
+`let-binding`, `compile-error`.
+
+Human-readable output (default) uses Rust-style formatting:
+```
+error[E002]: call to <=: arg 1 expected Long, got String
+  --> promotions.rkt:37
+   |
+37 |        (<= (campaign-name campaign) now)
+   |
+   = sig: <= : [Long Long -> Boolean]
+   = note: campaign-name : [Campaign -> String]
+   = help: did you mean campaign-start-date? (campaign-start-date : [Campaign -> Long])
+```
 
 ## Tools
 
 - `bin/beagle-build SOURCE.rkt [OUT.clj]` — compile one file
-- `bin/beagle-build-all [DIR]` — compile every `.rkt` in tree
-- `bin/beagle-check SOURCE.rkt`        — type-check only, no emit
-- `bin/beagle-expand SOURCE.rkt`       — show post-macro source
+- `bin/beagle-build-all FILE-OR-DIR... [--out DIR]` — batch compile (9x faster)
+- `bin/beagle-check SOURCE.rkt` — type-check only, no emit
+- `bin/beagle-check-all FILE-OR-DIR...` — batch type-check (10x faster)
+- `bin/beagle-expand SOURCE.rkt` — show post-macro source
+- `bin/beagle-sig FN-NAME FILE-OR-DIR...` — print function's type signature
+- `bin/beagle-fields RECORD FILE-OR-DIR...` — print record fields + accessors
+- `bin/beagle-callers FN-NAME FILE-OR-DIR...` — find all call sites
+- `bin/beagle-provides FILE-OR-DIR...` — list module exports with types
+- `bin/beagle-impact FN-NAME FILE-OR-DIR...` — callers + impact of signature change
 
 ## Empirical baseline
 

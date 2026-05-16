@@ -86,6 +86,16 @@
     [(and (symbol? t) (memq t (current-type-vars)))
      (type-var t)]
 
+    ;; nullable sugar: String? → (U String Nil), Product? → (U Product Nil)
+    [(and (symbol? t)
+          (not (memq t (current-type-vars)))
+          (let ([s (symbol->string t)])
+            (and (> (string-length s) 1)
+                 (char=? (string-ref s (sub1 (string-length s))) #\?))))
+     (define s (symbol->string t))
+     (define base-sym (string->symbol (substring s 0 (sub1 (string-length s)))))
+     (type-union (list (parse-type base-sym) (type-prim 'Nil)))]
+
     ;; primitive or user-defined type symbol
     [(symbol? t)
      (define canonical
@@ -206,8 +216,13 @@
              (type-app-ctor t)
              (string-join (map type->string (type-app-args t)) " "))]
     [(type-union? t)
-     (format "(U ~a)"
-             (string-join (map type->string (type-union-alts t)) " "))]
+     (define alts (type-union-alts t))
+     (if (and (= (length alts) 2)
+              (ormap (lambda (a) (and (type-prim? a) (eq? (type-prim-name a) 'Nil))) alts))
+         (let ([non-nil (findf (lambda (a) (not (and (type-prim? a) (eq? (type-prim-name a) 'Nil)))) alts)])
+           (format "~a?" (type->string non-nil)))
+         (format "(U ~a)"
+                 (string-join (map type->string (type-union-alts t)) " ")))]
     [(type-var? t) (symbol->string (type-var-name t))]
     [(type-poly? t)
      (format "(forall (~a) ~a)"
