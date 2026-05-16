@@ -38,18 +38,24 @@ events (leaf)
 └── analytics (requires events, projections, queries)
 ```
 
-## E5c Results
+## E5c Results (3 runs per track, unlabeled bugs)
 
-**Status:** multi-trial experiment in progress (3 runs per track, unlabeled bugs).
+| Metric | Beagle | Clojure |
+|--------|--------|---------|
+| Mean accuracy | 63.7% | 68.3% |
+| Std deviation | 1.5% | 5.5% |
+| Mean time | 319s | 226s |
+| Checker errors | 0 (all runs) | n/a |
 
-The type checker catches 25 of 40 injected bugs at compile time. Both tracks
-receive the same buggy code with no bug-location hints.
+The type checker catches 25/40 bugs at compile time and verifies fixes with
+certainty. But on raw line-level accuracy, the clojure agent scores higher —
+Claude Opus 4 is good enough at code reading to find most bugs by inspection.
 
-**Scoring:** line-level diff against golden reference. Automated via `bin/score-trial`.
+Beagle's advantage is **verification** (0 proven checker errors) and
+**consistency** (1.5% std dev vs 5.5%). Clojure's advantage is **speed** and
+**higher peak accuracy**.
 
-**Prompts:** exact agent prompts published in `prompts/`.
-
-See `results.md` for completed trial data.
+See `results.md` for full analysis, per-module breakdown, and confounding factors.
 
 ## Running
 
