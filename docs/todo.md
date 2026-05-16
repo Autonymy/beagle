@@ -40,6 +40,29 @@ refactoring, or scale beyond ~1000 lines.
 
 See `experiments/head-to-head/results.md`.
 
+## Next
+
+Architecture supports adding these without API breaks.
+
+- **Source mapping (comprehensive).** Goal: 99% automated source-mapping
+  so Clojure runtime errors point back at originating beagle source.
+  Current state: per-form source locations exist for compile-time errors.
+  Remaining: emit `.clj.map` or inline `^{:line N}` metadata so runtime
+  stacktraces map back to `.rkt` source.
+- **Type-definition system (protocols, multimethods, keyword-as-function).**
+  Robust/complete coverage for Clojure's polymorphic dispatch patterns:
+  - `defprotocol` / `deftype` / `extend-type` — protocol-based polymorphism
+  - `defmulti` / `defmethod` — multimethod dispatch
+  - Keyword-as-function lookups (`(:key map)`) — ubiquitous Clojure idiom
+- **Destructuring.** `{:keys [...]}` in let/fn/defn bindings. Important
+  for real Clojure interop but complex to parse.
+- **Atom/swap!/reset!.** Basic concurrency primitives. Common in real
+  Clojure apps.
+- **Threading macros `->`, `->>`.** Could be user-defined macros, but
+  they're universal enough to consider built-in.
+- **More stdlib typing.** Only ~100 of 1000+ Clojure functions typed.
+  Priority: high-use functions that would catch real bugs.
+
 ## Someday
 
 Speculative; no commitment.
@@ -51,8 +74,6 @@ Speculative; no commitment.
   and translate them to beagle source. Local model so data stays private.
 - **`#lang beagle/cljs`** — ClojureScript-targeted variant for browser
   / local-first apps.
-- **Source maps proper.** `.clj.map` files so Clojure runtime errors
-  point back at originating beagle source.
 - **LSP / editor integration.** Type-aware completion, jump-to-def, etc.
 - **Typed REPL.** Connect to a live Clojure socket-repl, evaluate
   beagle forms with full type checking before sending.
@@ -60,13 +81,15 @@ Speculative; no commitment.
 ## Done in v0
 
 - All forms (def, defn, fn, let, if, cond, when, do, call, vector, quote)
-- Meta: ns, define-mode, require, declare-extern, define-macro, unsafe
+- try/catch/finally, doseq, case, constructor calls (ClassName.)
+- Map literals (`{}`), set literals (`#{}`), import (Java classes)
+- Meta: ns, define-mode, require, declare-extern, define-macro, import, unsafe
 - Types: primitives, function types (incl. variadic), parametric, union, polymorphic (forall), Any
 - Macros: safe (gensym-hygienic) / unsafe with &rest and splice
-- Custom reader preserving `[]`/`()`
+- Custom reader preserving `[]`/`()`, intercepting `{}`/`#{}`
 - Stdlib extern catalog (~100 functions)
 - `bin/beagle-build`, `bin/beagle-build-all`, `bin/beagle-expand`
-- 149-test suite (incl. loop/recur, for comprehension, sort-by)
+- 229-test suite (incl. loop/recur, for comprehension, sort-by)
 - `experiments/` benchmark framework (40 tasks × 3 variants, gen-prompts + score + verify-behavior)
 - Head-to-head benchmark (8 programs, beagle vs raw Clojure, 16/16 pass)
 - Refactoring experiment (overhead-pct cascade, 2/2 pass)

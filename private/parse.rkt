@@ -9,11 +9,19 @@
          "macros.rkt")
 
 (define BT BRACKET-TAG)
+(define MT MAP-TAG)
+(define ST SET-TAG)
 
 (define (bracketed? d)        (and (pair? d) (eq? (car d) BT)))
 (define (bracket-body d)      (cdr d))
 
-;; Readtable for parsing beagle source: intercepts #"..." as regex literals.
+(define (map-tagged? d)       (and (pair? d) (eq? (car d) MT)))
+(define (map-body d)          (cdr d))
+
+(define (set-tagged? d)       (and (pair? d) (eq? (car d) ST)))
+(define (set-body d)          (cdr d))
+
+;; Readtable for parsing beagle source: intercepts #"...", {...}, and #{...}.
 (define (read-regex-pattern port)
   (let loop ([acc '()])
     (define c (read-char port))
@@ -27,16 +35,60 @@
          [else (loop (cons next (cons #\\ acc)))])]
       [else (loop (cons c acc))])))
 
-(define (regex-dispatch ch port src line col pos)
-  (define pattern (read-regex-pattern port))
-  (define result (list '#%regex pattern))
+(define (skip-ws port)
+  (let loop ()
+    (define c (peek-char port))
+    (when (and (char? c) (char-whitespace? c))
+      (read-char port)
+      (loop))))
+
+(define (read-until-brace port)
+  (let loop ([acc '()])
+    (skip-ws port)
+    (define c (peek-char port))
+    (cond
+      [(eof-object? c) (error 'beagle "unterminated map/set literal (missing `}`)")]
+      [(char=? c #\})
+       (read-char port)
+       (reverse acc)]
+      [else
+       (define val (read port))
+       (loop (cons val acc))])))
+
+(define (curly-reader-local ch port src line col pos)
+  (define items (read-until-brace port))
+  (define result (cons MT items))
   (if src
-    (datum->syntax #f result (vector src line col pos
-                                     (+ 3 (string-length pattern))))
+    (datum->syntax #f result (vector src line col pos #f))
     result))
 
+(define (hash-dispatch-local ch port src line col pos)
+  (define next (peek-char port))
+  (cond
+    [(and (char? next) (char=? next #\{))
+     (read-char port)
+     (define items (read-until-brace port))
+     (define result (cons ST items))
+     (if src
+       (datum->syntax #f result (vector src line col pos #f))
+       result)]
+    [(and (char? next) (char=? next #\"))
+     (read-char port)
+     (define pattern (read-regex-pattern port))
+     (define result (list '#%regex pattern))
+     (if src
+       (datum->syntax #f result (vector src line col pos
+                                        (+ 3 (string-length pattern))))
+       result)]
+    [else
+     (error 'beagle "unexpected dispatch sequence: #~a" next)]))
+
 (define beagle-readtable
-  (make-readtable #f #\" 'dispatch-macro regex-dispatch))
+  (make-readtable #f
+    #\{ 'terminating-macro curly-reader-local
+    #\} 'terminating-macro (lambda (ch port src line col pos)
+                             (error 'beagle "unexpected `}`"))
+    #\# 'non-terminating-macro hash-dispatch-local))
 
 ;; --- AST -------------------------------------------------------------------
 
@@ -66,6 +118,14 @@
 (struct method-call (method-name target args)               #:transparent)
 (struct static-call (class+method args)                     #:transparent)
 (struct dynamic-var (name)                                  #:transparent)
+(struct map-form   (pairs)                                  #:transparent)  ; pairs: list of (key . value)
+(struct set-form   (items)                                  #:transparent)
+(struct try-form    (body catches finally-body)             #:transparent)
+(struct catch-clause (exception-type name body)            #:transparent)
+(struct doseq-form  (clauses body)                         #:transparent)
+(struct case-form   (test clauses default)                 #:transparent)
+(struct case-clause (value body)                           #:transparent)
+(struct new-form    (class-name args)                      #:transparent)
 
 (struct param       (name type)                             #:transparent)
 (struct let-binding (name type value)                       #:transparent)
@@ -80,6 +140,7 @@
                  macros
                  externs        ; hash: name → type
                  requires       ; list of require-entry
+                 imports        ; list of symbols (fully-qualified Java class names)
                  form-stxs)    ; list of syntax objects parallel to forms
   #:transparent)
 
@@ -176,6 +237,7 @@
   (define registry  (make-macro-registry))
   (define externs   (make-hash))
   (define requires  '())
+  (define imports   '())
 
   (for ([d (in-list datums)])
     (match d
@@ -218,6 +280,9 @@
            (import-module-types! mod-path alias externs registry)))
        (set! requires (cons (require-entry rn alias) requires))]
 
+      [(list 'import (? symbol? class-name))
+       (set! imports (cons class-name imports))]
+
       [_ (void)]))
 
   ;; Pass 2: parse each remaining form, expanding macros first.
@@ -230,7 +295,7 @@
   (define parsed (map car pairs))
   (define form-stxs (map cdr pairs))
 
-  (program mode ns parsed registry externs (reverse requires) form-stxs))
+  (program mode ns parsed registry externs (reverse requires) (reverse imports) form-stxs))
 
 (define (meta-form? d)
   (and (pair? d)
@@ -238,7 +303,8 @@
                        define-mode
                        define-macro
                        declare-extern
-                       require))))
+                       require
+                       import))))
 
 ;; --- Java interop detection -------------------------------------------------
 
@@ -268,6 +334,13 @@
               (char=? (string-ref s 0) #\*)
               (char=? (string-ref s (- (string-length s) 1)) #\*)))))
 
+(define (constructor-sym? sym)
+  (and (symbol? sym)
+       (let ([s (symbol->string sym)])
+         (and (> (string-length s) 1)
+              (char-upper-case? (string-ref s 0))
+              (char=? (string-ref s (- (string-length s) 1)) #\.)))))
+
 ;; --- per-form parsing ------------------------------------------------------
 
 (define (parse-top d)
@@ -291,6 +364,10 @@
      (regex-lit (cadr d))]
     [(bracketed? d)
      (vec-form (map parse-expr (bracket-body d)))]
+    [(map-tagged? d)
+     (parse-map-literal (map-body d))]
+    [(set-tagged? d)
+     (set-form (map parse-expr (set-body d)))]
     [(and (pair? d) (eq? (car d) 'quote) (= (length d) 2))
      (quoted (cadr d))]
     [(pair? d) (parse-list-form d)]
@@ -351,6 +428,17 @@
 
     [(list 'cond clauses ...) (cond-form (parse-cond-clauses clauses))]
 
+    [(list 'try rest ...) (parse-try-form rest)]
+
+    [(list 'doseq bindings-form body ...)
+     (doseq-form (parse-for-clauses bindings-form) (parse-body body))]
+
+    [(list 'case test-expr clauses ...)
+     (parse-case-form test-expr clauses)]
+
+    [(list (? constructor-sym? c) args ...)
+     (new-form c (map parse-expr args))]
+
     [(list (? dot-method-sym? m) target args ...)
      (method-call m (parse-expr target) (map parse-expr args))]
 
@@ -366,6 +454,18 @@
   (when (null? forms)
     (error 'beagle "expected at least one body expression"))
   (map parse-expr forms))
+
+(define (parse-map-literal items)
+  (unless (even? (length items))
+    (error 'beagle "map literal must have an even number of forms (key/value pairs), got ~a"
+           (length items)))
+  (let loop ([rest items] [acc '()])
+    (cond
+      [(null? rest) (map-form (reverse acc))]
+      [else
+       (loop (cddr rest)
+             (cons (cons (parse-expr (car rest)) (parse-expr (cadr rest)))
+                   acc))])))
 
 (define (parse-cond-clause c)
   (cond
@@ -397,6 +497,78 @@
                      (cons (cond-clause (parse-expr (car rest))
                                         (list (parse-expr (cadr rest))))
                            acc))]))]))
+
+;; --- try/catch/finally -----------------------------------------------------
+
+(define (parse-try-form rest)
+  (define-values (body-forms catch-forms finally-form)
+    (let loop ([items rest] [body '()])
+      (cond
+        [(null? items)
+         (values (reverse body) '() #f)]
+        [(and (pair? (car items)) (eq? (caar items) 'catch))
+         (define-values (catches fin) (parse-catch-finally items))
+         (values (reverse body) catches fin)]
+        [(and (pair? (car items)) (eq? (caar items) 'finally))
+         (define-values (catches fin) (parse-catch-finally items))
+         (values (reverse body) catches fin)]
+        [else
+         (loop (cdr items) (cons (car items) body))])))
+  (when (null? body-forms)
+    (error 'beagle "try requires at least one body expression"))
+  (try-form (map parse-expr body-forms)
+            catch-forms
+            finally-form))
+
+(define (parse-catch-finally items)
+  (let loop ([rest items] [catches '()] [fin #f])
+    (cond
+      [(null? rest) (values (reverse catches) fin)]
+      [(and (pair? (car rest)) (eq? (caar rest) 'catch))
+       (define clause (car rest))
+       (when (< (length clause) 4)
+         (error 'beagle "catch clause needs (catch ExType name body...)"))
+       (define ex-type (cadr clause))
+       (define name (caddr clause))
+       (define body (cdddr clause))
+       (loop (cdr rest)
+             (cons (catch-clause ex-type name (map parse-expr body)) catches)
+             fin)]
+      [(and (pair? (car rest)) (eq? (caar rest) 'finally))
+       (define clause (car rest))
+       (when (< (length clause) 2)
+         (error 'beagle "finally clause needs at least one body expression"))
+       (loop (cdr rest) catches (map parse-expr (cdr clause)))]
+      [else (error 'beagle "unexpected form after catch/finally: ~v" (car rest))])))
+
+;; --- case ------------------------------------------------------------------
+
+(define (parse-case-form test-expr clauses)
+  (define test (parse-expr test-expr))
+  (cond
+    [(null? clauses) (case-form test '() #f)]
+    [(odd? (length clauses))
+     ;; odd number: last is default
+     (define pairs (all-but-last-item clauses))
+     (define default (last-item clauses))
+     (case-form test (parse-case-pairs pairs) (parse-expr default))]
+    [else
+     (case-form test (parse-case-pairs clauses) #f)]))
+
+(define (parse-case-pairs items)
+  (let loop ([rest items] [acc '()])
+    (cond
+      [(null? rest) (reverse acc)]
+      [else (loop (cddr rest)
+                  (cons (case-clause (parse-expr (car rest))
+                                     (parse-expr (cadr rest)))
+                        acc))])))
+
+(define (last-item xs)
+  (if (null? (cdr xs)) (car xs) (last-item (cdr xs))))
+
+(define (all-but-last-item xs)
+  (if (null? (cdr xs)) '() (cons (car xs) (all-but-last-item (cdr xs)))))
 
 ;; --- params + bindings -----------------------------------------------------
 
@@ -522,9 +694,18 @@
  (struct-out method-call)
  (struct-out static-call)
  (struct-out dynamic-var)
+ (struct-out map-form)
+ (struct-out set-form)
+ (struct-out try-form)
+ (struct-out catch-clause)
+ (struct-out doseq-form)
+ (struct-out case-form)
+ (struct-out case-clause)
+ (struct-out new-form)
  dot-method-sym?
  static-method-sym?
  dynamic-var-sym?
+ constructor-sym?
  (struct-out param)
  (struct-out let-binding)
  (struct-out require-entry)

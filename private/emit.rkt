@@ -22,13 +22,25 @@
 (define (emit-ns prog)
   (define ns (program-namespace prog))
   (define rs (program-requires prog))
+  (define is (program-imports prog))
+  (define has-requires (not (null? rs)))
+  (define has-imports  (not (null? is)))
   (cond
-    [(null? rs)
+    [(and (not has-requires) (not has-imports))
      (format "(ns ~a)" ns)]
-    [else
+    [(and has-requires (not has-imports))
      (format "(ns ~a\n  (:require ~a))"
              ns
-             (string-join (map emit-require rs) "\n            "))]))
+             (string-join (map emit-require rs) "\n            "))]
+    [(and (not has-requires) has-imports)
+     (format "(ns ~a\n  (:import ~a))"
+             ns
+             (string-join (map emit-import is) "\n           "))]
+    [else
+     (format "(ns ~a\n  (:require ~a)\n  (:import ~a))"
+             ns
+             (string-join (map emit-require rs) "\n            ")
+             (string-join (map emit-import is) "\n           "))]))
 
 (define (emit-require r)
   (cond
@@ -38,6 +50,26 @@
              (require-entry-alias r))]
     [else
      (format "[~a]" (require-entry-ns r))]))
+
+;; Split a fully-qualified Java class symbol like 'java.io.File into
+;; package ("java.io") and class name ("File"), then emit Clojure-style
+;; [package ClassName].
+(define (emit-import class-sym)
+  (define s (symbol->string class-sym))
+  (define last-dot
+    (let loop ([i (- (string-length s) 1)])
+      (cond
+        [(< i 0) #f]
+        [(char=? (string-ref s i) #\.) i]
+        [else (loop (- i 1))])))
+  (cond
+    [last-dot
+     (define pkg (substring s 0 last-dot))
+     (define cls (substring s (+ last-dot 1)))
+     (format "[~a ~a]" pkg cls)]
+    [else
+     ;; No dot — bare class name (e.g. Exception)
+     (symbol->string class-sym)]))
 
 ;; --- per-form emission -----------------------------------------------------
 
@@ -75,6 +107,15 @@
     [(vec-form? e)
      (format "[~a]"
              (string-join (map emit-expr (vec-form-items e)) " "))]
+    [(map-form? e)
+     (format "{~a}"
+             (string-join
+              (map (lambda (p) (format "~a ~a" (emit-expr (car p)) (emit-expr (cdr p))))
+                   (map-form-pairs e))
+              " "))]
+    [(set-form? e)
+     (format "#{~a}"
+             (string-join (map emit-expr (set-form-items e)) " "))]
     [(unsafe-expr? e)   (emit-expr (unsafe-expr-inner e))]
     [(unsafe-clj? e)    (string-trim (unsafe-clj-clj-string e))]
     [(if-form? e)
@@ -132,6 +173,30 @@
              (emit-args (static-call-args e)))]
     [(dynamic-var? e)
      (symbol->string (dynamic-var-name e))]
+    [(try-form? e)
+     (format "(try\n  ~a~a~a)"
+             (emit-body (try-form-body e) "  ")
+             (string-join (for/list ([c (try-form-catches e)])
+               (format "\n  (catch ~a ~a\n    ~a)"
+                       (catch-clause-exception-type c)
+                       (catch-clause-name c)
+                       (emit-body (catch-clause-body c) "    "))) "")
+             (if (try-form-finally-body e)
+               (format "\n  (finally\n    ~a)" (emit-body (try-form-finally-body e) "    "))
+               ""))]
+    [(doseq-form? e)
+     (format "(doseq [~a]\n  ~a)"
+             (emit-for-clauses (doseq-form-clauses e))
+             (emit-body (doseq-form-body e) "  "))]
+    [(case-form? e)
+     (define clause-strs (for/list ([c (case-form-clauses e)])
+       (format "~a ~a" (emit-expr (case-clause-value c)) (emit-expr (case-clause-body c)))))
+     (define body (string-join clause-strs "\n  "))
+     (if (case-form-default e)
+       (format "(case ~a\n  ~a\n  ~a)" (emit-expr (case-form-test e)) body (emit-expr (case-form-default e)))
+       (format "(case ~a\n  ~a)" (emit-expr (case-form-test e)) body))]
+    [(new-form? e)
+     (format "(~a~a)" (symbol->string (new-form-class-name e)) (emit-args (new-form-args e)))]
     [(call-form? e)
      (format "(~a~a)"
              (symbol->string (call-form-fn e))

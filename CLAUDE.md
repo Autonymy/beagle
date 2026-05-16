@@ -19,9 +19,11 @@ it as canonical when explaining the language.
 `#lang beagle` v0 — end-to-end working, empirically validated:
 
 - Forms: `def`, `defn`, `fn`, `let`, `if`, `cond`, `when`, `do`, `loop`,
-  `recur`, `for` (with `:when`), `defrecord`, call, vector literal, quote
+  `recur`, `for` (with `:when`), `doseq`, `try`/`catch`/`finally`, `case`,
+  `defrecord`, constructor calls (`ClassName.`), call, vector literal,
+  map literal (`{}`), set literal (`#{}`), quote
 - Meta: `ns`, `define-mode`, `require`, `declare-extern`, `define-macro`,
-  `unsafe` (top-level AND in expression position)
+  `import`, `unsafe` (top-level AND in expression position)
 - Param syntax: **wrapped only** — `(name : Type)`. Single canonical marker `:`.
   Inline annotations and `:-` marker were removed in the AI-optimization
   pass (one idiom per concept).
@@ -41,7 +43,7 @@ it as canonical when explaining the language.
 - 3 benchmark variants (A canonical, B required-types, C minimal)
 - Java interop: `.method`, `Class/static`, `*dynamic-vars*` as first-class
   typed forms; ~30 common methods/statics pre-typed in stdlib
-- 175 tests passing
+- 229 tests passing
 - 40 benchmark tasks with real Clojure behavior verification
 - 8 head-to-head programs (beagle vs raw Clojure), 16/16 behavior pass
 - Refactoring + bug-detection experiments (arity cascade, injected bugs)
@@ -55,7 +57,8 @@ parse → check → emit
 ```
 
 - `lang/reader.rkt` — custom reader preserving `[]` vs `()` via
-  `#%brackets` tag (`read-square-bracket-with-tag`).
+  `#%brackets` tag (`read-square-bracket-with-tag`). Also intercepts
+  `{}` (map literals) and `#{}` (set literals) via `MAP-TAG`/`SET-TAG`.
 - `private/types.rkt` — type AST, parser, compatibility checker.
 - `private/stdlib-types.rkt` — pre-typed Clojure stdlib catalog (single
   biggest leverage point for AI safety net).
@@ -128,7 +131,7 @@ Clojure idioms whose cost > benefit for beagle's goals:
 - **Threading macros `->`, `->>`** — they're just macros; users can add as
   needed. Not built-in.
 - **`@deref`, `#'var-quote`** — Clojure-runtime concepts; use `unsafe`
-- **`{}` map literals** — defer; use `(hash-map ...)` or `unsafe` for now
+- ~~**`{}` map literals**~~ — implemented: `{}` and `#{}` now native
 - **Exotic reader macros (`#=`, `#_`, `#?`)** — Clojure-reader-specific
 
 ## AI-optimization features in v0

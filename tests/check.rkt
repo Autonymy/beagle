@@ -371,3 +371,104 @@
    (lambda ()
      (check-prog
       '(def x (.someUnknownMethod obj))))))
+
+;; --- map literals ------------------------------------------------------------
+
+(define MT MAP-TAG)
+(define (mt . xs) (cons MT xs))
+
+(test-case "map literal passes type check"
+  (check-not-exn
+   (lambda ()
+     (check-prog `(def m ,(mt ':a 1 ':b 2))))))
+
+(test-case "map literal typed as (Map Any Any) passes"
+  (check-not-exn
+   (lambda ()
+     (check-prog `(def m : (Map Any Any) ,(mt ':a 1))))))
+
+(test-case "empty map literal passes"
+  (check-not-exn
+   (lambda ()
+     (check-prog `(def m ,(mt))))))
+
+;; --- set literals ------------------------------------------------------------
+
+(define ST SET-TAG)
+(define (st . xs) (cons ST xs))
+
+(test-case "set literal passes type check"
+  (check-not-exn
+   (lambda ()
+     (check-prog `(def s ,(st 1 2 3))))))
+
+(test-case "set literal typed as (Set Any) passes"
+  (check-not-exn
+   (lambda ()
+     (check-prog `(def s : (Set Any) ,(st 1 2 3))))))
+
+(test-case "empty set literal passes"
+  (check-not-exn
+   (lambda ()
+     (check-prog `(def s ,(st))))))
+
+;; --- import ------------------------------------------------------------------
+
+(test-case "import is meta-only, does not affect type checking"
+  (check-not-exn
+   (lambda ()
+     (check-prog '(import java.io.File)
+                 '(def x 1)))))
+
+;; --- try/catch/finally -------------------------------------------------------
+
+(test-case "try/catch passes type check"
+  (check-not-exn
+   (lambda ()
+     (check-prog '(def x (try (/ 1 0) (catch Exception e (str e))))))))
+
+(test-case "try/catch/finally passes type check"
+  (check-not-exn
+   (lambda ()
+     (check-prog '(def x (try (inc 1) (catch Exception e "err") (finally (println "done"))))))))
+
+(test-case "try with typed body passes"
+  (check-not-exn
+   (lambda ()
+     (check-prog '(def x : Any (try (inc 1) (catch Exception e 0)))))))
+
+;; --- doseq -------------------------------------------------------------------
+
+(test-case "doseq passes type check"
+  (check-not-exn
+   (lambda ()
+     (check-prog '(doseq [x (range 10)] (println x))))))
+
+(test-case "doseq with :when passes"
+  (check-not-exn
+   (lambda ()
+     (check-prog '(doseq [x (range 10) :when (even? x)] (println x))))))
+
+;; --- case --------------------------------------------------------------------
+
+(test-case "case passes type check"
+  (check-not-exn
+   (lambda ()
+     (check-prog '(def y (case x "a" 1 "b" 2 "default"))))))
+
+(test-case "case without default passes"
+  (check-not-exn
+   (lambda ()
+     (check-prog '(def y (case x 1 "one" 2 "two"))))))
+
+;; --- constructor calls -------------------------------------------------------
+
+(test-case "constructor call passes type check"
+  (check-not-exn
+   (lambda ()
+     (check-prog '(def f (File. "/tmp"))))))
+
+(test-case "constructor with no args passes"
+  (check-not-exn
+   (lambda ()
+     (check-prog '(def x (ArrayList.))))))

@@ -199,6 +199,77 @@ Emits:
 (defn employee-rate [r] (:rate r))
 ```
 
+### `try` / `catch` / `finally`
+
+```racket
+(try
+  BODY...
+  (catch ExceptionType name HANDLER-BODY...)
+  (finally CLEANUP-BODY...))
+```
+
+Multiple `catch` clauses allowed. `finally` is optional.
+
+Example:
+```racket
+(try
+  (Long/parseLong s)
+  (catch Exception e
+    (println (.getMessage e))
+    -1)
+  (finally
+    (println "done")))
+```
+
+### `doseq`
+
+```racket
+(doseq [NAME COLL ...] BODY...)
+```
+
+Side-effecting iteration. Same binding syntax as `for` (multiple bindings,
+`:when` clauses). Returns nil.
+
+Example:
+```racket
+(doseq [x items :when (pos? x)]
+  (println x))
+```
+
+### `case`
+
+```racket
+(case TEST
+  VALUE1 RESULT1
+  VALUE2 RESULT2
+  DEFAULT)
+```
+
+Constant-time dispatch. Clauses are value/result pairs. An odd trailing
+form is the default (like Clojure).
+
+Example:
+```racket
+(case color
+  :red   "stop"
+  :green "go"
+  "unknown")
+```
+
+### Constructor call
+
+```racket
+(ClassName. ARGS...)
+```
+
+Java constructor. The trailing dot is the marker.
+
+Example:
+```racket
+(java.io.File. "/tmp/test")
+(StringBuilder. "init")
+```
+
 ## Data
 
 ### Vector literal
@@ -211,6 +282,30 @@ Example:
 ```racket
 [1 2 3]
 [(name : String) (age : Long)]    ; in param-list positions
+```
+
+### Map literal
+
+```racket
+{KEY1 VALUE1 KEY2 VALUE2 ...}
+```
+
+Example:
+```racket
+{:name "Tom" :age 30}
+{(keyword k) v}
+```
+
+### Set literal
+
+```racket
+#{ITEMS...}
+```
+
+Example:
+```racket
+#{1 2 3}
+#{:a :b :c}
 ```
 
 ### Quote
@@ -373,6 +468,20 @@ Examples:
 
 (define-macro unsafe debug-call (form)
   (do (println "trace") form))
+```
+
+### `import`
+
+```racket
+(import FULLY.QUALIFIED.CLASS)
+```
+
+Emits a `(:import [package ClassName])` clause in the generated ns form.
+
+Example:
+```racket
+(import java.io.File)
+(import java.time.Instant)
 ```
 
 ### `unsafe` (inline)

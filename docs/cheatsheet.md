@@ -12,6 +12,7 @@ for being included as system context.
 (define-mode strict)            ; default; or `dynamic` to skip type checks
 (require some.clojure.ns)       ; or (require some.ns :as alias)
 (declare-extern fn [Args -> Ret])  ; type a Clojure function from elsewhere
+(import java.io.File)          ; Java class import
 ```
 
 ## Top-level forms
@@ -58,8 +59,14 @@ Field syntax reuses wrapped param form `(name : Type)`. All fields must be typed
 (for [x coll1 y coll2 :when pred] body...)  ; list comprehension
 (fn [PARAMS] body...)
 (fn [PARAMS] : ReturnType body...)
+(try body... (catch ExType e handler...) (finally cleanup...))
+(doseq [x coll ...] body...)       ; side-effecting iteration
+(case test val1 result1 val2 result2 default)
+(ClassName. args...)                ; Java constructor
 'datum                              ; quote
 [item1 item2 ...]                   ; vector literal
+{k1 v1 k2 v2}                      ; map literal
+#{item1 item2}                      ; set literal
 (fn-name arg1 arg2 ...)             ; function call
 ```
 
@@ -223,7 +230,6 @@ Pre-typed in stdlib: `.exists`, `.trim`, `.startsWith`, `.endsWith`,
 |---|---|---|
 | Method overloading | Only one signature per `.method`; second overload needs separate `declare-extern` | Union of function types |
 | Receiver type dispatch | `.exists` typed globally, not per-class | `File/.exists` syntax (Clojure 1.12+) |
-| Constructor calls | `(ClassName. args)` not recognized | New AST node for trailing-dot |
 | Static field access | `Math/PI` as bare symbol returns Any | `declare-extern Math/PI Double` works now |
 | Generic type params | `(.get (HashMap) key)` can't track value type | Java generics model |
 | Overload resolution | Multiple Java methods with same name, different types | Essentially javac |

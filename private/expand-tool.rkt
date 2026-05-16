@@ -14,6 +14,8 @@
          "types.rkt")
 
 (define BT BRACKET-TAG)
+(define MT MAP-TAG)
+(define ST SET-TAG)
 
 ;; --- entry ----------------------------------------------------------------
 
@@ -32,16 +34,78 @@
       [_ (void)]))
   ;; Second pass: expand each non-meta form
   (for ([d (in-list datums)])
-    (unless (and (pair? d) (memq (car d) '(define-macro)))
+    (unless (and (pair? d) (memq (car d) '(define-macro import)))
       (define expanded (expand-fully registry d))
       (displayln (datum->beagle-src expanded))
       (newline))))
 
+;; Minimal readtable for expand-tool: handles #"...", {...}, and #{...}.
+(define (read-regex port)
+  (let loop ([acc '()])
+    (define c (read-char port))
+    (cond
+      [(eof-object? c) (error 'beagle "unterminated regex literal")]
+      [(char=? c #\")  (list->string (reverse acc))]
+      [(char=? c #\\)
+       (define next (read-char port))
+       (cond
+         [(eof-object? next) (error 'beagle "unterminated regex literal")]
+         [else (loop (cons next (cons #\\ acc)))])]
+      [else (loop (cons c acc))])))
+
+(define (skip-ws-expand port)
+  (let loop ()
+    (define c (peek-char port))
+    (when (and (char? c) (char-whitespace? c))
+      (read-char port)
+      (loop))))
+
+(define (read-until-brace-expand port)
+  (let loop ([acc '()])
+    (skip-ws-expand port)
+    (define c (peek-char port))
+    (cond
+      [(eof-object? c) (error 'beagle "unterminated map/set literal")]
+      [(char=? c #\})
+       (read-char port)
+       (reverse acc)]
+      [else
+       (define val (read port))
+       (loop (cons val acc))])))
+
+(define expand-readtable
+  (make-readtable #f
+    #\{ 'terminating-macro
+         (lambda (ch port src line col pos)
+           (define items (read-until-brace-expand port))
+           (define result (cons MT items))
+           (if src (datum->syntax #f result (vector src line col pos #f)) result))
+    #\} 'terminating-macro
+         (lambda (ch port src line col pos) (error 'beagle "unexpected `}`"))
+    #\# 'non-terminating-macro
+         (lambda (ch port src line col pos)
+           (define next (peek-char port))
+           (cond
+             [(and (char? next) (char=? next #\{))
+              (read-char port)
+              (define items (read-until-brace-expand port))
+              (define result (cons ST items))
+              (if src (datum->syntax #f result (vector src line col pos #f)) result)]
+             [(and (char? next) (char=? next #\"))
+              (read-char port)
+              (define pattern (read-regex port))
+              (define result (list '#%regex pattern))
+              (if src
+                (datum->syntax #f result (vector src line col pos (+ 3 (string-length pattern))))
+                result)]
+             [else (error 'beagle "unexpected dispatch: #~a" next)]))))
+
 (define (read-file-datums path)
-  ;; Use beagle's reader to preserve [...] vs (...) distinction.
+  ;; Use beagle's reader to preserve [...] vs (...), {...}, and #{...}.
   (with-input-from-file path
     (lambda ()
-      (parameterize ([read-square-bracket-with-tag BT])
+      (parameterize ([read-square-bracket-with-tag BT]
+                     [current-readtable expand-readtable])
         ;; Skip the #lang line.
         (read-line)
         (let loop ([acc '()])
@@ -52,6 +116,7 @@
 
 ;; Render a datum back into beagle-equivalent source. Bracketed lists
 ;; (from #%brackets) render with `[...]`; other lists with `(...)`.
+;; Map-tagged render as `{...}`; set-tagged render as `#{...}`.
 (define (datum->beagle-src d)
   (cond
     [(string? d) (~v d)]
@@ -63,6 +128,14 @@
     [(and (pair? d) (eq? (car d) BT))
      ;; bracketed form
      (format "[~a]"
+             (render-list-body (cdr d)))]
+    [(and (pair? d) (eq? (car d) MT))
+     ;; map literal
+     (format "{~a}"
+             (render-list-body (cdr d)))]
+    [(and (pair? d) (eq? (car d) ST))
+     ;; set literal
+     (format "#{~a}"
              (render-list-body (cdr d)))]
     [(pair? d)
      (format "(~a)"

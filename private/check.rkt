@@ -194,6 +194,15 @@
     [(quoted? e) ANY]
     [(regex-lit? e) ANY]
     [(vec-form? e) (type-app 'Vec (list ANY))]
+    [(map-form? e)
+     (for ([p (in-list (map-form-pairs e))])
+       (infer-expr (car p) env)
+       (infer-expr (cdr p) env))
+     (type-app 'Map (list ANY ANY))]
+    [(set-form? e)
+     (for ([item (in-list (set-form-items e))])
+       (infer-expr item env))
+     (type-app 'Set (list ANY))]
     [(unsafe-expr? e) ANY]
     [(unsafe-clj? e) ANY]
     [(if-form? e)
@@ -272,6 +281,34 @@
        [else
         (for ([a (in-list (static-call-args e))]) (infer-expr a env))
         ANY])]
+    [(try-form? e)
+     (for ([expr (in-list (try-form-body e))]) (infer-expr expr env))
+     (for ([c (in-list (try-form-catches e))])
+       (define catch-env (mut-copy env))
+       (hash-set! catch-env (catch-clause-name c) ANY)
+       (for ([expr (in-list (catch-clause-body c))]) (infer-expr expr catch-env)))
+     (when (try-form-finally-body e)
+       (for ([expr (in-list (try-form-finally-body e))]) (infer-expr expr env)))
+     ANY]
+    [(doseq-form? e)
+     (define body-env (mut-copy env))
+     (for ([c (in-list (doseq-form-clauses e))])
+       (cond
+         [(for-binding? c) (hash-set! body-env (for-binding-name c) ANY)]
+         [(for-when? c) (infer-expr (for-when-test c) body-env)]))
+     (last-expr-type (doseq-form-body e) body-env)
+     ANY]
+    [(case-form? e)
+     (infer-expr (case-form-test e) env)
+     (for ([c (in-list (case-form-clauses e))])
+       (infer-expr (case-clause-value c) env)
+       (infer-expr (case-clause-body c) env))
+     (when (case-form-default e)
+       (infer-expr (case-form-default e) env))
+     ANY]
+    [(new-form? e)
+     (for ([a (in-list (new-form-args e))]) (infer-expr a env))
+     ANY]
     [(call-form? e)
      (define raw-type (hash-ref env (call-form-fn e) ANY))
      (define fn-type

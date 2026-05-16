@@ -223,3 +223,120 @@
 (test-case "dynamic var emits as *name*"
   (define out (compile '(def x (first *command-line-args*))))
   (check-true (matches? #rx"\\*command-line-args\\*" out)))
+
+;; --- map literals ------------------------------------------------------------
+
+(define MT MAP-TAG)
+(define (mt . xs) (cons MT xs))
+
+(test-case "map literal emits as Clojure map"
+  (define out (compile `(def m ,(mt ':a 1 ':b 2))))
+  (check-true (matches? #rx"\\{:a 1 :b 2\\}" out)))
+
+(test-case "empty map literal emits"
+  (define out (compile `(def m ,(mt))))
+  (check-true (matches? #rx"\\{\\}" out)))
+
+(test-case "nested map in vector emits"
+  (define out (compile `(def xs ,(br (mt ':a 1)))))
+  (check-true (matches? #rx"\\[\\{:a 1\\}\\]" out)))
+
+;; --- set literals ------------------------------------------------------------
+
+(define ST SET-TAG)
+(define (st . xs) (cons ST xs))
+
+(test-case "set literal emits as Clojure set"
+  (define out (compile `(def s ,(st 1 2 3))))
+  (check-true (matches? #rx"#\\{1 2 3\\}" out)))
+
+(test-case "empty set literal emits"
+  (define out (compile `(def s ,(st))))
+  (check-true (matches? #rx"#\\{\\}" out)))
+
+;; --- import ------------------------------------------------------------------
+
+(test-case "import emits :import in ns form"
+  (define out (compile '(import java.io.File)
+                       '(def x 1)))
+  (check-true (matches? #rx":import" out))
+  (check-true (matches? #rx"\\[java\\.io File\\]" out)))
+
+(test-case "multiple imports emit correctly"
+  (define out (compile '(import java.io.File)
+                       '(import java.util.ArrayList)
+                       '(def x 1)))
+  (check-true (matches? #rx"\\[java\\.io File\\]" out))
+  (check-true (matches? #rx"\\[java\\.util ArrayList\\]" out)))
+
+(test-case "import with require emits both"
+  (define out (compile '(require clojure.string :as str)
+                       '(import java.io.File)
+                       '(def x 1)))
+  (check-true (matches? #rx":require" out))
+  (check-true (matches? #rx":import" out))
+  (check-true (matches? #rx"\\[clojure\\.string :as str\\]" out))
+  (check-true (matches? #rx"\\[java\\.io File\\]" out)))
+
+;; --- try/catch/finally -------------------------------------------------------
+
+(test-case "try/catch emits as Clojure try/catch"
+  (define out (compile '(def x (try (/ 1 0) (catch Exception e (str e))))))
+  (check-true (matches? #rx"\\(try" out))
+  (check-true (matches? #rx"\\(catch Exception e" out))
+  (check-true (matches? #rx"\\(str e\\)" out)))
+
+(test-case "try/catch/finally emits all parts"
+  (define out (compile '(def x (try (risky) (catch Exception e "err") (finally (cleanup))))))
+  (check-true (matches? #rx"\\(try" out))
+  (check-true (matches? #rx"\\(catch Exception e" out))
+  (check-true (matches? #rx"\\(finally" out))
+  (check-true (matches? #rx"\\(cleanup\\)" out)))
+
+(test-case "try with multiple catches emits both"
+  (define out (compile '(def x (try (risky)
+    (catch ArithmeticException e "math")
+    (catch Exception e "other")))))
+  (check-true (matches? #rx"ArithmeticException" out))
+  (check-true (matches? #rx"Exception e" out)))
+
+;; --- doseq -------------------------------------------------------------------
+
+(test-case "doseq emits as Clojure doseq"
+  (define out (compile '(doseq [x (range 10)] (println x))))
+  (check-true (matches? #rx"\\(doseq \\[x \\(range 10\\)\\]" out))
+  (check-true (matches? #rx"\\(println x\\)" out)))
+
+(test-case "doseq with :when emits"
+  (define out (compile '(doseq [x (range 10) :when (even? x)] (println x))))
+  (check-true (matches? #rx"\\(doseq" out))
+  (check-true (matches? #rx":when" out)))
+
+;; --- case --------------------------------------------------------------------
+
+(test-case "case emits as Clojure case"
+  (define out (compile '(def y (case x "a" 1 "b" 2 "default"))))
+  (check-true (matches? #rx"\\(case x" out))
+  (check-true (matches? #rx"\"a\" 1" out))
+  (check-true (matches? #rx"\"b\" 2" out))
+  (check-true (matches? #rx"\"default\"" out)))
+
+(test-case "case without default emits"
+  (define out (compile '(def y (case x 1 "one" 2 "two"))))
+  (check-true (matches? #rx"\\(case x" out))
+  (check-true (matches? #rx"1 \"one\"" out))
+  (check-true (matches? #rx"2 \"two\"" out)))
+
+;; --- constructor calls -------------------------------------------------------
+
+(test-case "constructor call emits as Clojure constructor"
+  (define out (compile '(def f (File. "/tmp"))))
+  (check-true (matches? #rx"\\(File\\. \"/tmp\"\\)" out)))
+
+(test-case "constructor with no args emits"
+  (define out (compile '(def x (ArrayList.))))
+  (check-true (matches? #rx"\\(ArrayList\\.\\)" out)))
+
+(test-case "constructor with multiple args emits"
+  (define out (compile '(def p (Point. 10 20))))
+  (check-true (matches? #rx"\\(Point\\. 10 20\\)" out)))

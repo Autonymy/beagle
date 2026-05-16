@@ -122,9 +122,42 @@
      (for ([a (in-list args)]) (check-shadow a scope ctx))]
     [(vec-form items)
      (for ([i (in-list items)]) (check-shadow i scope ctx))]
+    [(map-form pairs)
+     (for ([p (in-list pairs)])
+       (check-shadow (car p) scope ctx)
+       (check-shadow (cdr p) scope ctx))]
+    [(set-form items)
+     (for ([i (in-list items)]) (check-shadow i scope ctx))]
     [(def-form _ _ value)
      (check-shadow value scope ctx)]
     [(unsafe-expr inner) (check-shadow inner scope ctx)]
+    [(try-form body catches finally-body)
+     (for ([e (in-list body)]) (check-shadow e scope ctx))
+     (for ([c (in-list catches)])
+       (define inner (scope-copy scope))
+       (hash-set! inner (catch-clause-name c) #t)
+       (for ([e (in-list (catch-clause-body c))]) (check-shadow e inner ctx)))
+     (when finally-body
+       (for ([e (in-list finally-body)]) (check-shadow e scope ctx)))]
+    [(doseq-form clauses body)
+     (define inner (scope-copy scope))
+     (for ([c (in-list clauses)])
+       (when (for-binding? c)
+         (define n (for-binding-name c))
+         (when (hash-has-key? scope n)
+           (warn-shadow "doseq binding" n ctx))
+         (hash-set! inner n #t))
+       (when (for-when? c)
+         (check-shadow (for-when-test c) inner ctx)))
+     (for ([e (in-list body)]) (check-shadow e inner ctx))]
+    [(case-form test clauses default)
+     (check-shadow test scope ctx)
+     (for ([c (in-list clauses)])
+       (check-shadow (case-clause-value c) scope ctx)
+       (check-shadow (case-clause-body c) scope ctx))
+     (when default (check-shadow default scope ctx))]
+    [(new-form _ args)
+     (for ([a (in-list args)]) (check-shadow a scope ctx))]
     [_ (void)]))
 
 (define (warn-shadow kind name ctx)
@@ -185,7 +218,33 @@
      (hash-set! used name #t)]
     [(vec-form items)
      (for ([i (in-list items)]) (collect-symbols i used))]
+    [(map-form pairs)
+     (for ([p (in-list pairs)])
+       (collect-symbols (car p) used)
+       (collect-symbols (cdr p) used))]
+    [(set-form items)
+     (for ([i (in-list items)]) (collect-symbols i used))]
     [(unsafe-expr inner) (collect-symbols inner used)]
+    [(try-form body catches finally-body)
+     (for ([e (in-list body)]) (collect-symbols e used))
+     (for ([c (in-list catches)])
+       (for ([e (in-list (catch-clause-body c))]) (collect-symbols e used)))
+     (when finally-body
+       (for ([e (in-list finally-body)]) (collect-symbols e used)))]
+    [(doseq-form clauses body)
+     (for ([c (in-list clauses)])
+       (cond
+         [(for-binding? c) (collect-symbols (for-binding-expr c) used)]
+         [(for-when? c) (collect-symbols (for-when-test c) used)]))
+     (for ([e (in-list body)]) (collect-symbols e used))]
+    [(case-form test clauses default)
+     (collect-symbols test used)
+     (for ([c (in-list clauses)])
+       (collect-symbols (case-clause-value c) used)
+       (collect-symbols (case-clause-body c) used))
+     (when default (collect-symbols default used))]
+    [(new-form _ args)
+     (for ([a (in-list args)]) (collect-symbols a used))]
     [_ (void)]))
 
 (provide lint-program!)

@@ -16,6 +16,8 @@
          racket/format)
 
 (define BRACKET-TAG '#%brackets)
+(define MAP-TAG    (gensym 'map))
+(define SET-TAG    (gensym 'set))
 
 (define PRIMITIVES
   '(String Long Double Boolean Keyword Symbol Nil Any))
@@ -284,6 +286,8 @@
 
 (provide
  BRACKET-TAG
+ MAP-TAG
+ SET-TAG
  (struct-out type-prim)
  (struct-out type-fn)
  (struct-out type-app)

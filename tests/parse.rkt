@@ -385,3 +385,155 @@
   (define f (car (parse-one '(first *command-line-args*))))
   (check-true (call-form? f))
   (check-true (dynamic-var? (car (call-form-args f)))))
+
+;; --- map literals ------------------------------------------------------------
+
+(define MT MAP-TAG)
+(define (mt . xs) (cons MT xs))
+
+(test-case "map literal parses as map-form"
+  (define f (car (parse-one `(def m ,(mt ':a 1 ':b 2)))))
+  (check-true (def-form? f))
+  (define v (def-form-value f))
+  (check-true (map-form? v))
+  (check-equal? (length (map-form-pairs v)) 2)
+  (check-equal? (car (car (map-form-pairs v))) ':a)
+  (check-equal? (cdr (car (map-form-pairs v))) 1))
+
+(test-case "empty map literal parses"
+  (define f (car (parse-one `(def m ,(mt)))))
+  (check-true (map-form? (def-form-value f)))
+  (check-equal? (map-form-pairs (def-form-value f)) '()))
+
+(test-case "map literal with odd count errors"
+  (check-exn exn:fail?
+             (lambda () (parse-one `(def m ,(mt ':a 1 ':b))))))
+
+;; --- set literals ------------------------------------------------------------
+
+(define ST SET-TAG)
+(define (st . xs) (cons ST xs))
+
+(test-case "set literal parses as set-form"
+  (define f (car (parse-one `(def s ,(st 1 2 3)))))
+  (check-true (def-form? f))
+  (define v (def-form-value f))
+  (check-true (set-form? v))
+  (check-equal? (length (set-form-items v)) 3))
+
+(test-case "empty set literal parses"
+  (define f (car (parse-one `(def s ,(st)))))
+  (check-true (set-form? (def-form-value f)))
+  (check-equal? (set-form-items (def-form-value f)) '()))
+
+;; --- import ------------------------------------------------------------------
+
+(test-case "import is a meta form and populates imports"
+  (define p (parse-prog '(import java.io.File)))
+  (check-equal? (length (program-imports p)) 1)
+  (check-eq? (car (program-imports p)) 'java.io.File))
+
+(test-case "multiple imports accumulate"
+  (define p (parse-prog '(import java.io.File)
+                        '(import java.util.ArrayList)))
+  (check-equal? (length (program-imports p)) 2)
+  (check-eq? (car (program-imports p)) 'java.io.File)
+  (check-eq? (cadr (program-imports p)) 'java.util.ArrayList))
+
+(test-case "import does not appear in forms"
+  (define p (parse-prog '(import java.io.File)
+                        '(def x 1)))
+  (check-equal? (length (program-forms p)) 1)
+  (check-true (def-form? (car (program-forms p)))))
+
+;; --- try/catch/finally -------------------------------------------------------
+
+(test-case "try with single catch"
+  (define f (car (parse-one '(try (/ 1 0) (catch Exception e (println e))))))
+  (check-true (try-form? f))
+  (check-equal? (length (try-form-body f)) 1)
+  (check-equal? (length (try-form-catches f)) 1)
+  (check-false (try-form-finally-body f))
+  (define c (car (try-form-catches f)))
+  (check-eq? (catch-clause-exception-type c) 'Exception)
+  (check-eq? (catch-clause-name c) 'e)
+  (check-equal? (length (catch-clause-body c)) 1))
+
+(test-case "try with catch and finally"
+  (define f (car (parse-one
+    '(try (open-file "x") (catch Exception e (log e)) (finally (cleanup))))))
+  (check-true (try-form? f))
+  (check-equal? (length (try-form-catches f)) 1)
+  (check-true (list? (try-form-finally-body f)))
+  (check-equal? (length (try-form-finally-body f)) 1))
+
+(test-case "try with multiple catches"
+  (define f (car (parse-one
+    '(try (risky)
+       (catch ArithmeticException e "math-error")
+       (catch Exception e "other-error")))))
+  (check-equal? (length (try-form-catches f)) 2)
+  (check-eq? (catch-clause-exception-type (car (try-form-catches f))) 'ArithmeticException)
+  (check-eq? (catch-clause-exception-type (cadr (try-form-catches f))) 'Exception))
+
+;; --- doseq -------------------------------------------------------------------
+
+(test-case "doseq parses like for"
+  (define f (car (parse-one '(doseq [x (range 10)] (println x)))))
+  (check-true (doseq-form? f))
+  (check-equal? (length (doseq-form-clauses f)) 1)
+  (check-true (for-binding? (car (doseq-form-clauses f))))
+  (check-equal? (length (doseq-form-body f)) 1))
+
+(test-case "doseq with :when clause"
+  (define f (car (parse-one '(doseq [x (range 10) :when (even? x)] (println x)))))
+  (check-equal? (length (doseq-form-clauses f)) 2)
+  (check-true (for-when? (cadr (doseq-form-clauses f)))))
+
+(test-case "doseq with multiple bindings"
+  (define f (car (parse-one '(doseq [x (range 3) y (range x)] (println x y)))))
+  (check-equal? (length (doseq-form-clauses f)) 2)
+  (check-true (for-binding? (car (doseq-form-clauses f))))
+  (check-true (for-binding? (cadr (doseq-form-clauses f)))))
+
+;; --- case --------------------------------------------------------------------
+
+(test-case "case with pairs and default"
+  (define f (car (parse-one '(case x "a" 1 "b" 2 "default"))))
+  (check-true (case-form? f))
+  (check-eq? (case-form-test f) 'x)
+  (check-equal? (length (case-form-clauses f)) 2)
+  (check-equal? (case-clause-value (car (case-form-clauses f))) "a")
+  (check-equal? (case-clause-body (car (case-form-clauses f))) 1)
+  (check-equal? (case-form-default f) "default"))
+
+(test-case "case without default (even clauses)"
+  (define f (car (parse-one '(case x 1 "one" 2 "two"))))
+  (check-true (case-form? f))
+  (check-equal? (length (case-form-clauses f)) 2)
+  (check-false (case-form-default f)))
+
+(test-case "case with no clauses"
+  (define f (car (parse-one '(case x))))
+  (check-true (case-form? f))
+  (check-equal? (case-form-clauses f) '())
+  (check-false (case-form-default f)))
+
+;; --- constructor calls -------------------------------------------------------
+
+(test-case "constructor call parses as new-form"
+  (define f (car (parse-one '(File. "/tmp"))))
+  (check-true (new-form? f))
+  (check-eq? (new-form-class-name f) 'File.)
+  (check-equal? (length (new-form-args f)) 1))
+
+(test-case "constructor call with no args"
+  (define f (car (parse-one '(ArrayList.))))
+  (check-true (new-form? f))
+  (check-eq? (new-form-class-name f) 'ArrayList.)
+  (check-equal? (new-form-args f) '()))
+
+(test-case "constructor call with multiple args"
+  (define f (car (parse-one '(Point. 10 20))))
+  (check-true (new-form? f))
+  (check-equal? (length (new-form-args f)) 2))
