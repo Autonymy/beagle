@@ -46,3 +46,5 @@ Speculative; no commitment.
 - Top-level source mapping (`^{:line N :file "path"}` metadata on emitted forms)
 - Expression-level source mapping (every compound form gets `^{:line N :file "path"}` metadata)
 - Hygienic macros (gensym-based for safe macros)
+- Cross-module defrecord import (constructors, accessors, keyword-access field types)
+- v2 experiment framework (5-module inventory system, 1651 LOC, 444 assertions, 12 injected bugs)
