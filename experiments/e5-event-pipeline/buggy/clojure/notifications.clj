@@ -60,10 +60,9 @@
      "Order Delivered"
      "Your order {{order-id}} has been delivered.")
 
-   ;; BUG-36: E wrong constructor — passing Long 0 where String id expected
    "order-cancelled"
    (make-notification-template
-     0
+     "order-cancelled"
      e/channel-email
      "Order Cancelled"
      "Your order {{order-id}} has been cancelled. Reason: {{reason}}.")
@@ -100,7 +99,6 @@
 ;; Channel routing
 ;; ============================================================
 
-;; BUG-37: G logic bug — item-shipped routes to email instead of sms, order-delivered to sms instead of push
 (defn route-notification
   "Determines the notification channel based on event type."
   [customer-id event-type]
@@ -115,10 +113,10 @@
 
     (or (= event-type "item-shipped")
         (= event-type "fully-shipped"))
-    e/channel-email
+    e/channel-sms
 
     (= event-type "order-delivered")
-    e/channel-sms
+    e/channel-push
 
     :else e/channel-email))
 
@@ -126,13 +124,12 @@
 ;; Notification builders
 ;; ============================================================
 
-;; BUG-34: D wrong type — passing Long directly instead of String for order-id
 (defn build-order-confirmation
   "Builds an order confirmation notification."
   [order-state customer-state]
   (let [template (get templates "order-confirmation")
         body (render-notification template
-               {"order-id" (:order-id order-state)
+               {"order-id" (str (:order-id order-state))
                 "total" (str (:total order-state))})]
     (e/make-notification-sent
       (:email customer-state)
@@ -155,13 +152,12 @@
       body
       (or (:shipped-at shipment-state) 0))))
 
-;; BUG-35: D wrong type — passing Long directly instead of String for order-id
 (defn build-payment-failed-notice
   "Builds a payment failure notification."
   [payment-state customer-state]
   (let [template (get templates "payment-failed")
         body (render-notification template
-               {"order-id" (:order-id payment-state)
+               {"order-id" (str (:order-id payment-state))
                 "reason" (or (:status payment-state) "unknown")})]
     (e/make-notification-sent
       (:email customer-state)

@@ -39,11 +39,9 @@
       true))
 
 ;; assert-confirmed: throws if order is not yet confirmed.
-;; BUG-12: B nil access — confirmed-at is Long?, passing to str without nil check
 (defn assert-confirmed [(state : OrderState)] : Boolean
   (if (nil? (orderstate-confirmed-at state))
-      (throw (ex-info (str "Order must be confirmed before payment, confirmed-at: "
-                            (+ (orderstate-confirmed-at state) 0))
+      (throw (ex-info (str "Order must be confirmed before payment")
                       {:order-id (orderstate-order-id state)
                        :status (orderstate-status state)}))
       true))
@@ -110,8 +108,8 @@
     (assert-positive amount "amount")
     (assert-not-empty-string method "method")
     (assert-not-empty-string transaction-id "transaction-id")
-    ;; BUG-11: B nil access — paid-amount is Long?, used directly without nil guard
-    (let [already-paid (orderstate-paid-amount state)
+    (let [raw-paid (orderstate-paid-amount state)
+          already-paid (if (nil? raw-paid) 0 raw-paid)
           remaining (- (orderstate-total state) already-paid)]
       (when (> amount remaining)
         (throw (ex-info "Payment exceeds remaining balance"
@@ -268,7 +266,7 @@
   (do
     (assert-not-cancelled state)
     (assert-not-delivered state)
-    (assert-paid state "shipping")
+    (assert-paid state)
     true))
 
 ;; validate-order-for-payment: checks all preconditions for payment.
@@ -297,7 +295,7 @@
 ;; compute-order-total: sums item line totals.
 ;; BUG-13: C arity mismatch — items-total takes 1 arg, called with 2
 (defn compute-order-total [(items : (Vec OrderItem))] : Long
-  (evt/items-total items 0))
+  (evt/items-total items))
 
 ;; validate-items: checks all items have valid quantities and prices.
 (defn validate-items [(items : (Vec OrderItem))] : Boolean
@@ -317,12 +315,12 @@
 ;; should-auto-cancel?: true if payment failures exceed threshold.
 ;; BUG-15: D wrong type — passing String "3" where Long expected
 (defn should-auto-cancel? [(failure-count : Long)] : Boolean
-  (>= failure-count "3"))
+  (>= failure-count 3))
 
 ;; compute-remaining-balance: how much is left to pay.
 ;; BUG-16: D wrong type — passing String "0" where Long 0 expected
 (defn compute-remaining-balance [(state : OrderState)] : Long
   (let [paid (if (nil? (orderstate-paid-amount state))
-                 "0"
+                 0
                  (orderstate-paid-amount state))]
     (- (orderstate-total state) paid)))

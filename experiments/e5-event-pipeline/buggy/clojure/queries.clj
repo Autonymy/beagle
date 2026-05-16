@@ -40,13 +40,12 @@
 ;; Customer queries
 ;; ============================================================
 
-;; BUG-25: A wrong field access — using :order-count instead of :total-spent
 (defn customer-lifetime-value
   "Returns the total amount spent by a customer."
   [customer-state]
   (if (nil? customer-state)
     0
-    (:order-count customer-state)))
+    (:total-spent customer-state)))
 
 (defn top-customers
   "Returns the top N customers sorted by total spend descending."
@@ -71,14 +70,13 @@
     0
     orders))
 
-;; BUG-28: G logic bug — subtracting instead of adding in accumulator
 (defn average-order-value
   "Calculates the average order value across all orders.
    Returns 0 if no orders exist."
   [orders]
   (if (empty? orders)
     0
-    (let [total-value (reduce - 0 (map :total orders))
+    (let [total-value (reduce + 0 (map :total orders))
           cnt (count orders)]
       (quot total-value cnt))))
 
@@ -112,12 +110,13 @@
 ;; Fulfillment queries
 ;; ============================================================
 
-;; BUG-27: B nil access — :delivered-at may be nil, used in arithmetic without guard
 (defn fulfillment-time
   "Calculates the fulfillment time (delivered-at - placed-at) in milliseconds.
    Returns nil if the order has not been delivered."
   [order-state]
-  (- (:delivered-at order-state) (:placed-at order-state)))
+  (if (nil? (:delivered-at order-state))
+    nil
+    (- (:delivered-at order-state) (:placed-at order-state))))
 
 ;; ============================================================
 ;; Aggregate queries
@@ -132,13 +131,12 @@
     {}
     orders))
 
-;; BUG-29: G logic bug — summing only cancelled orders instead of non-cancelled
 (defn total-revenue
   "Calculates total revenue across all non-cancelled orders."
   [orders]
   (reduce
     (fn [total order]
-      (if (= (:status order) e/status-cancelled)
+      (if (not= (:status order) e/status-cancelled)
         (+ total (:total order))
         total))
     0
@@ -184,14 +182,13 @@
            (<= (:placed-at order) end-time)))
     orders))
 
-;; BUG-26: A wrong field access — using :tracking-number instead of :carrier
 (defn shipment-by-carrier
   "Groups shipments by carrier, returns map of carrier -> shipment count."
   [shipments]
   (reduce
     (fn [counts shipment]
-      (if (some? (:tracking-number shipment))
-        (update counts (:tracking-number shipment) (fnil inc 0))
+      (if (some? (:carrier shipment))
+        (update counts (:carrier shipment) (fnil inc 0))
         counts))
     {}
     shipments))

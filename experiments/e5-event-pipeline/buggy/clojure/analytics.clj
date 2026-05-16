@@ -153,7 +153,6 @@
 ;; Cancellation reasons
 ;; ============================================================
 
-;; BUG-40: A wrong field access — using :status instead of :cancel-reason
 (defn cancellation-reasons
   "Computes cancellation reason frequencies.
    Returns a map of reason -> count."
@@ -161,8 +160,8 @@
   (reduce
     (fn [reasons order]
       (if (and (= (:status order) e/status-cancelled)
-               (some? (:status order)))
-        (update reasons (:status order) (fnil inc 0))
+               (some? (:cancel-reason order)))
+        (update reasons (:cancel-reason order) (fnil inc 0))
         reasons))
     {}
     orders))
@@ -254,7 +253,6 @@
             (make-metric-point bucket-start count "order-count")))
         buckets))))
 
-;; BUG-38: G logic bug — using >= 1 instead of > 1 (counts all customers as repeat)
 (defn repeat-customer-rate
   "Computes the percentage of customers with more than one order."
   [orders]
@@ -262,19 +260,18 @@
     0.0
     (let [by-customer (group-by :customer-id orders)
           total-customers (count by-customer)
-          repeat-customers (count (filter (fn [[_ os]] (>= (count os) 1)) by-customer))]
+          repeat-customers (count (filter (fn [[_ os]] (> (count os) 1)) by-customer))]
       (if (zero? total-customers)
         0.0
         (double (/ repeat-customers total-customers))))))
 
-;; BUG-39: G logic bug — subtracting placed-at from paid-at in wrong order (negative result)
 (defn average-time-to-payment
   "Computes average time between order placement and payment."
   [orders]
   (let [paid (filter (fn [o] (and (some? (:placed-at o)) (some? (:paid-at o)))) orders)]
     (if (empty? paid)
       0
-      (let [times (map (fn [o] (- (:placed-at o) (:paid-at o))) paid)]
+      (let [times (map (fn [o] (- (:paid-at o) (:placed-at o))) paid)]
         (quot (reduce + 0 times) (count times))))))
 
 (defn inventory-turnover

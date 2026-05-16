@@ -39,9 +39,8 @@
     "Order Delivered"
     "Your order #{order-id} has been delivered. Thank you for your purchase!"))
 
-;; BUG-36: E wrong constructor — passing Long 0 where String id expected
 (def cancellation-notice-template : NotificationTemplate
-  (->NotificationTemplate 0 "email"
+  (->NotificationTemplate "order-cancelled" "email"
     "Order Cancelled"
     "Dear {customer-name}, your order #{order-id} has been cancelled. Reason: {reason}"))
 
@@ -130,15 +129,13 @@
 ;; =============================================================================
 
 ;; build-order-confirmation: creates a NotificationSent event for order confirmation.
-;; BUG-34: D wrong type — passing Long directly instead of String for customer-name
 (defn build-order-confirmation [(order : OrderState)
                                 (customer : CustomerState)] : Any
-  (let [vars {"customer-name" (customerstate-customer-id customer)
+  (let [vars {"customer-name" (customerstate-name customer)
               "order-id" (str (orderstate-order-id order))
               "total" (str (orderstate-total order))}
         body (render-notification order-confirmation-template vars)
-        ;; BUG-35: D wrong type — passing Long where String expected for customer-id
-        channel (route-notification (customerstate-customer-id customer)
+        channel (route-notification (customerstate-email customer)
                                     "OrderPlaced")
         timestamp (orderstate-placed-at order)]
     (->NotificationSent (customerstate-email customer)
@@ -205,11 +202,10 @@
                         "email" body (refundissued-refunded-at refund))))
 
 ;; build-welcome-notice: creates a NotificationSent for new customer.
-;; BUG-22: D wrong type — passing Long (registered-at) where String (email) expected
 (defn build-welcome-notice [(customer : CustomerState)] : Any
   (let [vars {"customer-name" (customerstate-name customer)}
         body (render-notification welcome-template vars)]
-    (->NotificationSent (customerstate-registered-at customer)
+    (->NotificationSent (customerstate-email customer)
                         "email" body (customerstate-registered-at customer))))
 
 ;; build-tier-upgrade-notice: creates a NotificationSent for tier upgrade.
@@ -341,13 +337,12 @@
 
 ;; notification-priority: returns a numeric priority for routing/ordering.
 ;; Lower number = higher priority.
-;; BUG-37: G logic bug — payment-failed and order-confirmation priorities swapped
 (defn notification-priority [(template-id : String)] : Long
   (cond
-    [(= template-id "payment-failed") 4]
+    [(= template-id "payment-failed") 1]
     [(= template-id "order-cancelled") 2]
     [(= template-id "refund-issued") 3]
-    [(= template-id "order-confirmation") 1]
+    [(= template-id "order-confirmation") 4]
     [(= template-id "item-shipped") 5]
     [(= template-id "order-delivered") 6]
     [(= template-id "welcome") 7]
@@ -359,7 +354,7 @@
 (defn sort-by-priority [(notifications : Any)] : Any
   (sort-by (fn [n]
              (match n
-               [(NotificationSent recip ch tmpl ts) (notification-priority ch)]
+               [(NotificationSent recip ch tmpl ts) (notification-priority tmpl)]
                [_ 10]))
            notifications))
 

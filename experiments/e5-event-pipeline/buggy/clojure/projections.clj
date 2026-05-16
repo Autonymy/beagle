@@ -5,12 +5,11 @@
 ;; Helper predicates
 ;; ============================================================
 
-;; BUG-06: B nil access — :cancelled-at may be nil, used directly in arithmetic
 (defn order-status
   "Derives the canonical status string from an OrderState."
   [order-state]
   (cond
-    (> (:cancelled-at order-state) 0) e/status-cancelled
+    (some? (:cancelled-at order-state)) e/status-cancelled
     (some? (:delivered-at order-state)) e/status-delivered
     (> (:shipped-count order-state) 0) e/status-shipped
     (some? (:paid-at order-state)) e/status-paid
@@ -73,10 +72,8 @@
     (instance? e/OrderConfirmed event)
     (if (nil? state)
       state
-      ;; BUG-03: A wrong field access — using :name (doesn't exist on OrderState) instead of :placed-at
       (assoc state
              :confirmed-at (:confirmed-at event)
-             :placed-at (:name state)
              :status e/status-confirmed))
 
     (instance? e/PaymentReceived event)
@@ -86,8 +83,6 @@
         (assoc state
                :paid-at (:paid-at event)
                :paid-amount new-paid
-               ;; BUG-04: A wrong field access — using :transaction-id on state instead of :confirmed-at
-               :confirmed-at (:transaction-id state)
                :payment-method (:method event)
                :status (if (>= new-paid (:total state))
                          e/status-paid
@@ -108,7 +103,13 @@
              :delivered-at (:delivered-at event)
              :status e/status-delivered))
 
-    ;; BUG-08: F missing match case — OrderCancelled case removed from order projection
+    (instance? e/OrderCancelled event)
+    (if (nil? state)
+      state
+      (assoc state
+             :cancelled-at (:cancelled-at event)
+             :cancel-reason (:reason event)
+             :status e/status-cancelled))
 
     :else state))
 
@@ -129,7 +130,10 @@
                            0
                            (:registered-at event))
 
-    ;; BUG-09: F missing match case — CustomerTierChanged removed from customer projection
+    (instance? e/CustomerTierChanged event)
+    (if (nil? state)
+      state
+      (assoc state :tier (:new-tier event)))
 
     (instance? e/OrderDelivered event)
     ;; Note: order-count and total-spent incremented via handlers, not directly
@@ -185,9 +189,8 @@
   (cond
     (instance? e/ItemShipped event)
     (let [base (or state (e/make-shipment-state (:order-id event) (:item-id event)))]
-      ;; BUG-05: A wrong field access — using :order-id instead of :tracking-number
       (assoc base
-             :tracking-number (:order-id event)
+             :tracking-number (:tracking-number event)
              :carrier (:carrier event)
              :shipped-at (:shipped-at event)))
 
@@ -224,14 +227,19 @@
                :transaction-id (:transaction-id event)
                :status new-status)))
 
-    ;; BUG-07: B nil access — :transaction-id may be nil, passed to subs without guard
     (instance? e/PaymentFailed event)
     (if (nil? state)
       state
-      (let [txn (subs (:transaction-id state) 0 4)]
+      (let [txn (when (:transaction-id state) (subs (:transaction-id state) 0 4))]
         (assoc state :transaction-id txn :status "failed")))
 
-    ;; BUG-10: F missing match case — RefundIssued removed from payment projection
+    (instance? e/RefundIssued event)
+    (if (nil? state)
+      state
+      (let [new-paid (- (:amount-paid state) (:amount event))]
+        (assoc state
+               :amount-paid new-paid
+               :status "refunded")))
 
     :else state))
 

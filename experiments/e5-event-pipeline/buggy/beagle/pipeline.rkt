@@ -25,12 +25,12 @@
 (defn append-event [(store : EventStore) (event : Any)] : EventStore
   (let [new-events (conj (eventstore-events store) event)
         new-version (+ (eventstore-version store) 1)]
-    (->EventStore new-version new-events)))
+    (->EventStore new-events new-version)))
 
 ;; append-events: add multiple events to the store.
 ;; BUG-30: C arity mismatch — append-event takes 2 args, called with 3
 (defn append-events [(store : EventStore) (events : Any)] : EventStore
-  (reduce (fn [s e] (append-event s e 0)) store events))
+  (reduce (fn [s e] (append-event s e)) store events))
 
 ;; =============================================================================
 ;; Event Retrieval
@@ -172,7 +172,7 @@
 ;; events-by-type: get events matching a type string.
 ;; BUG-31: C arity mismatch — detect-event-type takes 1 arg, called with 2
 (defn events-by-type [(store : EventStore) (event-type : String)] : Any
-  (filterv (fn [ev] (= (detect-event-type ev event-type) event-type))
+  (filterv (fn [ev] (= (detect-event-type ev) event-type))
            (eventstore-events store)))
 
 ;; store-empty?: true if no events in the store.
@@ -192,6 +192,6 @@
 (defn store-statistics [(store : EventStore)] : (Map String Long)
   (let [total (event-count store)
         version (latest-sequence store)
-        _empty (->EventStore "empty" 0)]
+        _empty (->EventStore [] 0)]
     {"total-events" total
      "version" version}))

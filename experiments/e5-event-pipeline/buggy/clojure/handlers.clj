@@ -28,9 +28,8 @@
    1. Reserving inventory for each item (using default warehouse 1)
    2. Sending a confirmation notification"
   [event projections]
-  ;; BUG-17: A wrong field access — using :placed-at instead of :customer-id
   (let [order-id (:order-id event)
-        customer-id (:total event)
+        customer-id (:customer-id event)
         items (:items event)
         customer ((:lookup-customer projections) customer-id)
         ;; Reserve inventory for each item
@@ -70,10 +69,8 @@
         result []
         ;; Check if customer is eligible for tier upgrade
         result (if (and customer (proj/customer-eligible-for-upgrade? customer))
-                 ;; BUG-20: C arity mismatch — determine-new-tier takes 1 arg, called with 2
                  (let [new-tier (determine-new-tier
-                                  (+ (:total-spent customer) (:amount event))
-                                  customer)
+                                  (+ (:total-spent customer) (:amount event)))
                        old-tier (:tier customer)]
                    (if (not= old-tier new-tier)
                      (conj result (e/make-customer-tier-changed
@@ -109,12 +106,11 @@
         failure-count (count-payment-failures order-id all-events)
         result []
         ;; Send failure notification
-        ;; BUG-22: D wrong type — passing Long (order-id) where String template expected
         result (if customer
                  (conj result (e/make-notification-sent
                                 (:email customer)
                                 e/channel-email
-                                order-id
+                                "payment-failed"
                                 (:failed-at event)))
                  result)
         ;; If this is the 3rd failure (including current), auto-cancel
@@ -183,14 +179,12 @@
         customer (when customer-id ((:lookup-customer projections) customer-id))
         result []
         ;; Send delivery notification via push
-        ;; BUG-21: C arity mismatch — make-notification-sent takes 4 args, called with 5
         result (if customer
                  (conj result (e/make-notification-sent
                                 (:email customer)
                                 e/channel-push
                                 "order-delivered"
-                                (:delivered-at event)
-                                order-id))
+                                (:delivered-at event)))
                  result)
         ;; Check for tier upgrade based on total order value
         result (if (and customer order)
@@ -217,7 +211,6 @@
    2. Issuing refund if order was paid
    3. Sending cancellation notification"
   [event projections]
-  ;; BUG-18: A wrong field access — using :cancelled-at instead of :reason
   (let [order-id (:order-id event)
         order ((:lookup-order projections) order-id)
         customer-id (when order (:customer-id order))
@@ -237,11 +230,10 @@
                  result)
         ;; Issue refund if paid
         result (if (and payment (> (:amount-paid payment) 0))
-                 ;; BUG-18 continued: A wrong field access — using :cancelled-at instead of :reason
                  (conj result (e/make-refund-issued
                                 order-id
                                 (:amount-paid payment)
-                                (:cancelled-at event)
+                                (:reason event)
                                 (:cancelled-at event)))
                  result)
         ;; Send cancellation notification
@@ -266,12 +258,11 @@
         customer-id (when order (:customer-id order))
         customer (when customer-id ((:lookup-customer projections) customer-id))]
     (if customer
-      ;; BUG-19: A wrong field access — using :amount instead of :refunded-at
       [(e/make-notification-sent
          (:email customer)
          e/channel-email
          "refund-issued"
-         (:amount event))]
+         (:refunded-at event))]
       [])))
 
 ;; ============================================================
@@ -309,7 +300,8 @@
     (instance? e/ItemShipped event)
     (handle-item-shipped event projections)
 
-    ;; BUG-24: F missing match case — OrderDelivered removed from dispatcher
+    (instance? e/OrderDelivered event)
+    (handle-order-delivered event projections)
 
     (instance? e/OrderCancelled event)
     (handle-order-cancelled event projections)
@@ -317,8 +309,7 @@
     (instance? e/RefundIssued event)
     (handle-refund-issued event projections)
 
-    ;; BUG-23: F missing match case — CustomerRegistered removed from dispatcher
-    ;; (instance? e/CustomerRegistered event)
-    ;; (handle-customer-registered event projections)
+    (instance? e/CustomerRegistered event)
+    (handle-customer-registered event projections)
 
     :else []))

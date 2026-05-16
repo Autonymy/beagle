@@ -95,7 +95,7 @@
               tier-events (if (nil? customer)
                               []
                               (let [new-spent (+ (customerstate-total-spent customer) amount)
-                                    new-tier (evt/compute-tier new-spent customer)
+                                    new-tier (evt/compute-tier new-spent)
                                     old-tier (customerstate-tier customer)]
                                 (if (not= old-tier new-tier)
                                     [(->CustomerTierChanged cid old-tier new-tier
@@ -185,11 +185,9 @@
               customer-email (if (nil? customer)
                                  (str "customer-" cid "@example.com")
                                  (customerstate-email customer))
-              ;; BUG-21: C arity mismatch — make-notification takes 4 args, called with 5
               notify (make-notification customer-email "push"
                                         "order-delivered"
-                                        (orderdelivered-delivered-at event)
-                                        oid)]
+                                        (orderdelivered-delivered-at event))]
           [notify]))))
 
 ;; =============================================================================
@@ -201,9 +199,8 @@
 ;; 2. Issue refund if payment was received
 ;; 3. Send cancellation notification
 (defn handle-order-cancelled [(event : Any) (projections : Any)] : Any
-  ;; BUG-18: A wrong field access — using cancelled-at accessor instead of reason
   (let [oid (ordercancelled-order-id event)
-        reason (ordercancelled-cancelled-at event)
+        reason (ordercancelled-reason event)
         get-order (:lookup-order projections)
         order (get-order oid)
         get-cust (:lookup-customer projections)
@@ -264,10 +261,9 @@
               customer-email (if (nil? customer)
                                  (str "customer-" cid "@example.com")
                                  (customerstate-email customer))
-              ;; BUG-19: A wrong field access — using amount accessor instead of refunded-at
               notify (make-notification customer-email "email"
                                         "refund-issued"
-                                        (refundissued-amount event))]
+                                        (refundissued-refunded-at event))]
           [notify]))))
 
 ;; =============================================================================
@@ -303,14 +299,16 @@
      (handle-payment-failed event projections all-events)]
     [(ItemShipped oid iid tn carrier ts)
      (handle-item-shipped event projections)]
-    ;; BUG-24: F missing match case — OrderDelivered removed from dispatcher
+    [(OrderDelivered oid ts)
+     (handle-order-delivered event projections)]
     [(OrderCancelled oid reason ts)
      (handle-order-cancelled event projections)]
     [(CustomerRegistered cid name email ts)
      (handle-customer-registered event projections)]
     [(RefundIssued oid amt reason ts)
      (handle-refund-issued event projections)]
-    ;; BUG-23: F missing match case — InventoryReserved removed from dispatcher
+    [(InventoryReserved oid iid qty wid)
+     (handle-inventory-reserved event projections)]
     [_ []]))
 
 ;; =============================================================================

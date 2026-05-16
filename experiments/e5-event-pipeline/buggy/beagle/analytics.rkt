@@ -42,11 +42,10 @@
 
 ;; funnel-conversion-rate: percentage that made it from one stage to next.
 ;; Returns 0 if from-count is 0.
-;; BUG-38: G logic bug — multiplying by 10 instead of 100 (off by factor of 10)
 (defn funnel-conversion-rate [(from-count : Long) (to-count : Long)] : Long
   (if (= from-count 0)
       0
-      (quot (* to-count 10) from-count)))
+      (quot (* to-count 100) from-count)))
 
 ;; =============================================================================
 ;; Cohort Analysis
@@ -123,12 +122,11 @@
 
 ;; revenue-growth-rate: percentage change between two periods.
 ;; Returns 0 if previous-revenue is 0.
-;; BUG-39: G logic bug — subtracting current from previous instead of previous from current
 (defn revenue-growth-rate [(previous-revenue : Long)
                            (current-revenue : Long)] : Long
   (if (= previous-revenue 0)
       (if (> current-revenue 0) 100 0)
-      (quot (* (- previous-revenue current-revenue) 100)
+      (quot (* (- current-revenue previous-revenue) 100)
             previous-revenue)))
 
 ;; =============================================================================
@@ -206,12 +204,11 @@
 ;; =============================================================================
 
 ;; cancellation-reasons: counts cancellations by reason string.
-;; BUG-40: A wrong field access — using status instead of cancel-reason
 (defn cancellation-reasons [(orders : (Vec OrderState))] : (Map String Long)
   (let [cancelled (filterv (fn [o] (= (orderstate-status o) "cancelled"))
                            orders)]
     (reduce (fn [counts o]
-              (let [reason (orderstate-status o)
+              (let [reason (orderstate-cancel-reason o)
                     reason-str (if (nil? reason) "unspecified" reason)
                     raw (get counts reason-str)
                     current (if (nil? raw) 0 raw)]

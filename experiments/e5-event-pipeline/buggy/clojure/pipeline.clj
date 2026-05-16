@@ -15,20 +15,18 @@
   []
   (->EventStore [] 0))
 
-;; BUG-32: E wrong constructor args — version and events swapped in EventStore constructor
 (defn append-event
   "Appends a single event to the store, incrementing version."
   [store event]
-  (->EventStore (inc (:version store))
-                (conj (:events store) event)))
+  (->EventStore (conj (:events store) event)
+                (inc (:version store))))
 
-;; BUG-30: C arity mismatch — append-event takes 2 args, called with 3
 (defn append-events
   "Appends multiple events to the store."
   [store new-events]
   (if (empty? new-events)
     store
-    (reduce (fn [s e] (append-event s e 0)) store new-events)))
+    (reduce (fn [s e] (append-event s e)) store new-events)))
 
 ;; ============================================================
 ;; Event retrieval
@@ -52,12 +50,11 @@
   (filterv (fn [ev] (= (e/event-customer-id ev) customer-id))
            (:events store)))
 
-;; BUG-31: C arity mismatch — event-count takes 1 arg, called with 2
 (defn events-by-type
   "Returns all events of a given type (class)."
   [store event-class]
   (filterv (fn [ev] (instance? event-class ev))
-           (events-since store (event-count store event-class))))
+           (:events store)))
 
 (defn event-count
   "Returns the total number of events in the store."
@@ -209,11 +206,10 @@
 ;; Event store inspection
 ;; ============================================================
 
-;; BUG-33: E wrong constructor args — passing String where events vector expected
 (defn store-summary
   "Returns a summary map of the event store."
   [store]
-  (let [_empty (->EventStore "empty" 0)]
+  (let [_empty (->EventStore [] 0)]
     {:total-events (count (:events store))
      :version (:version store)
      :event-types (frequencies (map (fn [ev] (.getSimpleName (class ev)))

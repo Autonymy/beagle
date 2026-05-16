@@ -35,9 +35,8 @@
     (nil? order-state)
     (throw (ex-info "Order not found" {}))
 
-    ;; BUG-12: B nil access — confirmed-at may be nil, used in arithmetic without guard
     (some? (:confirmed-at order-state))
-    (throw (ex-info (str "Already confirmed at: " (+ (:confirmed-at order-state) 0))
+    (throw (ex-info (str "Already confirmed at: " (:confirmed-at order-state))
                     {:order-id (:order-id order-state) :status (:status order-state)}))
 
     :else
@@ -68,8 +67,7 @@
     (<= amount 0)
     (throw (ex-info "Payment amount must be positive" {:amount amount}))
 
-    ;; BUG-11: B nil access — paid-amount may be nil, used directly without nil guard
-    (let [already-paid (:paid-amount order-state)
+    (let [already-paid (or (:paid-amount order-state) 0)
           remaining (- (:total order-state) already-paid)]
       (> amount remaining))
     (throw (ex-info "Payment amount exceeds remaining balance"
@@ -124,8 +122,7 @@
                     {:order-id (:order-id order-state) :item-id item-id}))
 
     :else
-    ;; BUG-14: C arity mismatch — make-item-shipped takes 5 args, called with 6
-    (e/make-item-shipped (:order-id order-state) item-id tracking-number carrier shipped-at (:total order-state))))
+    (e/make-item-shipped (:order-id order-state) item-id tracking-number carrier shipped-at)))
 
 ;; ============================================================
 ;; deliver-order
@@ -215,9 +212,8 @@
                          (:reserved inventory-state) " requested=" quantity)
                     {:reserved (:reserved inventory-state) :requested quantity}))
 
-    ;; BUG-13: C arity mismatch — make-inventory-released takes 4 args, called with 3
     :else
-    (e/make-inventory-released order-id item-id quantity)))
+    (e/make-inventory-released order-id item-id quantity reason)))
 
 ;; ============================================================
 ;; register-customer
@@ -235,8 +231,7 @@
     (throw (ex-info "Customer email is required" {:customer-id customer-id}))
 
     :else
-    ;; BUG-15: D wrong type — passing customer-id (Long) as name (String) position
-    (e/make-customer-registered customer-id customer-id email registered-at)))
+    (e/make-customer-registered customer-id name email registered-at)))
 
 ;; ============================================================
 ;; issue-refund
@@ -253,8 +248,7 @@
     (nil? payment-state)
     (throw (ex-info "No payment record found" {}))
 
-    ;; BUG-16: D wrong type — comparing amount (Long) to String "0"
-    (<= amount "0")
+    (<= amount 0)
     (throw (ex-info "Refund amount must be positive" {:amount amount}))
 
     (> amount (:amount-paid payment-state))

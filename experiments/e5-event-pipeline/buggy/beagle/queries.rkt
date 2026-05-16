@@ -64,20 +64,18 @@
     (reduce (fn [acc o] (+ acc (orderstate-total o))) 0 in-period)))
 
 ;; total-revenue: sum of all delivered order totals.
-;; BUG-29: G logic bug — filtering for "cancelled" instead of "delivered"
 (defn total-revenue [(orders : (Vec OrderState))] : Long
-  (let [delivered (filterv (fn [o] (= (orderstate-status o) "cancelled"))
+  (let [delivered (filterv (fn [o] (= (orderstate-status o) "delivered"))
                            orders)]
     (reduce (fn [acc o] (+ acc (orderstate-total o))) 0 delivered)))
 
 ;; average-order-value: mean order total across all orders.
 ;; Returns 0 if no orders.
-;; BUG-28: G logic bug — subtracting instead of adding in accumulator
 (defn average-order-value [(orders : (Vec OrderState))] : Long
   (let [n (count orders)]
     (if (= n 0)
         0
-        (quot (reduce (fn [acc o] (- acc (orderstate-total o))) 0 orders)
+        (quot (reduce (fn [acc o] (+ acc (orderstate-total o))) 0 orders)
               n))))
 
 ;; max-order-value: highest total among all orders.
@@ -101,9 +99,8 @@
 ;; =============================================================================
 
 ;; customer-lifetime-value: total spent by a customer.
-;; BUG-25: G logic bug — returning order-count instead of total-spent (logic error, not type error)
 (defn customer-lifetime-value [(state : CustomerState)] : Long
-  (customerstate-order-count state))
+  (customerstate-total-spent state))
 
 ;; top-customers: returns n customers sorted by total-spent descending.
 (defn top-customers [(n : Long)
@@ -168,10 +165,9 @@
   (filterv (fn [s] (some? (shipmentstate-delivered-at s))) shipments))
 
 ;; shipments-by-carrier: filter shipments by carrier name.
-;; BUG-26: A wrong field access — using tracking-number instead of carrier for filtering
 (defn shipments-by-carrier [(carrier : String)
                             (shipments : (Vec ShipmentState))] : (Vec ShipmentState)
-  (filterv (fn [s] (let [c (shipmentstate-tracking-number s)]
+  (filterv (fn [s] (let [c (shipmentstate-carrier s)]
                      (if (nil? c) false (= c carrier))))
            shipments))
 
@@ -203,10 +199,11 @@
 ;; =============================================================================
 
 ;; fulfillment-time: time from placed to delivered (nil if not delivered).
-;; BUG-27: B nil access — delivered-at is Long?, used in arithmetic without nil guard
 (defn fulfillment-time [(state : OrderState)] : Long?
   (let [delivered (orderstate-delivered-at state)]
-    (- delivered (orderstate-placed-at state))))
+    (if (nil? delivered)
+        nil
+        (- delivered (orderstate-placed-at state)))))
 
 ;; average-fulfillment-time: mean fulfillment time for delivered orders.
 ;; Returns 0 if no delivered orders.

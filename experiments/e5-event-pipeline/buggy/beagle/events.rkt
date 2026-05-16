@@ -226,8 +226,7 @@
 
 (defn make-order-item [(item-id : Long) (product-name : String)
                        (quantity : Long) (unit-price : Long)] : OrderItem
-  ;; BUG-01: E wrong constructor arg order — product-name and item-id swapped
-  (->OrderItem product-name item-id quantity unit-price))
+  (->OrderItem item-id product-name quantity unit-price))
 
 ;; item-total: compute line total for a single item
 (defn item-total [(item : OrderItem)] : Long
@@ -247,8 +246,7 @@
 (defn empty-order-state [(order-id : Long) (customer-id : Long)
                          (items : (Vec OrderItem)) (total : Long)
                          (placed-at : Long)] : OrderState
-  ;; BUG-02: E wrong constructor args — passing String "placed" where Long (customer-id) expected
-  (->OrderState order-id "placed" customer-id items total placed-at
+  (->OrderState order-id customer-id "placed" items total placed-at
                 nil nil nil nil 0 nil nil nil))
 
 (defn empty-customer-state [(customer-id : Long) (name : String)
@@ -292,33 +290,30 @@
 ;; =============================================================================
 
 ;; order-paid-amount-or-zero: returns paid-amount or 0 if nil.
-;; BUG-17: A wrong field access — using customerstate-total-spent on OrderState
 (defn order-paid-amount-or-zero [(state : OrderState)] : Long
-  (let [amt (customerstate-total-spent state)]
+  (let [amt (orderstate-paid-amount state)]
     (if (nil? amt) 0 amt)))
 
 ;; order-remaining-balance: computes outstanding balance.
-;; BUG-18: A wrong field access — using inventorystate-available on OrderState
 (defn order-remaining-balance [(state : OrderState)] : Long
-  (- (inventorystate-available state) (order-paid-amount-or-zero state)))
+  (- (orderstate-total state) (order-paid-amount-or-zero state)))
 
 ;; order-is-paid?: returns true if paid-amount >= total.
 (defn order-is-paid? [(state : OrderState)] : Boolean
   (<= (order-remaining-balance state) 0))
 
 ;; order-is-cancelled?: returns true if status is "cancelled".
-;; BUG-25: A wrong field access — using paymentstate-status on OrderState
 (defn order-is-cancelled? [(state : OrderState)] : Boolean
-  (= (paymentstate-status state) "cancelled"))
+  (= (orderstate-status state) "cancelled"))
 
 ;; order-is-delivered?: returns true if status is "delivered".
 (defn order-is-delivered? [(state : OrderState)] : Boolean
   (= (orderstate-status state) "delivered"))
 
 ;; order-is-active?: returns true if order is not cancelled or delivered.
-;; BUG-11: B nil access — paid-amount is Long?, used directly in arithmetic without nil guard
 (defn order-is-active? [(state : OrderState)] : Boolean
-  (let [remaining (- (orderstate-total state) (orderstate-paid-amount state))]
+  (let [paid (orderstate-paid-amount state)
+        remaining (- (orderstate-total state) (if (nil? paid) 0 paid))]
     (and (> remaining 0) (not= (orderstate-status state) "cancelled"))))
 
 ;; order-item-count: number of distinct items in the order.
@@ -347,11 +342,10 @@
   (= (customerstate-tier state) "bronze"))
 
 ;; customer-average-order-value: average order value based on total-spent and order-count.
-;; BUG-19: A wrong field access — using orderstate-total on CustomerState
 (defn customer-average-order-value [(state : CustomerState)] : Long
   (if (= (customerstate-order-count state) 0)
       0
-      (quot (orderstate-total state)
+      (quot (customerstate-total-spent state)
             (customerstate-order-count state))))
 
 ;; =============================================================================
@@ -359,9 +353,8 @@
 ;; =============================================================================
 
 ;; inventory-total-units: available + reserved.
-;; BUG-26: A wrong field access — using orderstate-total on InventoryState
 (defn inventory-total-units [(state : InventoryState)] : Long
-  (+ (orderstate-total state) (inventorystate-reserved state)))
+  (+ (inventorystate-available state) (inventorystate-reserved state)))
 
 ;; inventory-utilization-pct: percentage of total units that are reserved.
 (defn inventory-utilization-pct [(state : InventoryState)] : Long
@@ -378,17 +371,17 @@
 ;; =============================================================================
 
 ;; payment-remaining: how much more is owed.
-;; BUG-40: A wrong field access — using orderstate-placed-at on PaymentState
 (defn payment-remaining [(state : PaymentState)] : Long
-  (let [diff (- (orderstate-placed-at state)
+  (let [diff (- (paymentstate-amount-due state)
                 (paymentstate-amount-paid state))]
     (if (< diff 0) 0 diff)))
 
 ;; payment-is-complete?: synonym for status = "paid".
-;; BUG-07: B nil access — method is String?, passed to count which expects non-nil
 (defn payment-is-complete? [(state : PaymentState)] : Boolean
-  (and (> (count (paymentstate-method state)) 0)
-       (= (paymentstate-status state) "paid")))
+  (let [m (paymentstate-method state)]
+    (and (some? m)
+         (> (count m) 0)
+         (= (paymentstate-status state) "paid"))))
 
 ;; payment-is-failed?: synonym for status = "failed".
 (defn payment-is-failed? [(state : PaymentState)] : Boolean
@@ -411,8 +404,9 @@
   (some? (shipmentstate-delivered-at state)))
 
 ;; shipment-transit-time: time from shipped to delivered (nil if not delivered).
-;; BUG-06: B nil access — shipped-at is Long?, used directly in arithmetic without nil guard
 (defn shipment-transit-time [(state : ShipmentState)] : Long?
   (let [shipped (shipmentstate-shipped-at state)
         delivered (shipmentstate-delivered-at state)]
-    (- delivered shipped)))
+    (if (or (nil? shipped) (nil? delivered))
+        nil
+        (- delivered shipped))))

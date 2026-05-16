@@ -9,8 +9,7 @@
 (defn make-order-item
   "Constructs an OrderItem."
   [item-id product-name quantity unit-price]
-  ;; BUG-01: E wrong constructor arg order — product-name and item-id swapped
-  (->OrderItem product-name item-id quantity unit-price))
+  (->OrderItem item-id product-name quantity unit-price))
 
 ;; ============================================================
 ;; Event Records (13 events)
@@ -119,8 +118,7 @@
 (defn make-order-state
   "Constructs an initial OrderState with sensible defaults for nullable fields."
   [order-id customer-id status items total placed-at]
-  ;; BUG-02: E wrong constructor args — status and customer-id swapped (String where Long expected)
-  (->OrderState order-id status customer-id items total placed-at
+  (->OrderState order-id customer-id status items total placed-at
                nil nil nil nil 0 nil nil nil))
 
 (defrecord CustomerState

@@ -29,7 +29,6 @@
     (orderplaced-placed-at event)))
 
 ;; apply-order-confirmed: marks order as confirmed with timestamp.
-;; BUG-03: C arity mismatch — 13 args to OrderState constructor instead of 14 (missing cancel-reason)
 (defn apply-order-confirmed [(state : OrderState) (event : Any)] : OrderState
   (->OrderState (orderstate-order-id state)
                 (orderstate-customer-id state)
@@ -43,7 +42,8 @@
                 (orderstate-payment-method state)
                 (orderstate-shipped-count state)
                 (orderstate-delivered-at state)
-                (orderstate-cancelled-at state)))
+                (orderstate-cancelled-at state)
+                (orderstate-cancel-reason state)))
 
 ;; apply-payment-to-order: records payment on order state.
 (defn apply-payment-to-order [(state : OrderState) (event : Any)] : OrderState
@@ -64,8 +64,7 @@
                   (paymentreceived-paid-at event)
                   new-paid
                   (paymentreceived-method event)
-                  ;; BUG-04: D wrong type — passing String "shipped" where Long (shipped-count) expected
-                  "shipped"
+                  (orderstate-shipped-count state)
                   (orderstate-delivered-at state)
                   (orderstate-cancelled-at state)
                   (orderstate-cancel-reason state))))
@@ -141,7 +140,8 @@
      (if (nil? state) state (apply-item-shipped-to-order state event))]
     [(OrderDelivered oid ts)
      (if (nil? state) state (apply-order-delivered-to-order state event))]
-    ;; BUG-08: F missing match case — OrderCancelled case removed from order projection
+    [(OrderCancelled oid reason ts)
+     (if (nil? state) state (apply-order-cancelled-to-order state event))]
     [_ state]))
 
 ;; =============================================================================
@@ -193,7 +193,8 @@
   (match event
     [(CustomerRegistered cid name email ts)
      (apply-customer-registered event)]
-    ;; BUG-09: F missing match case — CustomerTierChanged removed from customer projection
+    [(CustomerTierChanged cid old-tier new-tier ts)
+     (if (nil? state) state (apply-tier-change state event))]
     [(OrderPlaced oid cid items total ts)
      (if (nil? state) state (apply-order-to-customer state event))]
     [(PaymentReceived oid amt meth tid ts)
@@ -241,7 +242,6 @@
 ;; =============================================================================
 
 ;; apply-item-shipped-to-shipment: records shipping details.
-;; BUG-05: D wrong type — passing String "pending" where Long? (delivered-at) expected
 (defn apply-item-shipped-to-shipment [(state : ShipmentState)
                                       (event : Any)] : ShipmentState
   (->ShipmentState (shipmentstate-order-id state)
@@ -249,7 +249,7 @@
                    (itemshipped-tracking-number event)
                    (itemshipped-carrier event)
                    (itemshipped-shipped-at event)
-                   "pending"))
+                   nil))
 
 ;; apply-delivered-to-shipment: marks shipment as delivered.
 (defn apply-delivered-to-shipment [(state : ShipmentState)
@@ -293,10 +293,10 @@
                     (paymentreceived-transaction-id event)
                     new-status)))
 
-;; BUG-07: B nil access — transaction-id is String?, passed to subs without nil guard
 (defn apply-payment-failed-to-payment [(state : PaymentState)
                                        (event : Any)] : PaymentState
-  (let [txn (subs (paymentstate-transaction-id state) 0 4)]
+  (let [raw-txn (paymentstate-transaction-id state)
+        txn (if (nil? raw-txn) nil (subs raw-txn 0 4))]
     (->PaymentState (paymentstate-order-id state)
                     (paymentstate-amount-due state)
                     (paymentstate-amount-paid state)
@@ -329,7 +329,10 @@
      (if (nil? state)
          state
          (apply-payment-failed-to-payment state event))]
-    ;; BUG-10: F missing match case — RefundIssued removed from payment projection
+    [(RefundIssued oid amt reason ts)
+     (if (nil? state)
+         state
+         (apply-refund-to-payment state event))]
     [_ state]))
 
 ;; =============================================================================
@@ -337,11 +340,13 @@
 ;; =============================================================================
 
 ;; order-status: derives the current status string from state fields.
-;; BUG-06: B nil access — cancelled-at is Long?, used in arithmetic (cross-module, not caught by beagle)
 (defn order-status [(state : OrderState)] : String
-  (if (> (orderstate-cancelled-at state) 0)
-      "cancelled"
-      (orderstate-status state)))
+  (let [cancelled (orderstate-cancelled-at state)]
+    (if (nil? cancelled)
+        (orderstate-status state)
+        (if (> cancelled 0)
+            "cancelled"
+            (orderstate-status state)))))
 
 ;; is-fully-shipped?: true if shipped-count >= item count.
 (defn is-fully-shipped? [(state : OrderState)] : Boolean
