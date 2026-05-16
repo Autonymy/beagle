@@ -16,15 +16,20 @@
 | Bugs missed | 2/40 | 35/40 |
 | Wrong fixes introduced | 0 | 5 |
 | Compile-time bugs caught | 13 | 0 |
-| Post-fix verification | 0 errors (proven) | unverifiable |
+| Post-fix verification | 0 checker errors | no verification path |
 
 ## Key Finding
 
-The beagle agent's 27 correct fixes are **verified by the type checker** — `beagle-check-all`
-returns 0 errors on the fixed codebase. The clojure agent made changes to 5 files but
-**none of its edits match the golden reference**. Without a type system, the agent could
-not distinguish correct code from buggy code and made changes that were either wrong,
-incomplete, or applied to the wrong location.
+`beagle-check-all` returns 0 errors on the fixed codebase, verifying that all 27 correct
+fixes satisfy beagle's cross-module type/contracts layer. The clojure agent made changes to
+5 files but **none of its edits match the golden reference**. Without a type system, the
+agent could not distinguish correct code from buggy code and made changes that were either
+wrong, incomplete, or applied to the wrong location.
+
+**Scoring rubric:** "Correct" = matches the intended golden repair, or is behaviorally
+equivalent where equivalence is clear. "Partial" = bug was addressed but fix diverges from
+golden in ways that may introduce edge-case differences. "Wrong fix" = edit changes behavior
+in a direction that does not resolve the bug or introduces a new defect.
 
 ## Detailed Results — Beagle Track
 
@@ -114,7 +119,7 @@ All 8 wrong-field-access bugs, all 5 constructor bugs, all 5 logic bugs, and
    13 bugs required zero reasoning — just follow the error message.
 
 2. **Verification loop.** After fixing compiler-caught bugs, the agent re-ran the checker.
-   Zero errors confirmed correctness of those 13 fixes mathematically — no test suite needed.
+   Zero errors confirmed those 13 fixes satisfy the type/contracts layer — no test suite needed.
 
 3. **Momentum from certainty.** With 13 bugs already fixed and verified, the agent had
    bandwidth to manually inspect the remaining code. It found and fixed 14 additional bugs
@@ -159,10 +164,27 @@ by the full 40-bug search space with no starting signal, couldn't effectively tr
 
 ## Conclusion
 
-For a production-shaped codebase with cross-module typed contracts:
+Beagle turns AI coding from speculative editing into checked repair.
 
-- **Beagle provides 27/40 correct fixes (67.5%) with mathematical verification**
-- **Clojure provides 0/40 correct fixes (0%) with no verification path**
+The type checker directly exposed 13 bugs, but the agent fixed 14 more outside the
+checker's direct reach. The checker did not merely catch errors — it reduced uncertainty
+enough for the agent to reason productively about the rest of the system. The clojure
+agent, facing the same search space with no reliable signal, could not fix a single bug
+correctly and made several things worse.
 
-The type system's value is not just the 13 bugs it catches directly — it's the cascade
-effect of giving the agent a verified foundation to build on. Correctness compounds.
+The difference was not model intelligence (same model, same prompt structure). It was
+feedback quality. Beagle gave the agent exact, cross-module diagnostics and a verification
+loop. Raw Clojure forced the agent to inspect 3000 LOC with no checkable facts.
+
+### Limitations
+
+- Single trial (n=1 per track). Variance unknown.
+- Scoring rubric favors golden-match; some partial fixes may be functionally correct.
+- Bug injection was manual and known to the experiment author.
+- No third baseline (Clojure + spec/Malli/core.typed).
+
+### Broader claim
+
+AI agents do better when the language gives them small, typed, local, checkable facts.
+This is not a claim about syntax preferences or type theory aesthetics. It is a claim
+about the feedback loops that make AI-assisted programming reliable at scale.
