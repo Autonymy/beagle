@@ -8,7 +8,7 @@ A Racket-to-Clojure transpiler. `#lang beagle` source files compile to
 ## How to test
 
 ```
-raco test tests/         # full suite (289 tests)
+raco test tests/         # full suite (315 tests)
 raco test tests/parse.rkt  # just parser
 raco test tests/emit.rkt   # just emitter
 raco test tests/check.rkt  # just type checker
@@ -67,8 +67,10 @@ Example: `(defn foo [(x : Long)] (+ x 1))` in test form:
 - Params can be `param`, `map-destructure`, or `seq-destructure` structs — always check with `(map-destructure? p)` / `(seq-destructure? p)` before calling `(param-name p)`
 - `MAP-TAG` and `SET-TAG` are `'#%map` and `'#%set` (well-known symbols, NOT gensyms — gensyms break across Racket phase boundaries)
 - The reader runs at phase 0, the parser at phase 1 (inside `define-syntax`) — shared symbols must be phase-stable
-- `emit-form` handles top-level forms (def, defn, defrecord, defprotocol, defmulti, defmethod, deftype, extend-type); `emit-expr` handles everything else
+- `emit-form` handles top-level forms (def, defn, defrecord, defenum, defprotocol, defmulti, defmethod, deftype, extend-type); `emit-expr` handles everything else (including `with-form`)
 - `check-form` does top-level type checking; `infer-expr` does expression-level inference
+- `with-form` in check.rkt validates field existence and type against `RECORD-FIELDS`; `ENUM-VALUES` tracks defenum declarations
+- Exhaustive match checking runs after `infer-expr` on `match-form` — warns when record patterns are present without wildcard/var fallback
 
 ## What NOT to do
 

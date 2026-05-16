@@ -14,7 +14,7 @@ it as canonical when explaining the language.
 
 ## Status
 
-`#lang beagle` v0 — end-to-end working, empirically validated:
+`#lang beagle` v0.3 — end-to-end working, empirically validated:
 
 - Forms: `def`, `defn` (single + multi-arity), `fn`, `let`, `if`, `cond`,
   `when`, `do`, `match`, `loop`, `recur`, `for` (with `:when`), `doseq`,
@@ -68,6 +68,8 @@ it as canonical when explaining the language.
   assertions, 12 injected bugs (9 caught by beagle at compile time)
 - E4 scaled experiment: 13-module system (8570 LOC), 484 assertions, 35
   injected bugs — first correctness divergence (beagle 3/3, clojure 0/3)
+- E5 event-sourced pipeline: 8 modules, 40 bugs, `with`-form projections;
+  beagle 66% / clojure 70% on line-diff, 0 checker errors all runs
 - Pattern matching (`match`) with record type dispatch + positional field destructuring
 - Multi-arity `defn` with per-arity type checking and union-type call validation
 - Guard-pattern type narrowing: `(when (nil? x) (throw ...))` narrows `x` in subsequent forms
