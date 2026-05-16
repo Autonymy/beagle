@@ -60,6 +60,14 @@ case "$EXPERIMENT" in
     cp -r "buggy/${TRACK}/"* "$RESPONSE_DIR/"
     echo "Buggy reference copied to $RESPONSE_DIR/"
     ;;
+  e5f)
+    echo "Task: Smaller model bug detection"
+    echo "Spec: spec/e5f-smaller-model.md"
+    echo ""
+    echo "Same 40 bugs, weaker model. Use bin/run-model-trial instead for automation."
+    cp -r "buggy-clean/${TRACK}/"* "$RESPONSE_DIR/"
+    echo "Buggy reference copied to $RESPONSE_DIR/"
+    ;;
   *)
     echo "Unknown experiment: $EXPERIMENT"
     exit 1

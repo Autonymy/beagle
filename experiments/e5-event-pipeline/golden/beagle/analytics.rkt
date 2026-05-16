@@ -351,10 +351,37 @@
           [true "flat"]))))
 
 ;; =============================================================================
+;; Customer & Payment Analytics
+;; =============================================================================
+
+(defn repeat-customer-rate [(orders : (Vec OrderState))] : Any
+  (if (empty? orders)
+    0.0
+    (let [by-customer (group-by :customer-id orders)
+          total-customers (count by-customer)
+          repeat-customers (count (filterv (fn [(entry : Any)] : Boolean
+                                    (> (count (val entry)) 1))
+                                  by-customer))]
+      (if (= total-customers 0)
+        0.0
+        (double (/ repeat-customers total-customers))))))
+
+(defn average-time-to-payment [(orders : (Vec OrderState))] : Long
+  (let [paid (filterv (fn [(o : OrderState)] : Boolean
+               (and (some? (orderstate-paid-at o))
+                    (some? (orderstate-placed-at o))))
+             orders)]
+    (if (empty? paid)
+      0
+      (let [times (mapv (fn [(o : OrderState)] : Long
+                    (- (orderstate-paid-at o) (orderstate-placed-at o)))
+                  paid)]
+        (quot (reduce + 0 times) (count times))))))
+
+;; =============================================================================
 ;; Composite Analytics
 ;; =============================================================================
 
-;; dashboard-metrics: computes a summary map of key business metrics.
 (defn dashboard-metrics [(orders : (Vec OrderState))
                          (customers : (Vec CustomerState))
                          (payments : (Vec PaymentState))] : (Map String Long)

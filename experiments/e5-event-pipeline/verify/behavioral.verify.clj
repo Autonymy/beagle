@@ -70,6 +70,12 @@
       (intern 'pipeline.pipeline sym cls))
     (catch ClassNotFoundException _ nil)))
 
+;; --- Track adapter ---
+;; Load adapter based on system property set by scoring script.
+;; Adapters map track-specific function names to the canonical behavioral API.
+(when-let [adapter-path (System/getProperty "e5.adapter")]
+  (load-file adapter-path))
+
 ;; --- Test infrastructure -----------------------------------------------
 
 (def ^:dynamic *results* (atom []))

@@ -368,3 +368,29 @@
      "total-revenue" total-rev
      "avg-order-value" avg-order
      "cancellation-pct" cancel-pct}))
+
+;; repeat-customer-rate: percentage of customers with more than one order.
+(defn repeat-customer-rate [(orders : (Vec OrderState))] : Any
+  (if (empty? orders)
+    0.0
+    (let [by-customer (group-by :customer-id orders)
+          total-customers (count by-customer)
+          repeat-customers (count (filterv (fn [(entry : Any)] : Boolean
+                                    (> (count (val entry)) 1))
+                                  by-customer))]
+      (if (= total-customers 0)
+        0.0
+        (double (/ repeat-customers total-customers))))))
+
+;; average-time-to-payment: mean time between order placement and payment.
+(defn average-time-to-payment [(orders : (Vec OrderState))] : Long
+  (let [paid (filterv (fn [(o : OrderState)] : Boolean
+               (and (some? (orderstate-paid-at o))
+                    (some? (orderstate-placed-at o))))
+             orders)]
+    (if (empty? paid)
+      0
+      (let [times (mapv (fn [(o : OrderState)] : Long
+                    (- (orderstate-paid-at o) (orderstate-placed-at o)))
+                  paid)]
+        (quot (reduce + 0 times) (count times))))))

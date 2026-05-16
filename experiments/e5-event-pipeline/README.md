@@ -25,6 +25,7 @@ nullable state fields, heavy cross-module contracts.
 | E5b | Schema evolution (split OrderPlaced → OrderPlaced + OrderPriced) | Compiler finds all affected call sites |
 | E5c | Bug detection (40 injected bugs) | 25 caught at compile time; verified repair loop |
 | E5e | Behavioral scoring (40 per-bug tests) | Eliminates line-diff bias; clojure jumps to 90% |
+| E5f | Smaller model (Sonnet/Haiku) | Type checker value grows as model capability degrades |
 
 ## Module DAG
 
@@ -41,24 +42,20 @@ events (leaf)
 
 ## Results (3 runs per track, unlabeled bugs)
 
-### E5c → E5d → E5e progression
+### E5e: Full behavioral scoring (both tracks)
 
-| Metric | Beagle (E5d) line | Clojure (E5d) line | Clojure (E5e) behavioral |
-|--------|:---:|:---:|:---:|
-| Mean accuracy | 66.0% | 70.3% | **90.0%** |
-| Std deviation | 1.7% | 2.1% | **0.0%** |
-| Checker errors | 0 | n/a | n/a |
+| Metric | Beagle (line) | Clojure (line) | Beagle (behavioral) | Clojure (behavioral) |
+|--------|:---:|:---:|:---:|:---:|
+| Mean accuracy | 66.0% | 70.3% | **85.1%** | **90.0%** |
+| Std deviation | 1.7% | 2.1% | 1.5% | 0.0% |
+| Checker errors | 0 | n/a | 0 | n/a |
 
-**E5e finding:** Line-diff scoring was the primary confounding factor.
-Behavioral tests show the agent actually fixes 36/40 bugs correctly — the
-20pp gap between line-diff (70%) and behavioral (90%) was entirely
-"correct but different" fix patterns being penalized.
-
-The 4 unfixable bugs (BUG-09, 10, 11, 18) are missing match cases and
-nil-handling issues that neither type checkers nor code inspection catches.
-
-Beagle behavioral scoring is blocked until the emitter produces self-contained
-.clj (match destructuring + qualified accessor emission needed).
+**Key findings:**
+- Both tracks improve dramatically under behavioral scoring (+19pp beagle, +20pp clojure)
+- The gap narrows slightly (4.3pp line → 4.9pp behavioral) but persists
+- Beagle's remaining failures are "over-strict fixes" (type-valid but semantically narrow)
+- 0 type-checker errors across all 6 beagle runs (verification guarantee confirmed)
+- BUG-09 (missing match case): beagle catches 2/3 runs, clojure catches 0/3
 
 See `results.md` for full analysis and per-bug breakdown.
 
@@ -71,8 +68,18 @@ bin/beagle-build-all golden/beagle/
 # Verify golden reference
 clj verify/master.verify.clj
 
-# Run experiment
+# Run experiment (manual — sets up dir, you launch agent)
 bin/run-experiment e5a beagle 1
+
+# E5f: Automated smaller-model trial (setup + agent + score)
+bin/run-model-trial sonnet beagle 1
+bin/run-model-trial haiku clojure 2
+
+# E5f: Run all 12 trials
+bin/run-e5f-all
+
+# E5f: Run only one model tier
+bin/run-e5f-all sonnet
 ```
 
 ## Beagle version

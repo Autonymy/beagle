@@ -30,28 +30,24 @@ if [ "$TRACK" = "beagle" ]; then
     echo "Score: 0% (build failure)"
     exit 1
   fi
-  # Beagle's cross-module import makes accessors available unqualified, but
-  # the emitted .clj only has (:require ... :as). Patch each non-events module
-  # to also :use pipeline.events so unqualified accessors resolve.
-  for f in "$WORK_DIR/pipeline/"*.clj; do
-    base=$(basename "$f")
-    if [ "$base" != "events.clj" ]; then
-      sed -i 's/(:require \[pipeline\.events/(:require [pipeline.events :refer :all/; s/(:require \[pipeline\.events :as [a-z]*/(:require [pipeline.events :refer :all :as evt/' "$f"
-    fi
-  done
+  ADAPTER="$SCRIPT_DIR/verify/adapter-beagle.clj"
 elif [ "$TRACK" = "clojure" ]; then
   cp "$TRIAL_DIR/"*.clj "$WORK_DIR/pipeline/"
+  ADAPTER="$SCRIPT_DIR/verify/adapter-clojure.clj"
 else
   echo "Unknown track: $TRACK (use 'beagle' or 'clojure')"
   exit 1
 fi
 
-echo "Running behavioral tests..."
+echo "Running behavioral tests (adapter: $(basename $ADAPTER))..."
 echo ""
 
-# Run behavioral verify with the trial code on classpath
-# Suppress intern warnings (cosmetic noise)
-OUTPUT=$(clj -Sdeps "{:paths [\"$WORK_DIR\"]}" -M "$SCRIPT_DIR/verify/behavioral.verify.clj" 2>&1 | grep -v "^WARNING") || true
+# Run behavioral verify with adapter path passed as system property.
+# The test loads the adapter after modules are bootstrapped.
+# Suppress intern warnings (cosmetic noise from :refer :all)
+OUTPUT=$(clj -Sdeps "{:paths [\"$WORK_DIR\" \"$SCRIPT_DIR/verify\"]}" \
+  -J-De5.adapter="$ADAPTER" \
+  -M "$SCRIPT_DIR/verify/behavioral.verify.clj" 2>&1 | grep -v "^WARNING") || true
 
 echo "$OUTPUT"
 

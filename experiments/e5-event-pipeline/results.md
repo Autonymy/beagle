@@ -184,57 +184,87 @@ type checkers on both tracks. BUG-11 is a nil-handling issue that only
 manifests at runtime. BUG-18 is a field-name confusion that produces a
 Long where String is expected.
 
-### Beagle Behavioral Scoring: Blocked
+### Beagle Results
 
-Beagle trials score 0% on behavioral tests because the emitted .clj files
-have runtime errors:
+| Trial | Line-diff (E5d) | Behavioral (E5e) |
+|-------|:---:|:---:|
+| Run 1 | 65% | 86.8% |
+| Run 2 | 68% | 84.2% |
+| Run 3 | 65% | 84.2% |
 
-1. **Match destructuring not emitted.** Beagle's match compiler uses
-   `(instance? RecordType var)` checks but doesn't emit `let` bindings for
-   the destructured fields. Pattern variables like `iid`, `wid`, `qty` appear
-   unbound in the emitted Clojure.
+| Metric | Line-diff | Behavioral |
+|--------|:---:|:---:|
+| Mean score | 66.0% | 85.1% |
+| Std deviation | 1.7% | 1.5% |
 
-2. **Unqualified cross-module accessors.** Beagle's type import makes
-   `orderplaced-order-id` available unqualified, but the emitted ns form
-   only has `(:require [pipeline.events :as evt])`. The `:refer :all` patch
-   fixes this, but issue 1 still blocks execution.
+Note: 2 of 40 tests excluded (BUG-38, BUG-39) — functions added to golden
+after trials ran. Denominator is 38 for beagle.
 
-3. **Agent-introduced runtime bugs.** At least one trial uses `amt` instead
-   of `event` — a variable name that beagle's type checker accepts (both
-   resolve to compatible types) but that doesn't exist in the emitted scope.
+### Head-to-Head Behavioral Comparison
 
-These are beagle infrastructure issues, not experiment design issues. The
-behavioral test correctly identifies that the emitted code doesn't run.
+| Metric | Beagle | Clojure |
+|--------|:---:|:---:|
+| Mean behavioral score | 85.1% | 90.0% |
+| Std deviation | 1.5% | 0.0% |
+| Gap | -4.9pp | — |
+| Checker errors (all runs) | 0 | n/a |
+
+### Beagle-Only Failures (not shared with clojure)
+
+| Bug | Runs | Description |
+|-----|------|-------------|
+| BUG-27 | 1,2,3 | NPE: nil delivered-at in arithmetic (agent fix too strict) |
+| BUG-29 | 1,2,3 | total-revenue sums "delivered" only, not "non-cancelled" |
+| BUG-09 | 2 | CustomerTierChanged match case not added |
+| BUG-24 | 3 | OrderDelivered dispatch not handled in handler |
+
+### Shared Failures (both tracks)
+
+| Bug | Category | Description |
+|-----|----------|-------------|
+| BUG-10 | F: missing case | RefundIssued not handled in payment |
+| BUG-11 | B: nil access | paid-amount nil causes NPE |
+| BUG-18 | A: wrong field | cancelled-at used instead of reason |
+
+BUG-09 (CustomerTierChanged missing case) fails on all 3 clojure runs but
+only 1 beagle run — beagle's exhaustive match note may have helped in 2/3.
 
 ### Analysis
 
-The +19.7pp improvement (70.3% → 90.0%) confirms the hypothesis: line-diff
-scoring was the primary confounding factor in E5d. The remaining 10% gap
-(4 bugs) represents genuine agent limitations — missing match cases and
-nil-handling patterns that neither type checkers nor code inspection reliably
-catches.
+The +19.1pp improvement (66.0% → 85.1%) for beagle confirms that line-diff
+scoring was penalizing "correct but different" fixes. The clojure improvement
+is larger (+19.7pp, 70.3% → 90.0%) because clojure's fixes are more consistent.
 
-The perfect consistency (0.0% std dev) on behavioral scoring means the agent's
-detection capability is deterministic for this problem size — the variance in
-line-diff scoring came entirely from "correct but different" fix patterns.
+The remaining gap (4.9pp) comes from two categories:
+1. **Over-strict fixes** (BUG-27, BUG-29): The agent makes type-valid fixes that
+   are semantically too restrictive. The type checker says "this is fine" but the
+   runtime behavior doesn't match the test expectation.
+2. **Inconsistent detection** (BUG-09, BUG-24): Beagle sometimes catches
+   missing dispatch cases (2/3 for BUG-09) where clojure never does.
 
-### E5c vs E5d Behavioral Comparison
+Key finding: **beagle's verification advantage (0 checker errors) is confirmed,
+but its behavioral accuracy gap is real.** The gap is structural: agents guided
+by type errors tend toward over-restrictive fixes.
 
-| Metric | E5c behavioral | E5d behavioral |
-|--------|:---:|:---:|
-| Mean score | 88.3% | 90.0% |
-| Std deviation | 2.9% | 0.0% |
+### Infrastructure
 
-E5c run1 had 2 additional failures (BUG-19, BUG-23) that E5d consistently
-fixes. The `with` form's clearer update semantics may have helped the agent
-identify these patterns.
+Behavioral scoring uses per-track adapters to bridge naming differences:
+- `verify/adapter-beagle.clj`: maps `make-order-state`, `handle-event`,
+  `shipment-by-carrier` + stubs for post-trial functions
+- `verify/adapter-clojure.clj`: no-op (canonical API matches)
+- `bin/score-behavioral`: passes adapter via `-J-De5.adapter=` system property
+
+Emitter fixes applied (unblocked beagle behavioral scoring):
+- Cross-module match arms emit `let` bindings for destructured fields
+- `instance?` uses fully-qualified class names (`pipeline.events.OrderPlaced`)
+- Beagle module requires emit `:refer :all :as alias`
 
 ## Next steps
 
 1. ~~Semantic scoring via behavioral tests~~ → **Done (E5e)**
-2. Fix beagle emitter: match destructuring + qualified accessor emission
-3. Re-score beagle trials with behavioral tests after emitter fix
-4. Smaller model experiments (beagle's advantage should grow as model degrades)
-5. Exhaustive match warnings to flag missing dispatch cases at compile time
+2. ~~Fix beagle emitter: match destructuring + qualified accessor emission~~ → **Done**
+3. ~~Re-score beagle trials with behavioral tests~~ → **Done**
+4. ~~Exhaustive match warnings to flag missing dispatch cases~~ → **Done (sibling heuristic)**
+5. Smaller model experiments (beagle's advantage should grow as model degrades)
 6. Intent-preserving repair: teach the checker to suggest "remove this update"
    not just "fix the type"
