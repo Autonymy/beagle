@@ -1410,7 +1410,8 @@
        (for-each walk (try-form-body e))
        (for ([c (in-list (try-form-catches e))])
          (for-each walk (catch-clause-body c)))
-       (for-each walk (try-form-finally-body e))]
+       (when (try-form-finally-body e)
+         (for-each walk (try-form-finally-body e)))]
       [(with-form? e)
        (walk (with-form-target e))
        (for ([u (in-list (with-form-updates e))])
@@ -1482,7 +1483,8 @@
        (for-each go (try-form-body expr))
        (for ([c (in-list (try-form-catches expr))])
          (for-each go (catch-clause-body c)))
-       (for-each go (try-form-finally-body expr))]
+       (when (try-form-finally-body expr)
+         (for-each go (try-form-finally-body expr)))]
       [(with-form? expr)
        (go (with-form-target expr))
        (for ([u (in-list (with-form-updates expr))])
