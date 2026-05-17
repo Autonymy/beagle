@@ -1,0 +1,90 @@
+#!/usr/bin/env racket
+#lang racket/base
+
+;; Fast paren/bracket balance checker for .rkt files.
+;; Reports unmatched delimiters with line numbers.
+;; Designed to run <10ms — no parsing, just delimiter tracking.
+
+(require racket/cmdline racket/string racket/port racket/file)
+
+(define (check-file path)
+  (define stack '())
+  (define errors '())
+  (define line-num 1)
+  (define in-string? #f)
+  (define in-comment? #f)
+  (define prev-char #f)
+
+  (define openers '(#\( #\[ #\{))
+  (define closers '(#\) #\] #\}))
+  (define (closer-for c)
+    (case c
+      [(#\() #\)]
+      [(#\[) #\]]
+      [(#\{) #\}]
+      [else #f]))
+  (define (opener-for c)
+    (case c
+      [(#\)) #\(]
+      [(#\]) #\[]
+      [(#\}) #\{]
+      [else #f]))
+
+  (define content (file->string path))
+  (for ([ch (in-string content)])
+    (cond
+      [(char=? ch #\newline)
+       (set! line-num (add1 line-num))
+       (set! in-comment? #f)]
+      [in-comment? (void)]
+      [(and (char=? ch #\") (not (equal? prev-char #\\)))
+       (set! in-string? (not in-string?))]
+      [in-string? (void)]
+      [(char=? ch #\;)
+       (set! in-comment? #t)]
+      [(member ch openers)
+       (set! stack (cons (cons ch line-num) stack))]
+      [(member ch closers)
+       (define expected-opener (opener-for ch))
+       (cond
+         [(null? stack)
+          (set! errors (cons (format "~a:~a: unmatched closing '~a'"
+                                     path line-num ch) errors))]
+         [(not (char=? (car (car stack)) expected-opener))
+          (set! errors (cons (format "~a:~a: '~a' closes '~a' opened at line ~a"
+                                     path line-num ch
+                                     (car (car stack))
+                                     (cdr (car stack))) errors))
+          (set! stack (cdr stack))]
+         [else
+          (set! stack (cdr stack))])])
+    (set! prev-char ch))
+
+  (for ([s (in-list stack)])
+    (set! errors (cons (format "~a:~a: unclosed '~a'"
+                               path (cdr s) (car s)) errors)))
+
+  (reverse errors))
+
+(module+ main
+  (define files
+    (command-line
+     #:program "beagle-syntax"
+     #:args files
+     (if (null? files)
+         (error "usage: beagle-syntax FILE ...")
+         files)))
+
+  (define all-errors '())
+  (for ([f (in-list files)])
+    (when (file-exists? f)
+      (set! all-errors (append all-errors (check-file f)))))
+
+  (cond
+    [(null? all-errors)
+     (printf "~a file(s) ok\n" (length files))]
+    [else
+     (for ([e (in-list all-errors)])
+       (displayln e))
+     (printf "\n~a error(s)\n" (length all-errors))
+     (exit 1)]))

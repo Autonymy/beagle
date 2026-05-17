@@ -13,16 +13,23 @@ compile into patches.
 
 ## Summary
 
-Across eleven experiments, Beagle's advantage shifted as the system matured:
+Across twelve experiments, two findings held:
 
-1. At small scale, Beagle mostly improved speed.
-2. At larger scale without an oracle, Beagle improved correctness.
-3. With a full oracle, Beagle improved repair efficiency.
-4. With `--emit-patch`, Beagle compressed mechanical fixes into executable patches.
-5. Against Python, Beagle's advantage came from the repair compiler, not types alone.
+1. **Static type checking helps ~25% regardless of language.** Python +
+   mypy, Beagle + checker, Clojure + kondo — all show similar gains
+   over their untyped baselines.
+2. **Python + mypy is the fastest and most correct track.** Fastest for
+   bug repair (255s avg), and 3/3 correct without a test oracle. Beagle
+   matches per-bug speed at the median but has higher variance.
 
-Beagle wins when bugs can be converted from reasoning problems into
-repair artifacts.
+The E4 correctness divergence (Beagle 3/3 vs Clojure 0/3) is a static
+typing result, not a Beagle result — Python + mypy also achieves 3/3
+without an oracle. Clojure fails because it lacks static checking, not
+because it lacks Beagle.
+
+Within the Clojure ecosystem, Beagle is a strict improvement (328s vs
+365s best Clojure, with 4x more static errors caught). Against Python,
+Beagle has no measurable advantage on any tested axis.
 
 ## Experiment design
 
@@ -57,6 +64,10 @@ Three language tracks:
 | E11 Sonnet | 395s | 411s | — | 4% beagle advantage |
 | E11 Haiku | 276s | 281s | — | 2% beagle advantage |
 | E8 Python | — | — | 346s, 3/3 | Faster than clj+bgl E9; slower than bgl E10 |
+| E12 Python+mypy | — | — | 255s, 3/3 | **Fastest track overall** |
+| E12 Beagle+cheatsheet | 328s (median 299s) | — | — | Per-bug parity at median; high variance |
+| E12a Clojure+kondo | — | 365s, 3/3 | — | 25% faster than E8 Clojure |
+| E4 Python+mypy (no oracle) | — | — | 362s, **3/3** | Matches Beagle E4 correctness |
 
 ---
 
@@ -221,6 +232,147 @@ time. Per-bug, Python (11.5s) is comparable to Beagle E9 (12.0s).
 **Beagle E10 still beats Python by 10%** — the repair compiler, not
 the type system, is the differentiator.
 
+### E12 — Fair toolchain comparison (best tools, forced workflow)
+
+E8 Python agents never used mypy. E8 Clojure agents had no static
+linter. To isolate the effect of static checking across ecosystems, E12
+gives each track its best available static tool and forces a
+"lint-first" workflow.
+
+**Static tool coverage on the same 35/30 bugs:**
+
+| Tool | Errors caught | Coverage |
+|------|--------------|----------|
+| `beagle-check` | 20 type errors | 57% of 35 bugs |
+| `mypy` | 16 type errors | 53% of 30 bugs |
+| `clj-kondo` | 5 arity errors | 14% of 35 bugs |
+
+#### E12 Python + mypy (forced workflow, 3 runs)
+
+Prompt instructs: "Run mypy FIRST. Fix ALL mypy errors before running
+verify."
+
+| Run | Turns | Wall | Cost | Result |
+|-----|-------|------|------|--------|
+| 1 | 70 | 232s | $1.64 | 484/484 |
+| 2 | 71 | 170s | $1.46 | 484/484 |
+| 3 | 74 | 362s | $2.24 | 484/484 |
+| **Avg** | **72** | **255s** | **$1.78** | **3/3** |
+
+**Python + mypy is 26% faster than Python without mypy** (255s vs 346s).
+Front-loading static diagnostics helps regardless of language.
+
+#### E12 Beagle + cheatsheet (full language reference in prompt, 3 runs)
+
+Previous Beagle prompts gave minimal language context — the agent had to
+learn Beagle's syntax by reading source files. Python agents already
+*know* Python from training data. To test whether this asymmetry
+explains the gap, this variant prepends the 154-line consumer cheatsheet
+to the prompt.
+
+| Run | Turns | Wall | Cost | Result |
+|-----|-------|------|------|--------|
+| 1 | 84 | 299s | $2.12 | 484/484 |
+| 2 | 80 | 413s | $2.96 | 484/484 |
+| 3 | 67 | 271s | $2.40 | 484/484 |
+| **Avg** | **77** | **328s** | **$2.49** | **3/3** |
+
+**12% faster than E8 Beagle** (328s avg vs 375s). High variance
+(271–413s) — the cheatsheet helps but doesn't eliminate training-data
+disadvantage. Median (299s) is more representative than the mean.
+
+#### E12 Beagle combined (distilled cheatsheet + emit-patch + daemon + syntax checker, 1 run)
+
+Kitchen sink: shorter "Clojure-delta" cheatsheet, `--emit-patch`
+auto-patch, daemon warm-start, paren balance checker.
+
+| Run | Turns | Wall | Cost | Result |
+|-----|-------|------|------|--------|
+| 1 | 72 | 347s | $1.80 | 484/484 |
+
+**Slower than cheatsheet-only** (347s vs 328s avg). The extra workflow
+steps (apply patch, start daemon, run syntax checker) added prompt
+complexity that offset their value. The simpler prompt outperforms the
+kitchen sink — a useful negative result.
+
+#### E12a Clojure + clj-kondo (forced lint-first workflow, 3 runs)
+
+Prompt instructs: "Run clj-kondo FIRST. Fix ALL errors before running
+verify."
+
+| Run | Turns | Wall | Cost | Result |
+|-----|-------|------|------|--------|
+| 1 | 82 | 489s | $3.86 | 484/484 |
+| 2 | 42 | 287s | $3.06 | 484/484 |
+| 3 | 35 | 319s | $3.35 | 484/484 |
+| **Avg** | **53** | **365s** | **$3.42** | **3/3** |
+
+**25% faster than E8 Clojure** (365s vs 485s). clj-kondo only catches 5
+arity errors, yet the structured "lint → fix → verify" workflow itself
+improves the agent's approach. High variance (287–489s) reflects
+Clojure's lack of static signal — after the 5 arity fixes, it's back
+to behavioral-only iteration.
+
+#### E12b Clojure + clj-kondo (naturalistic — tools available, not forced, 3 runs)
+
+| Run | Turns | Wall | Cost | Result |
+|-----|-------|------|------|--------|
+| 1 | 66 | 445s | $3.94 | 484/484 |
+| 2 | 69 | 1452s | $10.58 | 484/484 |
+| 3 | 67 | 337s | $2.44 | 484/484 |
+| **Avg** | **67** | **745s** | **$5.65** | **3/3** |
+
+Run 2 is a 24-minute outlier — a debugging spiral on a logic bug.
+This is the variance signature of behavioral-only debugging: one bad
+reasoning path costs 10x. Median is 445s. Forced kondo (E12a) avoids
+this class of blowup.
+
+#### E12 summary — all tracks, best tooling
+
+| Track | Avg wall | Per-bug | Static errors | Bugs |
+|-------|----------|---------|---------------|------|
+| **Python + mypy** | **255s** | **8.5s** | 16 | 30 |
+| Beagle + cheatsheet | 328s (median 299s) | 9.4s (median 8.5s) | 20 | 35 |
+| Beagle combined | 347s* | 9.9s | 20 | 35 |
+| Beagle E10 (emit-patch) | 310s | 8.9s | 20 | 35 |
+| E12a Clojure + kondo | 365s | 10.4s | 5 | 35 |
+| Python E8 (no mypy) | 346s | 11.5s | — | 30 |
+| Beagle E9 | 421s | 12.0s | 20 | 35 |
+| E12b Clojure + kondo | 745s (median 445s) | 12.7s | 5 | 35 |
+| Clojure E8 (no kondo) | 485s | 13.9s | — | 35 |
+
+*single run
+
+### E4 Python — No-oracle correctness (13 modules, 7.2K LOC, 30 bugs, NO test oracle)
+
+The most important missing experiment. E4 showed Beagle 3/3 vs Clojure
+0/3 without a test oracle — Beagle's strongest result. Does Python +
+mypy also produce correct code without tests?
+
+The agent receives buggy code and mypy. No verify script. We score
+correctness after the fact using the hidden 484-assertion oracle.
+
+| Run | Turns | Wall | Cost | Score |
+|-----|-------|------|------|-------|
+| 1 | 50 | 411s | $3.65 | 484/484 |
+| 2 | 50 | 357s | $3.69 | 484/484 |
+| 3 | 50 | 319s | $3.50 | 484/484 |
+| **Avg** | **50** | **362s** | **$3.61** | **3/3** |
+
+**Python + mypy: 3/3 correct without an oracle.** All 30 bugs found and
+fixed via mypy + code reading alone.
+
+This reframes E4: the correctness divergence was Beagle vs *untyped
+Clojure*, not Beagle vs *typed languages*. Any language with a static
+type checker achieves the same no-oracle correctness. Clojure failed
+because it lacks static checking, not because it lacks Beagle.
+
+| Track | No-oracle correctness | Static checker |
+|-------|-----------------------|----------------|
+| Beagle E4 | 3/3 | beagle-check (20 errors) |
+| Python + mypy | 3/3 | mypy (16 errors) |
+| Clojure E4 | 0/3 | none |
+
 ---
 
 ## Progression narrative
@@ -232,53 +384,75 @@ E8   (full oracle) → beagle 23% faster, both correct
 E9   (+ repair tools) → beagle 29% faster, 36% fewer tokens
 E10  (+ emit-patch) → beagle 33% faster
 E11  (model tier) → advantage scales: 33% Opus, 4% Sonnet, 2% Haiku
-Python reference  → type system alone ≈ beagle E9; repair compiler wins
+Python E8          → no mypy used; type system alone ≈ beagle E9
+E12  (fair tools)  → Python+mypy fastest; beagle matches per-bug; prompt engineering matters
+E4 Python          → 3/3 no-oracle correctness; E4 is a static-typing result, not a beagle result
 ```
 
 ## Key takeaways
 
-1. **Correctness divergence at scale.** At 8.5K LOC without a test
-   oracle (E4), Beagle produces 3/3 clean runs vs Clojure 0/3. This
-   is the strongest result — types prevent bugs that behavioral testing
-   misses.
+1. **Correctness divergence is about static typing, not Beagle.** At
+   8.5K LOC without a test oracle: Beagle 3/3, Python + mypy 3/3,
+   Clojure 0/3. Any static type checker prevents the no-oracle
+   correctness failures. Clojure fails because it lacks static
+   checking, not because it lacks Beagle.
 
-2. **The repair compiler is the differentiator, not the type system.**
-   Python with type annotations (346s) is comparable to Beagle-without-
-   patches (421s) on a per-bug basis. Beagle E10 with `--emit-patch`
-   (310s) is 10% faster than Python. The value is in compiling mechanical
-   fixes into patches, not in having types.
+2. **Static type checking helps ~25% regardless of language.** Python
+   with mypy is 26% faster than Python without (255s vs 346s). Beagle
+   with checker is 23% faster than Clojure without (375s vs 485s).
+   Clojure with kondo is 25% faster than without (365s vs 485s). The
+   benefit of front-loading static diagnostics is consistent across
+   ecosystems.
 
-3. **Beagle amplifies capable models.** Opus gains 33% from Beagle's
-   tooling; Sonnet gains 4%; Haiku gains 2%. The structured repair
-   output is only useful if the model can act on it.
+3. **Per-bug, Beagle and Python + mypy are close.** Median per-bug:
+   Beagle 8.5s, Python 7.7s. The gap is narrow but Python's floor is
+   lower. High variance on both tracks (Beagle 271–413s, Python 170–362s)
+   means individual runs overlap significantly.
 
-4. **Beagle may enable model-tier arbitrage.** Sonnet + Beagle (395s,
-   ~$1) outperforms Opus + Clojure (464s, ~$5) directionally. Small
-   sample sizes — promising, not conclusive. More runs needed.
+4. **Prompt engineering matters more for unfamiliar languages.** Beagle
+   with a cheatsheet (328s avg) is 12% faster than without (375s). The
+   cheatsheet partially compensates for training data disadvantage, but
+   doesn't eliminate it. Notably, the combined "kitchen sink" prompt
+   (347s) was slower than the simple cheatsheet — more instructions can
+   hurt.
 
-5. **Caveat: Beagle's speed advantage needs behavioral coverage.**
+5. **Python is the fastest track for agent bug repair.** With mypy
+   forced, Python averages 255s — faster than every Beagle configuration
+   including emit-patch (310s). Python's advantages: training data
+   familiarity, clear error messages, no compile step. This is specific
+   to bug repair with a behavioral oracle; the no-oracle correctness
+   story (E4) has not been tested for Python.
+
+6. **Beagle's strongest case is within the Clojure ecosystem.** Beagle
+   + cheatsheet (299s) beats the best Clojure configuration (365s) by
+   18%. `beagle-check` catches 20 type errors vs clj-kondo's 5. If
+   you're in Clojure, Beagle is a strict improvement.
+
+7. **Caveat: Beagle's speed advantage needs behavioral coverage.**
    E4 showed value *without* oracle coverage (correctness, not speed).
    But for the *speed* advantage, coverage matters: with a partial oracle
    (E8 run 1, 291 assertions), Clojure was 2x faster because it could
    ignore untested broken code. Beagle's type checker forces the agent
-   to fix all type errors regardless. Beagle's speed advantage requires
-   enough behavioral coverage for Clojure to be forced through the same
-   bug surface. With partial coverage, Clojure can appear faster by
-   ignoring untested broken code.
+   to fix all type errors regardless.
 
 ## Appendix: confounds and limitations
 
 - **Python has fewer bugs.** 30 vs 35 — 5 Clojure-specific patterns
   don't translate. Per-bug normalization partially accounts for this.
-- **No mypy usage.** The agents had mypy available but never used it.
-  Python's advantage comes from readability and error messages, not from
-  the type checker. A stricter experiment could force mypy usage.
+- **Training data asymmetry.** The agent (Claude) has vastly more Python
+  in its training data than Clojure or Beagle. The cheatsheet experiment
+  shows this matters (~20% improvement), but doesn't fully close the gap.
+  A fair comparison would need a model trained equally on all three.
+- **E12 Beagle cheatsheet is a single run.** The 299s result is
+  directional. More runs needed to confirm.
 - **E11 sample sizes are small.** Sonnet: 2 runs each. Haiku: 1 run
   each. Treat the sub-Opus numbers as directional, not conclusive.
 - **E10 run 1 invalid.** Three `--emit-patch` toolchain bugs discovered
   during run 1; fixed before runs 2–3. Results use valid runs only.
-- **Same model judges all tracks.** The agent (Claude) may have stronger
-  Python priors from training data, biasing the Python track favorably.
+- **E12 combined run confounded.** The combined run (347s) changed two
+  variables simultaneously: switched from 154-line cheatsheet to 75-line
+  distilled version AND added emit-patch/daemon/syntax. Cannot isolate
+  which caused the slowdown.
 - **LOC differs across tracks.** Beagle 8500 LOC, Clojure 4700 LOC,
   Python 7200 LOC. More code means more context to read, though bug
   density (bugs per LOC) is roughly comparable.

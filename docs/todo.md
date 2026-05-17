@@ -244,6 +244,39 @@ Developer tools stay as `bin/beagle-*` (repair, proptest, muttest, dtrace, etc.)
 - [ ] Devlog entry: v0.4.0
 - [ ] Tag v0.4.0
 
+## Now: Close the Python gap (E12 follow-up)
+
+E12 showed Python+mypy (255s) beats Beagle+cheatsheet (299s) on bug
+repair. Per-bug time is tied (8.5s each) — the absolute gap is mostly
+the 5 extra bugs. Goal: combine optimizations and test whether Beagle
+can match or beat Python with its full toolchain.
+
+### 1. Cheatsheet + emit-patch combined run ✓
+- [x] Single run: distilled cheatsheet + emit-patch + daemon + syntax checker
+- [x] Result: 347s — slower than cheatsheet-only (328s avg). Kitchen sink hurts.
+
+### 2. Paren safety tool (`beagle-syntax`) ✓
+- [x] Lightweight balanced-paren/bracket validator (150ms for 13 files)
+- [x] Reports "line N: unmatched paren" — catches E4-style corruption
+- [x] `bin/beagle-syntax` — Racket script, no dependencies
+
+### 3. Cheatsheet-distilled (Clojure-delta framing) ✓
+- [x] `docs/cheatsheet-distilled.md` — 75 lines, "you know Clojure, here's what's different"
+- [x] Includes error-to-fix recipes, query tool reference
+- [x] Used in combined run prompt
+
+### 4. Error-to-fix recipe appendix ✓
+- [x] Baked into cheatsheet-distilled: E002 → wrong accessor, E001 → missing arg, "did you mean" → use it
+
+### 5. Validate cheatsheet result (n=1 → n=3) ✓
+- [x] 3 runs: 299s, 413s, 271s. Avg 328s, median 299s.
+- [x] Confirms improvement over E8 (375s) but high variance remains
+
+### 6. Daemon warm-start ✓
+- [x] Tested in combined prompt (step 0: start daemon)
+- [x] Combined prompt slower overall — daemon value absorbed by prompt complexity
+- [ ] Query tools go from 450ms → 10ms; compounds over 70+ turns
+
 ## Someday: Experiments
 
 - [x] Mutation testing: beagle-muttest (13 operators, 1356 sites on E8, identifies oracle gaps)
