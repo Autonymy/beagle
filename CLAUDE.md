@@ -100,6 +100,7 @@ parse → check → emit
 - `private/expand-tool.rkt` — backend for `bin/beagle-expand`.
 - `private/query.rkt` — type-system query engine for `beagle-sig`,
   `beagle-fields`, `beagle-callers`, `beagle-provides`, `beagle-impact`.
+- `private/blame.rkt` — semantic property rules + static suspicion analysis.
 - `private/check-all.rkt` — batch type-checker (10x vs sequential `beagle-check`).
 - `private/build-all.rkt` — batch compiler (9x vs sequential `beagle-build`).
 - `main.rkt` — language module; `#%module-begin` runs the pipeline,
@@ -118,10 +119,11 @@ parse → check → emit
 ## Tools
 
 - `bin/beagle-build SOURCE.rkt [OUT.clj]` — single-file compile
-- `bin/beagle-build-all FILE-OR-DIR... [--out DIR]` — batch compile in a single process (9x vs sequential)
+- `bin/beagle-build-all FILE-OR-DIR... [--out DIR] [--warn]` — batch compile (9x vs sequential); `--warn` emits despite type errors
 - `bin/beagle-check SOURCE.rkt` — type-check without emitting Clojure
-- `bin/beagle-check-all FILE-OR-DIR...` — batch type-check in a single process (10x vs sequential)
+- `bin/beagle-check-all FILE-OR-DIR...` — batch type-check (10x vs sequential) + semantic suspicions
 - `bin/beagle-expand SOURCE.rkt` — print source after macro expansion
+- `bin/beagle-blame BUILD-DIR VERIFY-SCRIPT` — run oracle with blame analysis (ratio → likely bug type)
 - `bin/beagle-sig FN-NAME FILE-OR-DIR...` — print a function's typed signature
 - `bin/beagle-fields RECORD FILE-OR-DIR...` — print record fields, types, and accessors
 - `bin/beagle-callers FN-NAME FILE-OR-DIR...` — find all call sites of a function
@@ -216,8 +218,25 @@ Clojure idioms whose cost > benefit for beagle's goals:
 raco pkg install --link --auto /home/tom/code/beagle
 ```
 
+## Devlog discipline
+
+`docs/devlog/` is the scientific journal for beagle development.
+Entries are written when meaningful discoveries happen — not for routine
+commits. The pattern:
+
+1. **Hypothesis** — what we expected and why
+2. **Experiment** — what we ran (cite experiment ID, commit, setup)
+3. **Result** — numbers, not prose
+4. **Interpretation** — what this means for the project direction
+5. **Next question** — what this result makes us want to test next
+
+Keep entries concise (~30 lines). Link from `docs/devlog/README.md`.
+When an experiment produces surprising or direction-changing results,
+it gets a devlog entry. Routine feature additions do not.
+
 ## Reference
 
+- `docs/devlog/README.md` — development journal (discoveries + experiments).
 - `experiments/README.md` — benchmark framework for design decisions.
 - `docs/forms.md` — canonical form catalog.
 - `docs/cheatsheet.md` — single-page LLM grounding reference.

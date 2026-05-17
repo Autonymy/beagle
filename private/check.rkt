@@ -1066,14 +1066,16 @@
   ;; also register imported scalars
   (for ([sym (in-list (program-imported-scalar-fns prog))])
     (define s (symbol->string sym))
+    ;; Strip module prefix (e.g., "ord/->Amount" → "->Amount", "ord/amount-value" → "amount-value")
+    (define bare
+      (let ([slash (regexp-match-positions #rx"/" s)])
+        (if slash (substring s (cdar slash)) s)))
     (cond
-      [(string-prefix? s "->")
-       (define scalar-name (string->symbol (substring s 2)))
+      [(string-prefix? bare "->")
+       (define scalar-name (string->symbol (substring bare 2)))
        (hash-set! SCALAR-CTORS sym scalar-name)]
-      [(string-suffix? s "-value")
-       (define prefix (substring s 0 (- (string-length s) 6)))
-       ;; Find the matching ctor to get the canonical scalar name
-       ;; Try exact titlecase first, then scan all ctors for case-insensitive match
+      [(string-suffix? bare "-value")
+       (define prefix (substring bare 0 (- (string-length bare) 6)))
        (define ctor-sym (string->symbol (string-append "->" (string-titlecase-first prefix))))
        (define canonical
          (or (hash-ref SCALAR-CTORS ctor-sym #f)

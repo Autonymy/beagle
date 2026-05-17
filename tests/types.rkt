@@ -144,3 +144,18 @@
   (check-eq? (type-prim-name (infer-literal-type 'true))   'Boolean)
   (check-eq? (type-prim-name (infer-literal-type 'false))  'Boolean)
   (check-eq? (type-prim-name (infer-literal-type ':kw))    'Keyword))
+
+;; --- qualified type names ---------------------------------------------------
+
+(test-case "parse qualified type names (mod/Type)"
+  (define t (parse-type 'cat/ProductId))
+  (check-true (type-prim? t))
+  (check-eq? (type-prim-name t) 'cat/ProductId))
+
+(test-case "qualified and unqualified scalar types are compatible"
+  (check-true (type-compatible? (type-prim 'cat/ProductId) (type-prim 'ProductId)))
+  (check-true (type-compatible? (type-prim 'ProductId) (type-prim 'cat/ProductId)))
+  (check-true (type-compatible? (type-prim 'ord/Amount) (type-prim 'Amount)))
+  ;; Different base names are NOT compatible
+  (check-false (type-compatible? (type-prim 'cat/ProductId) (type-prim 'CategoryId)))
+  (check-false (type-compatible? (type-prim 'ord/Amount) (type-prim 'Timestamp))))

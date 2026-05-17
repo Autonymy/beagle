@@ -2,11 +2,14 @@
 # beagle-build-all: compile multiple .rkt files to Clojure in one process.
 #
 # Usage:
-#   bin/beagle-build-all <file-or-dir> ... [--out <dir>]
+#   bin/beagle-build-all <file-or-dir> ... [--out <dir>] [--warn]
 #
 # Directories are expanded to their .rkt contents. Without --out, output
 # paths derive from each file's (ns ...) declaration. With --out, .clj
 # files land in the given directory with the same basename.
+#
+# --warn: emit Clojure despite type errors (diagnostics printed as warnings).
+#         Parse errors and unresolvable bindings still fail.
 
 set -euo pipefail
 

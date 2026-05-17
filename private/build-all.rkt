@@ -14,7 +14,9 @@
   (string-append (regexp-replace* #rx"\\." (regexp-replace* #rx"-" s "_") "/")
                  ".clj"))
 
-(define (build-one-file path out-dir json?)
+(define (build-one-file path out-dir json? #:warn? [warn? #f])
+  (define type-errors 0)
+
   (define (handle-error e [loc-stx #f])
     (cond
       [json?
@@ -43,8 +45,9 @@
     (type-check-with-locs! prog
       (lambda (e loc-stx)
         (set! ok? #f)
+        (set! type-errors (+ type-errors 1))
         (handle-error e loc-stx)))
-    (unless ok? (error "type errors"))
+    (unless (or ok? warn?) (error "type errors"))
 
     (unless (getenv "BEAGLE_NO_LINT")
       (lint-program! prog))
@@ -64,8 +67,13 @@
     (with-output-to-file out-path #:exists 'replace
       (lambda () (display source)))
 
-    (eprintf "  ~a -> ~a\n" path (path->string out-path))
-    #t))
+    (if (and warn? (not ok?))
+        (begin
+          (eprintf "  ~a -> ~a [~a warning(s)]\n" path (path->string out-path) type-errors)
+          #t)
+        (begin
+          (eprintf "  ~a -> ~a\n" path (path->string out-path))
+          #t))))
 
 (define (expand-args args)
   (sort
@@ -81,6 +89,7 @@
 
 (define (run-build-all args)
   (define out-dir #f)
+  (define warn? #f)
   (define file-args '())
 
   (let loop ([rest args])
@@ -92,12 +101,15 @@
          (exit 2))
        (set! out-dir (cadr rest))
        (loop (cddr rest))]
+      [(string=? (car rest) "--warn")
+       (set! warn? #t)
+       (loop (cdr rest))]
       [else
        (set! file-args (append file-args (list (car rest))))
        (loop (cdr rest))]))
 
   (when (null? file-args)
-    (eprintf "usage: beagle-build-all <file-or-dir> ... [--out <dir>]\n")
+    (eprintf "usage: beagle-build-all <file-or-dir> ... [--out <dir>] [--warn]\n")
     (exit 2))
 
   (define files (expand-args file-args))
@@ -111,7 +123,7 @@
   (define errors 0)
 
   (for ([f (in-list files)])
-    (if (build-one-file f out-dir json?)
+    (if (build-one-file f out-dir json? #:warn? warn?)
         (set! built (+ built 1))
         (set! errors (+ errors 1))))
 

@@ -1,10 +1,12 @@
 #lang racket/base
 
 (require json
+         racket/string
          "parse.rkt"
          "check.rkt"
          "error-format.rkt"
-         "query.rkt")
+         "query.rkt"
+         "blame.rkt")
 
 ;; --- source line cache ------------------------------------------------------
 
@@ -27,6 +29,117 @@
        (> line-num 0)
        (<= line-num (vector-length lines))
        (vector-ref lines (sub1 line-num))))
+
+;; --- fix-plan generator -----------------------------------------------------
+
+(define (fix-plan-mode?)
+  (and (getenv "BEAGLE_FIX_PLAN") #t))
+
+(define (generate-fix-plan e src-line)
+  (cond
+    [(not (beagle-diagnostic? e)) #f]
+    [else
+     (define d (beagle-diagnostic-details e))
+     (define kind (beagle-diagnostic-kind e))
+     (cond
+       ;; --- Arity: too few args (missing argument) ---
+       [(and (eq? kind 'arity)
+             (hash-ref d 'expected-arity #f)
+             (< (hash-ref d 'actual-arity 0) (hash-ref d 'expected-arity 0)))
+        (define fn-name (hash-ref d 'function ""))
+        (define expected (hash-ref d 'expected-arity 0))
+        (define actual (hash-ref d 'actual-arity 0))
+        (define help (hash-ref d 'help ""))
+        (hasheq 'confidence "high"
+                'category "missing-argument"
+                'description (format "~a needs ~a arg(s), got ~a"
+                                     fn-name expected actual)
+                'fix-hint (format "Add the missing argument(s): ~a" help))]
+
+       ;; --- Arity: too many args ---
+       [(and (eq? kind 'arity)
+             (hash-ref d 'expected-arity #f)
+             (> (hash-ref d 'actual-arity 0) (hash-ref d 'expected-arity 0)))
+        (define fn-name (hash-ref d 'function ""))
+        (define expected (hash-ref d 'expected-arity 0))
+        (define actual (hash-ref d 'actual-arity 0))
+        (hasheq 'confidence "high"
+                'category "extra-argument"
+                'description (format "~a takes ~a arg(s), got ~a — remove ~a arg(s)"
+                                     fn-name expected actual (- actual expected))
+                'fix-hint (format "Remove ~a extra argument(s) from the call"
+                                  (- actual expected)))]
+
+       ;; --- Type mismatch with single "did you mean?" suggestion ---
+       [(and (eq? kind 'type-mismatch)
+             (pair? (hash-ref d 'suggestions '()))
+             (= 1 (length (hash-ref d 'suggestions '()))))
+        (define sugg (car (hash-ref d 'suggestions)))
+        (define old (hash-ref sugg 'replace ""))
+        (define new (hash-ref sugg 'with ""))
+        (define new-sig (hash-ref sugg 'signature #f))
+        (define before
+          (and src-line (regexp-match (regexp-quote old) src-line)
+               src-line))
+        (define after
+          (and before (string-replace before old new)))
+        (hasheq 'confidence "high"
+                'category "wrong-accessor"
+                'description (format "Replace ~a with ~a" old new)
+                'before (or before 'null)
+                'after (or after 'null)
+                'fix-hint (format "Replace `~a` with `~a`~a"
+                                  old new
+                                  (if new-sig (format " (~a)" new-sig) "")))]
+
+       ;; --- Type mismatch with multiple suggestions ---
+       [(and (eq? kind 'type-mismatch)
+             (pair? (hash-ref d 'suggestions '()))
+             (> (length (hash-ref d 'suggestions '())) 1))
+        (define suggestions (hash-ref d 'suggestions))
+        (define candidates
+          (for/list ([s (in-list suggestions)])
+            (format "~a (~a)"
+                    (hash-ref s 'with "?")
+                    (or (hash-ref s 'signature #f) "?"))))
+        (hasheq 'confidence "medium"
+                'category "wrong-accessor-multiple"
+                'description "Multiple compatible replacements"
+                'fix-hint (format "Replace with one of: ~a"
+                                  (string-join candidates ", ")))]
+
+       ;; --- Type mismatch with help text (constructor field swap, etc.) ---
+       [(and (eq? kind 'type-mismatch)
+             (hash-ref d 'help #f)
+             (null? (hash-ref d 'suggestions '())))
+        (define help-text (hash-ref d 'help ""))
+        (define arg-sig (hash-ref d 'arg-signature #f))
+        (hasheq 'confidence "medium"
+                'category "type-mismatch"
+                'description (exn-message e)
+                'fix-hint help-text)]
+
+       [else #f])]))
+
+(define (format-fix-plan plan)
+  (define out '())
+  (define (emit s) (set! out (cons s out)))
+  (define confidence (hash-ref plan 'confidence "?"))
+  (define category (hash-ref plan 'category "?"))
+  (define description (hash-ref plan 'description ""))
+  (define fix-hint (hash-ref plan 'fix-hint ""))
+  (define before (hash-ref plan 'before #f))
+  (define after (hash-ref plan 'after #f))
+
+  (emit (format "   fix [~a]: ~a" confidence fix-hint))
+  (when (and before after
+             (not (eq? before 'null))
+             (not (eq? after 'null)))
+    (emit (format "     before: ~a" (string-trim-right before)))
+    (emit (format "     after:  ~a" (string-trim-right after))))
+  (apply string-append
+         (for/list ([ln (reverse out)])
+           (string-append ln "\n"))))
 
 ;; --- Rust-style diagnostic formatter ----------------------------------------
 
@@ -95,6 +208,13 @@
      (when (and help (null? suggestions))
        (emit (format "   = help: ~a" help)))
 
+     ;; Fix-plan output (when BEAGLE_FIX_PLAN is set)
+     (when (fix-plan-mode?)
+       (define src-line (and err-file err-line (read-source-line err-file err-line)))
+       (define plan (generate-fix-plan e src-line))
+       (when plan
+         (emit (format-fix-plan plan))))
+
      (emit "")
      (apply string-append
             (for/list ([ln (reverse out)])
@@ -143,8 +263,13 @@
                'col (or col 'null)
                'message (exn-message e)
                'source_line (or src-line 'null)))
-     (for/fold ([h base]) ([(k v) (in-hash d)])
-       (hash-set h (if (symbol? k) k (string->symbol k)) v))]
+     (define with-details
+       (for/fold ([h base]) ([(k v) (in-hash d)])
+         (hash-set h (if (symbol? k) k (string->symbol k)) v)))
+     (define plan (generate-fix-plan e src-line))
+     (if plan
+         (hash-set with-details 'fix_plan plan)
+         with-details)]
 
     [else
      (define src-line (and stx-file stx-line (read-source-line stx-file stx-line)))
@@ -179,7 +304,8 @@
     (type-check-with-locs! prog
       (lambda (e loc-stx)
         (report-error e loc-stx)))
-    (check-scalar-provenance! prog))
+    (check-scalar-provenance! prog)
+    (run-semantic-analysis! prog #:file path))
 
   error-count)
 

@@ -1,5 +1,44 @@
 # beagle — todo
 
+## Now: Repair compiler (fault localization + semantic properties)
+
+### Phase 1: `beagle-blame` — runtime blame from oracle failures ✓
+
+Post-processes verify output: analyzes expected/actual ratios to hint at
+likely bug type (sign error, wrong operator, missing term, etc).
+
+- [x] CLI: `beagle-blame <build-dir> <verify-script>`
+- [x] Ratio analysis: sign inversion, multiplier mismatch, boolean flip
+- [x] Confidence levels on each hint
+- [ ] Deeper tracing: instrument compiled code to capture intermediate values
+- [ ] Walk call graph to find first divergence point
+
+### Phase 2: Semantic property inference (name → expected behavior) ✓
+
+Static analysis that flags arithmetic/logic mismatches based on function
+names and types. No ML, no LLM — just pattern matching.
+
+- [x] Rule engine: name patterns → expected arithmetic direction
+  - "total"/"sum" → addition/aggregation, result ≥ inputs
+  - "discount" → subtraction, result < input
+  - "commission"/"surcharge" → multiplication
+  - "line-total"/"poline-total" → unit × quantity
+  - "needed"/"required" → less-than comparison
+- [x] Soft warning output (SUSPECT, never hard errors)
+- [x] Integration with beagle-check-all
+- [x] Aggregation context detection (don't flag + inside for/reduce)
+- [x] Validated: 3 true positives, 1 false positive on E8 buggy vs golden
+
+### Phase 3: Oracle-guided speculative fix
+
+For each blame-traced bug, generate a candidate fix, run the oracle with
+it applied, and report confidence based on whether it passes.
+
+- [ ] Candidate generation from blame trace (arithmetic flip, accessor swap)
+- [ ] Sandboxed oracle run with candidate applied
+- [ ] Confidence scoring: blame evidence + name semantics + oracle pass = high
+- [ ] Output as ranked repair queue (same format as beagle-fix)
+
 ## Someday
 
 Speculative; no commitment.

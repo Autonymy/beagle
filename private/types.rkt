@@ -111,7 +111,11 @@
               t))
      (unless (or (member canonical PRIMITIVES)
                  (and (positive? (string-length s))
-                      (char-upper-case? (string-ref s 0))))
+                      (char-upper-case? (string-ref s 0)))
+                 (let ([slash (regexp-match-positions #rx"/" s)])
+                   (and slash
+                        (< (cdar slash) (string-length s))
+                        (char-upper-case? (string-ref s (cdar slash))))))
        (error 'beagle
               "unknown type: ~a~nexpected primitive, [A B -> R], (Vec T)/(Map K V)/etc., or (U ...)"
               t))
@@ -155,6 +159,13 @@
 
 ;; --- compatibility ---------------------------------------------------------
 
+(define (unqualify-type-name sym)
+  (define s (symbol->string sym))
+  (define i (regexp-match-positions #rx"/" s))
+  (if i
+      (string->symbol (substring s (cdar i)))
+      sym))
+
 (define (type-compatible? actual expected)
   (cond
     [(or (not actual) (not expected)) #t]
@@ -183,8 +194,11 @@
              (type-union-alts actual))]
 
     ;; Primitives match by canonical name or union membership.
+    ;; Qualified names (mod/Type) match their unqualified base (Type).
     [(and (type-prim? actual) (type-prim? expected))
      (or (eq? (type-prim-name actual) (type-prim-name expected))
+         (eq? (unqualify-type-name (type-prim-name actual))
+              (unqualify-type-name (type-prim-name expected)))
          (let ([members (hash-ref (current-union-members) (type-prim-name expected) #f)])
            (and members (memq (type-prim-name actual) members) #t)))]
 
@@ -329,4 +343,5 @@
  type->string
  infer-literal-type
  infer-type-var-bindings
- apply-type-bindings)
+ apply-type-bindings
+ unqualify-type-name)

@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# beagle-blame: post-process verify output with blame hints.
+#
+# Usage:
+#   <run verify normally> 2>&1 | beagle-blame
+#   beagle-blame <build-dir> <verify-script>
+#
+# Reads FAIL lines from the oracle, analyzes expected/actual ratios,
+# and appends probabilistic hints about the likely bug type.
+#
+# Output confidence levels are hints, not proofs. [0.8] means "probably this."
+
+set -euo pipefail
+
+if [[ $# -ge 2 ]]; then
+    # Direct mode: run verify and pipe through self
+    BUILD_DIR="$1"
+    VERIFY_SCRIPT="$2"
+    clojure -Sdeps "{:paths [\"$BUILD_DIR\"]}" -M -e "(load-file \"$VERIFY_SCRIPT\")" 2>&1 | "$0"
+    exit $?
+fi
+
+# Filter mode: read stdin, annotate FAIL blocks
+python3 -c '
+import sys, re
+
+def analyze(expected, actual):
+    """Generate blame hint from expected/actual values."""
+    # Try numeric comparison
+    try:
+        e = float(expected)
+        a = float(actual)
+    except (ValueError, TypeError):
+        # Boolean check
+        if expected in ("true", "false") and actual in ("true", "false"):
+            return "[0.75] boolean inverted — check (> vs <) or (>= vs <=)"
+        return "[0.5] non-numeric — wrong accessor or lookup"
+
+    if e == 0:
+        return "[0.6] expected zero, got non-zero — extra computation or wrong predicate"
+
+    ratio = a / e
+
+    if ratio == 2.0:
+        return "[0.8] spurious (* 2) — remove extra multiplication"
+    elif ratio == 0.5:
+        return "[0.7] missing multiplication or spurious (/ 2)"
+    elif ratio == -1.0:
+        return "[0.85] sign error — operands swapped (a-b vs b-a) or (+ vs -)"
+    elif ratio < 0:
+        return "[0.8] sign inversion — check (+ vs -) or operand order"
+    elif ratio > 9:
+        return f"[0.8] value {int(ratio)}x too large — likely (+ instead of *) or wrong divisor"
+    elif ratio > 1.0:
+        return f"[0.7] value {ratio:.1f}x too large — extra term or (+ vs -)"
+    elif ratio < 0.15:
+        return f"[0.8] value ~{int(1/ratio)}x too small — likely (* instead of +) or wrong multiplier"
+    elif ratio < 1.0:
+        return f"[0.7] value {ratio:.2f}x too small — missing term"
+    else:
+        return None
+
+label = None
+expected = None
+actual = None
+
+for line in sys.stdin:
+    line = line.rstrip()
+    print(line)
+
+    m = re.match(r"FAIL: (.+)", line)
+    if m:
+        label = m.group(1)
+        expected = None
+        actual = None
+        continue
+
+    m = re.match(r"\s+expected:\s+(.+)", line)
+    if m:
+        expected = m.group(1)
+        continue
+
+    m = re.match(r"\s+actual:\s+(.+)", line)
+    if m:
+        actual = m.group(1)
+        if expected is not None and actual is not None:
+            hint = analyze(expected, actual)
+            if hint:
+                print(f"  sniff: {hint}")
+            print()
+        continue
+'
