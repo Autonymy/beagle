@@ -549,9 +549,9 @@
     [(real? d)          (number->string d)]
     [(symbol? d)        (symbol->string d)]
     [(null? d)          "()"]
-    [(and (pair? d) (eq? (car d) '#%brackets))
+    [(bracketed? d)
      (format "[~a]"
-             (string-join (map datum->clj (cdr d)) " "))]
+             (string-join (map datum->clj (bracket-body d)) " "))]
     [(pair? d)
      (format "(~a)"
              (string-join

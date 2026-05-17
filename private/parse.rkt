@@ -21,6 +21,18 @@
 (define (set-tagged? d)       (and (pair? d) (eq? (car d) ST)))
 (define (set-body d)          (cdr d))
 
+(define (unwrap-items d what)
+  (cond
+    [(bracketed? d) (bracket-body d)]
+    [(list? d)      d]
+    [else (error 'beagle "expected ~a, got: ~v" what d)]))
+
+(define (unwrap-stxs psubs d)
+  (cond
+    [(and psubs (bracketed? d)) (cdr psubs)]
+    [psubs psubs]
+    [else #f]))
+
 ;; Readtable for parsing beagle source: intercepts #"...", {...}, and #{...}.
 (define (read-regex-pattern port)
   (let loop ([acc '()])
@@ -918,11 +930,7 @@
 ;;   3. map destructure:              {:keys [a b c]} or {:keys [a b c] :as m}
 (define (parse-params p)
   (define d (->datum p))
-  (define items
-    (cond
-      [(bracketed? d) (bracket-body d)]
-      [(list? d)      d]
-      [else (error 'beagle "expected parameter list, got: ~v" d)]))
+  (define items (unwrap-items d "parameter list"))
   (define-values (before-amp after-amp)
     (let loop ([remaining items] [acc '()])
       (cond
@@ -994,16 +1002,8 @@
 (define (parse-let-bindings b)
   (define d (->datum b))
   (define psubs (stx-subs b))
-  (define items
-    (cond
-      [(bracketed? d) (bracket-body d)]
-      [(list? d)      d]
-      [else (error 'beagle "expected let bindings, got: ~v" d)]))
-  (define item-stxs
-    (cond
-      [(and psubs (bracketed? d)) (cdr psubs)]
-      [psubs psubs]
-      [else #f]))
+  (define items (unwrap-items d "let bindings"))
+  (define item-stxs (unwrap-stxs psubs d))
   (let loop ([rest items] [stxs item-stxs] [acc '()])
     (cond
       [(null? rest) (reverse acc)]
@@ -1046,11 +1046,7 @@
 
 (define (parse-record-fields f)
   (define d (->datum f))
-  (define items
-    (cond
-      [(bracketed? d) (bracket-body d)]
-      [(list? d)      d]
-      [else (error 'beagle "expected record fields, got: ~v" d)]))
+  (define items (unwrap-items d "record fields"))
   (when (null? items)
     (error 'beagle "defrecord requires at least one field"))
   (for/list ([item (in-list items)])
@@ -1119,16 +1115,8 @@
 (define (parse-for-clauses b)
   (define d (->datum b))
   (define psubs (stx-subs b))
-  (define items
-    (cond
-      [(bracketed? d) (bracket-body d)]
-      [(list? d)      d]
-      [else (error 'beagle "expected for bindings, got: ~v" d)]))
-  (define item-stxs
-    (cond
-      [(and psubs (bracketed? d)) (cdr psubs)]
-      [psubs psubs]
-      [else #f]))
+  (define items (unwrap-items d "for bindings"))
+  (define item-stxs (unwrap-stxs psubs d))
   (let loop ([rest items] [stxs item-stxs] [acc '()])
     (cond
       [(null? rest) (reverse acc)]
@@ -1223,4 +1211,11 @@
  read-beagle-datums
  read-beagle-syntax
  parse-params
- parse-record-fields)
+ parse-record-fields
+ bracketed?
+ bracket-body
+ map-tagged?
+ map-body
+ set-tagged?
+ set-body
+ unwrap-items)

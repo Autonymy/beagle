@@ -13,10 +13,6 @@
          "macros.rkt"
          "types.rkt")
 
-(define BT BRACKET-TAG)
-(define MT MAP-TAG)
-(define ST SET-TAG)
-
 ;; --- entry ----------------------------------------------------------------
 
 (define (expand-file path)
@@ -27,7 +23,7 @@
     (match d
       [(list 'define-macro (? symbol? kind) (? symbol? name) params template)
        (define ps (cond
-                    [(and (pair? params) (eq? (car params) BT)) (cdr params)]
+                    [(bracketed? params) (bracket-body params)]
                     [(list? params) params]
                     [else '()]))
        (register-macro! registry name kind ps template)]
@@ -78,7 +74,7 @@
     #\{ 'terminating-macro
          (lambda (ch port src line col pos)
            (define items (read-until-brace-expand port))
-           (define result (cons MT items))
+           (define result (cons MAP-TAG items))
            (if src (datum->syntax #f result (vector src line col pos #f)) result))
     #\} 'terminating-macro
          (lambda (ch port src line col pos) (error 'beagle "unexpected `}`"))
@@ -89,7 +85,7 @@
              [(and (char? next) (char=? next #\{))
               (read-char port)
               (define items (read-until-brace-expand port))
-              (define result (cons ST items))
+              (define result (cons SET-TAG items))
               (if src (datum->syntax #f result (vector src line col pos #f)) result)]
              [(and (char? next) (char=? next #\"))
               (read-char port)
@@ -104,7 +100,7 @@
   ;; Use beagle's reader to preserve [...] vs (...), {...}, and #{...}.
   (with-input-from-file path
     (lambda ()
-      (parameterize ([read-square-bracket-with-tag BT]
+      (parameterize ([read-square-bracket-with-tag BRACKET-TAG]
                      [current-readtable expand-readtable])
         ;; Skip the #lang line.
         (read-line)
@@ -125,18 +121,15 @@
     [(real? d) (number->string d)]
     [(symbol? d) (symbol->string d)]
     [(null? d) "()"]
-    [(and (pair? d) (eq? (car d) BT))
-     ;; bracketed form
+    [(bracketed? d)
      (format "[~a]"
-             (render-list-body (cdr d)))]
-    [(and (pair? d) (eq? (car d) MT))
-     ;; map literal
+             (render-list-body (bracket-body d)))]
+    [(map-tagged? d)
      (format "{~a}"
-             (render-list-body (cdr d)))]
-    [(and (pair? d) (eq? (car d) ST))
-     ;; set literal
+             (render-list-body (map-body d)))]
+    [(set-tagged? d)
      (format "#{~a}"
-             (render-list-body (cdr d)))]
+             (render-list-body (set-body d)))]
     [(pair? d)
      (format "(~a)"
              (render-list-body d))]

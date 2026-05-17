@@ -5,8 +5,6 @@
          "parse.rkt"
          "types.rkt")
 
-(define BT BRACKET-TAG)
-
 (define (annotation-marker? sym) (eq? sym ':))
 
 (define (str-downcase s)
@@ -130,12 +128,12 @@
 (define (find-calls-in target datum)
   (cond
     [(and (pair? datum)
-          (not (eq? (car datum) BT))
+          (not (bracketed? datum))
           (eq? (car datum) target))
      (list datum)]
     [(pair? datum)
      (append-map (lambda (sub) (find-calls-in target sub))
-                 (if (eq? (car datum) BT) (cdr datum) datum))]
+                 (if (bracketed? datum) (bracket-body datum) datum))]
     [else '()]))
 
 (define (append-map f xs)

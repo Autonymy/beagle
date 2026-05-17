@@ -13,11 +13,8 @@
 ;; in dynamic mode.
 
 (require racket/match
-         racket/format)
-
-(define BRACKET-TAG '#%brackets)
-(define MAP-TAG    '#%map)
-(define SET-TAG    '#%set)
+         racket/format
+         "tags.rkt")
 
 (define PRIMITIVES
   '(String Long Double Boolean Keyword Symbol Nil Any))
