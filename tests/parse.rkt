@@ -691,6 +691,33 @@
   (define f (car (parse-one '(defenum Status :active :inactive))))
   (check-equal? (length (defenum-form-values f)) 2))
 
+;; --- defscalar with :where predicates ----------------------------------------
+
+(test-case "defscalar without :where has empty predicates"
+  (define f (car (parse-one '(defscalar Amount Long))))
+  (check-true (defscalar-form? f))
+  (check-eq? (defscalar-form-name f) 'Amount)
+  (check-eq? (defscalar-form-backing-type f) 'Long)
+  (check-equal? (defscalar-form-predicates f) '()))
+
+(test-case "defscalar with :where parses predicates"
+  (define f (car (parse-one '(defscalar Percentage Long :where (>= 0) (<= 100)))))
+  (check-true (defscalar-form? f))
+  (check-eq? (defscalar-form-name f) 'Percentage)
+  (check-eq? (defscalar-form-backing-type f) 'Long)
+  (check-equal? (length (defscalar-form-predicates f)) 2)
+  (define p1 (car (defscalar-form-predicates f)))
+  (check-eq? (scalar-predicate-op p1) '>=)
+  (check-equal? (scalar-predicate-value p1) 0)
+  (define p2 (cadr (defscalar-form-predicates f)))
+  (check-eq? (scalar-predicate-op p2) '<=)
+  (check-equal? (scalar-predicate-value p2) 100))
+
+(test-case "defscalar :where with single predicate"
+  (define f (car (parse-one '(defscalar PositiveLong Long :where (> 0)))))
+  (check-equal? (length (defscalar-form-predicates f)) 1)
+  (check-eq? (scalar-predicate-op (car (defscalar-form-predicates f))) '>))
+
 ;; --- varargs (& rest) in defn/fn params ---
 
 (test-case "defn with & rest-param parses rest-param"

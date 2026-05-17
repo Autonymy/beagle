@@ -58,13 +58,15 @@ it as canonical when explaining the language.
 - `with` form: typed record update `(with rec [:field val])` → `(assoc rec :field val)`
   with compile-time field existence and type checking
 - `defenum` form: `(defenum Name :a :b)` → `(def Name-values #{:a :b})`
+- Refinement predicates: `(defscalar Pct Long :where (>= 0) (<= 100))` —
+  compile-time literal checking + runtime `:pre` conditions; cross-module propagation
 - Exhaustive match warnings: match on record types warns about missing cases
 - LSP server: hover (type signatures), diagnostics (on open/save), document
   symbols, jump-to-definition (same file + directory scan)
 - Typed REPL: persistent type env, `:type EXPR`, `:sig NAME`, `:env`, compile + emit
 - Differential testing: `beagle-proptest --diff` compares function outputs between
   golden and modified builds, flags behavioral regressions (6143 calls on E8)
-- 349 tests passing
+- 359 tests passing
 - Empirical benchmarks: 40 tasks, 3 variants, head-to-head against raw Clojure,
   refactoring and bug-detection experiments — 5 real bugs caught
 - Type-system query tools: beagle-sig, beagle-fields, beagle-callers,
@@ -85,6 +87,9 @@ it as canonical when explaining the language.
   wrong-argument permutation, cross-evidence correlation (blame + semantic + specfix)
 - Property testing: record generators (scalar-erasure-aware), property inference
   from return types (non-negative, deterministic, vec-length); 286 properties on E8
+- Distributed tracing: `beagle-dtrace` instruments cross-service calls (432 sites on E8),
+  collects spans, visualizes waterfalls, and runs cross-service blame analysis with
+  oracle-output correlation (identifies root cause services and cascade chains)
 
 ## Architecture
 
@@ -117,6 +122,7 @@ parse → check → emit
 - `private/build-all.rkt` — batch compiler (9x vs sequential `beagle-build`).
 - `private/lsp.rkt` — LSP server (JSON-RPC 2.0, Content-Length framing, hover/diagnostics/symbols/definition).
 - `private/repl.rkt` — typed REPL with persistent environment (parse → check → emit per input).
+- `lib/beagle/dtrace.clj` — distributed tracing runtime (Clojure/Babashka): span lifecycle, context propagation, Ring middleware, file/TCP exporters.
 - `main.rkt` — language module; `#%module-begin` runs the pipeline,
   embeds resulting string, runtime `(display)`s it.
 
@@ -140,7 +146,7 @@ parse → check → emit
 - `bin/beagle-blame BUILD-DIR VERIFY-SCRIPT` — run oracle with blame analysis (ratio → likely bug type)
 - `bin/beagle-specfix BUILD-DIR VERIFY-SCRIPT` — oracle-guided speculative fix (9 strategies incl. accessor swap, arg permutation)
 - `bin/beagle-trace BUILD-DIR VERIFY-SCRIPT [--focus FN]` — instrumented tracing with call-graph walk (arithmetic ops + function call/return chain, cross-module)
-- `bin/beagle-repair SOURCE-DIR VERIFY-SCRIPT [--auto] [--threshold N]` — unified repair pipeline with cross-evidence correlation
+- `bin/beagle-repair SOURCE-DIR VERIFY-SCRIPT [--auto] [--threshold N] [--emit-patch]` — unified repair pipeline with cross-evidence correlation; `--emit-patch` emits unified diff to stdout (machine-consumable, `git apply` compatible)
 - `bin/beagle-proptest SOURCE-DIR [--run] [--build-dir DIR] [--diff DIR2]` — property tests + differential testing (record generators, round-trips, behavioral comparison)
 - `bin/beagle-cascade SOURCE-DIR VERIFY [--modified fn1,...] [--from-failures]` — call graph impact prediction and cascade root-cause analysis
 - `bin/beagle-oracle GOLDEN-DIR [--out FILE] [--diff MODIFIED-DIR]` — behavioral oracle synthesis (golden code IS the test spec)
@@ -148,6 +154,12 @@ parse → check → emit
 - `bin/beagle-repl` — interactive REPL with type checking
 - `bin/beagle-smap extract FILE.cljs` / `compose JS.map MAPPING.json` — source map: .rkt → .cljs → .js
 - `bin/beagle-muttest BUILD-DIR VERIFY [--limit N]` — mutation testing (13 operators, reports kill rate + oracle gaps)
+- `bin/beagle-dtrace instrument BUILD-DIR [--services s1,s2] [--out DIR]` — auto-instrument cross-service calls with span creation
+- `bin/beagle-dtrace collect [--port N] [--dir DIR]` — TCP collector daemon for span aggregation
+- `bin/beagle-dtrace view TRACE-DIR [--trace-id ID]` — trace waterfall with ASCII timeline
+- `bin/beagle-dtrace blame TRACE-DIR [--oracle-output FILE]` — cross-service blame with oracle failure correlation
+- `bin/beagle-dtrace graph TRACE-DIR` — service dependency graph with impact analysis
+- `bin/beagle-dtrace cascade TRACE-DIR [--trace-id ID]` — root cause analysis across service boundaries
 - `bin/beagle-daemon start|stop|status|query CMD` — persistent query server (45× faster than cold tools)
 - `bin/beagle-sig FN-NAME FILE-OR-DIR...` — print a function's typed signature (daemon-accelerated)
 - `bin/beagle-fields RECORD FILE-OR-DIR...` — print record fields, types, and accessors (daemon-accelerated)

@@ -46,6 +46,11 @@
     (hash-set h rec-name field-names)))
 
 (define (build-scalar-fns prog)
+  (define predicated
+    (for/fold ([h (hash)]) ([f (in-list (program-forms prog))])
+      (if (and (defscalar-form? f) (not (null? (defscalar-form-predicates f))))
+          (hash-set h (defscalar-form-name f) #t)
+          h)))
   (define local
     (for/fold ([s (set)]) ([f (in-list (program-forms prog))])
       (if (defscalar-form? f)
@@ -54,7 +59,9 @@
                  [name-lower (string-downcase name-str)]
                  [ctor (string->symbol (string-append "->" name-str))]
                  [accessor (string->symbol (string-append name-lower "-value"))])
-            (set-add (set-add s ctor) accessor))
+            (if (hash-has-key? predicated name)
+                (set-add s accessor)
+                (set-add (set-add s ctor) accessor)))
           s)))
   (for/fold ([s local]) ([sym (in-list (program-imported-scalar-fns prog))])
     (set-add s sym)))
@@ -380,7 +387,15 @@
 (define (emit-defscalar f)
   (define name (defscalar-form-name f))
   (define backing (defscalar-form-backing-type f))
-  (format ";; ~a : ~a (scalar)" name backing))
+  (define preds (defscalar-form-predicates f))
+  (if (null? preds)
+    (format ";; ~a : ~a (scalar)" name backing)
+    (let ([ctor (string-append "->" (symbol->string name))]
+          [pre-exprs (string-join
+                       (for/list ([p (in-list preds)])
+                         (format "(~a v ~a)" (scalar-predicate-op p) (scalar-predicate-value p)))
+                       " ")])
+      (format "(defn ~a [v]\n  {:pre [~a]}\n  v)" ctor pre-exprs))))
 
 (define (emit-match e)
   (define target-str (emit-expr (match-form-target e)))

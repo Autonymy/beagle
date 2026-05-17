@@ -5,7 +5,7 @@
 # trace, speculative fix) and produces a ranked repair queue.
 #
 # Usage:
-#   beagle-repair <source-dir> <verify-script> [--auto] [--threshold N]
+#   beagle-repair <source-dir> <verify-script> [--auto] [--threshold N] [--emit-patch]
 #
 # Evidence layers (in confidence order):
 #   1. specfix-verified: oracle confirms the fix works (0.95)
@@ -20,7 +20,7 @@
 set -euo pipefail
 
 if [[ $# -lt 2 ]]; then
-    echo "Usage: beagle-repair <source-dir> <verify-script> [--auto] [--threshold 0.85]" >&2
+    echo "Usage: beagle-repair <source-dir> <verify-script> [--auto] [--threshold 0.85] [--emit-patch]" >&2
     exit 1
 fi
 
@@ -30,11 +30,13 @@ shift 2
 
 AUTO_MODE=false
 THRESHOLD=0.85
+EMIT_PATCH=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --auto) AUTO_MODE=true; shift ;;
         --threshold) THRESHOLD="$2"; shift 2 ;;
+        --emit-patch) EMIT_PATCH=true; shift ;;
         *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
 done
@@ -51,6 +53,7 @@ echo "" >&2
 echo "  source: $SOURCE_DIR" >&2
 echo "  oracle: $VERIFY_SCRIPT" >&2
 echo "  auto:   $AUTO_MODE (threshold: $THRESHOLD)" >&2
+echo "  patch:  $EMIT_PATCH" >&2
 echo "" >&2
 
 # ---------------------------------------------------------------------------
@@ -110,13 +113,14 @@ echo "" >&2
 echo "─── Repair Queue ───" >&2
 echo "" >&2
 
-python3 - "$WORK_DIR" "$THRESHOLD" "$AUTO_MODE" "$SOURCE_DIR" << 'PYEOF'
+python3 - "$WORK_DIR" "$THRESHOLD" "$AUTO_MODE" "$SOURCE_DIR" "$EMIT_PATCH" << 'PYEOF'
 import sys, os, re, json
 
 work_dir = sys.argv[1]
 threshold = float(sys.argv[2])
 auto_mode = sys.argv[3] == 'true'
 source_dir = sys.argv[4]
+emit_patch = sys.argv[5] == 'true'
 
 repairs = []
 
@@ -201,6 +205,13 @@ if os.path.exists(specfix_file):
         specfix_module = module_file.replace('.clj', '') if module_file.endswith('.clj') else None
         specfix_fn = fn_name if fn_name != '?' and fn_name != '(unknown)' else None
 
+        search_text = fields.get('search')
+        replace_text = fields.get('replace')
+        line_idx_str = fields.get('line-idx')
+        line_idx = int(line_idx_str) if line_idx_str and line_idx_str != '?' else None
+        swap_lines_str = fields.get('swap-lines')
+        swap_values_str = fields.get('swap-values')
+
         repairs.append({
             'confidence': 0.95,
             'file': module_file,
@@ -208,12 +219,15 @@ if os.path.exists(specfix_file):
             'category': 'specfix-verified',
             'description': f'{label}: {fix_desc}',
             'fix_hint': fix_desc,
-            'before': None,
-            'after': None,
+            'before': search_text,
+            'after': replace_text,
             'evidence': ['specfix-oracle', f'fixes-{assertions_fixed}-assertions'],
             'auto_applicable': True,
             '_module': specfix_module,
             '_fn': specfix_fn,
+            '_line_idx': line_idx,
+            '_swap_lines': swap_lines_str,
+            '_swap_values': swap_values_str,
         })
 
 # --- Parse blame hints (with module/function extraction from FAIL labels) ---
@@ -429,60 +443,254 @@ merged.sort(key=lambda x: -x['confidence'])
 
 # --- Output ---
 auto_count = sum(1 for r in merged if r['auto_applicable'] and r['confidence'] >= threshold)
-print(f"REPAIR QUEUE ({len(merged)} items, {auto_count} auto-applicable above {threshold})")
-print("=" * 60)
-print()
 
-for i, r in enumerate(merged):
-    mode = "AUTO" if (r['auto_applicable'] and r['confidence'] >= threshold) else "SUGGEST"
-    print(f"[{i+1}] {mode}  confidence: {r['confidence']:.2f}  {r['file']}:{r['line']}")
-    print(f"    evidence: {', '.join(r['evidence'])}")
-    print(f"    {r['category']}: {r['description']}")
-    if r['fix_hint']:
-        print(f"    fix: {r['fix_hint']}")
-    if r.get('before') and r.get('after') and r['before'] != 'null' and r['after'] != 'null':
-        print(f"    before: {r['before']}")
-        print(f"    after:  {r['after']}")
+# ---------------------------------------------------------------------------
+# --emit-patch: unified diff output for machine consumption
+# ---------------------------------------------------------------------------
+def resolve_source_file(repair_entry):
+    """Find the .rkt source file corresponding to a repair entry."""
+    f = repair_entry.get('file', '?')
+    if f == '?' or not f:
+        return None
+    # Try as-is (might be absolute path to .rkt)
+    if os.path.exists(f):
+        return f
+    # Try source_dir + .rkt version
+    base = os.path.basename(f)
+    for ext_from, ext_to in [('.clj', '.rkt'), ('.clj', '.clj')]:
+        if base.endswith(ext_from):
+            candidate = os.path.join(source_dir, base[:-len(ext_from)] + ext_to)
+            if os.path.exists(candidate):
+                return candidate
+    # Try just the basename in source_dir
+    candidate = os.path.join(source_dir, base)
+    if os.path.exists(candidate):
+        return candidate
+    return None
+
+import difflib
+
+def apply_fix_to_lines(lines, repair):
+    """Apply a single repair to a list of lines (mutates). Returns True on success."""
+    before = repair.get('before')
+    after = repair.get('after')
+
+    # Handle value-swap: scan source for lines containing the two values
+    if repair.get('_swap_lines') and repair.get('_swap_values'):
+        val1, val2 = repair['_swap_values'].split('|||', 1)
+        pat1 = re.compile(r'(?<![0-9])' + re.escape(val1) + r'(?![0-9])')
+        pat2 = re.compile(r'(?<![0-9])' + re.escape(val2) + r'(?![0-9])')
+        idx1 = idx2 = None
+        for i, ln in enumerate(lines):
+            if idx1 is None and pat1.search(ln):
+                idx1 = i
+            elif idx2 is None and pat2.search(ln):
+                idx2 = i
+            if idx1 is not None and idx2 is not None:
+                break
+        if idx1 is None or idx2 is None:
+            return False
+        placeholder = '__PATCH_SWAP__'
+        lines[idx1] = pat1.sub(placeholder, lines[idx1], count=1)
+        lines[idx2] = pat2.sub(val1, lines[idx2], count=1)
+        lines[idx1] = lines[idx1].replace(placeholder, val2)
+        return True
+
+    if not before or not after or before == 'null' or after == 'null':
+        return False
+
+    # Try line_idx first (0-indexed, from specfix)
+    line_idx = repair.get('_line_idx')
+    if line_idx is not None and 0 <= line_idx < len(lines):
+        if before in lines[line_idx]:
+            lines[line_idx] = lines[line_idx].replace(before, after, 1)
+            return True
+
+    # Try line number (1-indexed, from type checker)
+    line_num = repair.get('line')
+    if line_num and line_num != '?' and str(line_num).isdigit():
+        idx = int(line_num) - 1
+        if 0 <= idx < len(lines):
+            if before in lines[idx]:
+                lines[idx] = lines[idx].replace(before, after, 1)
+                return True
+
+    # Fallback: scan file for search text, scoped to target function if known
+    fn_name = repair.get('_fn')
+    in_target_fn = False if fn_name else True
+    fn_pattern = f'defn {fn_name} ' if fn_name else None
+    for idx in range(len(lines)):
+        if fn_pattern and fn_pattern in lines[idx]:
+            in_target_fn = True
+        elif in_target_fn and fn_pattern and '(defn ' in lines[idx] and fn_pattern not in lines[idx]:
+            in_target_fn = False
+        if in_target_fn and before in lines[idx]:
+            lines[idx] = lines[idx].replace(before, after, 1)
+            return True
+
+    # Operand swap fallback: before/after have same operator, operands reversed
+    # Extract operands from balanced s-expressions
+    def split_sexpr_operands(s):
+        """Parse '(op EXPR1 EXPR2)' into (op, expr1, expr2) respecting nested parens."""
+        if not s.startswith('(') or not s.endswith(')'):
+            return None
+        inner = s[1:-1]
+        parts = []
+        i = 0
+        while i < len(inner):
+            if inner[i] == ' ' and not parts:
+                parts.append(inner[:i])
+                i += 1
+                continue
+            if len(parts) >= 1 and not (len(parts) >= 2):
+                start = i
+                depth = 0
+                while i < len(inner):
+                    if inner[i] == '(':
+                        depth += 1
+                    elif inner[i] == ')':
+                        depth -= 1
+                    elif inner[i] == ' ' and depth == 0:
+                        break
+                    i += 1
+                parts.append(inner[start:i])
+                i += 1
+                continue
+            if len(parts) >= 2:
+                parts.append(inner[i:])
+                break
+            i += 1
+        return tuple(parts) if len(parts) == 3 else None
+
+    parsed_before = split_sexpr_operands(before)
+    parsed_after = split_sexpr_operands(after)
+    if parsed_before and parsed_after:
+        op_b, a, b = parsed_before
+        op_a, a2, b2 = parsed_after
+        if op_b == op_a and a == b2 and b == a2 and op_b in ('+', '-', '*', '/'):
+            in_target_fn = False if fn_name else True
+            for idx in range(len(lines)):
+                if fn_pattern and fn_pattern in lines[idx]:
+                    in_target_fn = True
+                elif in_target_fn and fn_pattern and '(defn ' in lines[idx] and fn_pattern not in lines[idx]:
+                    in_target_fn = False
+                if in_target_fn and a in lines[idx] and b in lines[idx]:
+                    ln = lines[idx]
+                    ai = ln.find(a)
+                    bi = ln.find(b, ai + len(a))
+                    if ai >= 0 and bi >= 0:
+                        lines[idx] = ln[:ai] + b + ln[ai+len(a):bi] + a + ln[bi+len(b):]
+                        return True
+
+    return False
+
+if emit_patch:
+    applicable = [r for r in merged if r['auto_applicable'] and r['confidence'] >= threshold]
+
+    # Group by source file
+    by_file = {}
+    skipped = []
+    for r in applicable:
+        src_path = resolve_source_file(r)
+        if not src_path:
+            skipped.append(r)
+            continue
+        by_file.setdefault(src_path, []).append(r)
+
+    fix_count = 0
+    for src_path, repairs_for_file in sorted(by_file.items()):
+        with open(src_path) as f:
+            original = f.readlines()
+        modified = list(original)
+
+        applied = 0
+        for r in repairs_for_file:
+            if apply_fix_to_lines(modified, r):
+                applied += 1
+            else:
+                skipped.append(r)
+
+        if applied > 0 and original != modified:
+            rel_path = os.path.relpath(src_path, source_dir) if source_dir else src_path
+            diff = difflib.unified_diff(
+                original, modified,
+                fromfile=f'a/{rel_path}', tofile=f'b/{rel_path}')
+            patch_text = ''.join(diff)
+            if patch_text:
+                print(patch_text)
+                fix_count += applied
+
+    # Summary to stderr
+    print(f"\n{'─' * 60}", file=sys.stderr)
+    print(f"Patch: {fix_count} fix(es) across {len([p for p in by_file if by_file[p]])} file(s), {len(skipped)} skipped", file=sys.stderr)
+    if skipped:
+        for s in skipped:
+            print(f"  skip: {s['file']}:{s['line']} — {s['fix_hint']}", file=sys.stderr)
+
+    # Also emit SUGGEST items to stderr so agents can see what needs manual review
+    suggestions = [r for r in merged if not (r['auto_applicable'] and r['confidence'] >= threshold)]
+    if suggestions:
+        print(f"\n{'─' * 60}", file=sys.stderr)
+        print(f"Remaining ({len(suggestions)} items, need manual review):", file=sys.stderr)
+        for i, r in enumerate(suggestions):
+            print(f"  [{i+1}] {r['confidence']:.2f}  {r['file']}:{r['line']}  {r['description']}", file=sys.stderr)
+
+else:
+    # --- Human-readable queue output ---
+    print(f"REPAIR QUEUE ({len(merged)} items, {auto_count} auto-applicable above {threshold})")
+    print("=" * 60)
     print()
 
-# --- Auto-apply mode ---
-if auto_mode:
-    applicable = [r for r in merged if r['auto_applicable'] and r['confidence'] >= threshold]
-    if applicable:
-        print(f"\n{'=' * 60}")
-        print(f"AUTO-APPLY: {len(applicable)} fix(es) above threshold {threshold}")
-        print(f"{'=' * 60}\n")
+    for i, r in enumerate(merged):
+        mode = "AUTO" if (r['auto_applicable'] and r['confidence'] >= threshold) else "SUGGEST"
+        print(f"[{i+1}] {mode}  confidence: {r['confidence']:.2f}  {r['file']}:{r['line']}")
+        print(f"    evidence: {', '.join(r['evidence'])}")
+        print(f"    {r['category']}: {r['description']}")
+        if r['fix_hint']:
+            print(f"    fix: {r['fix_hint']}")
+        if r.get('before') and r.get('after') and r['before'] != 'null' and r['after'] != 'null':
+            print(f"    before: {r['before']}")
+            print(f"    after:  {r['after']}")
+        print()
 
-        for r in applicable:
-            if r.get('before') and r.get('after') and r['before'] != 'null' and r['after'] != 'null':
-                target_file = r['file']
-                if os.path.exists(target_file):
-                    with open(target_file) as f:
-                        content = f.read()
-                    if r['before'] in content:
-                        content = content.replace(r['before'], r['after'], 1)
-                        with open(target_file, 'w') as f:
-                            f.write(content)
-                        print(f"  APPLIED: {target_file}:{r['line']} — {r['fix_hint']}")
+    # --- Auto-apply mode ---
+    if auto_mode:
+        applicable = [r for r in merged if r['auto_applicable'] and r['confidence'] >= threshold]
+        if applicable:
+            print(f"\n{'=' * 60}")
+            print(f"AUTO-APPLY: {len(applicable)} fix(es) above threshold {threshold}")
+            print(f"{'=' * 60}\n")
+
+            for r in applicable:
+                if r.get('before') and r.get('after') and r['before'] != 'null' and r['after'] != 'null':
+                    target_file = r['file']
+                    if os.path.exists(target_file):
+                        with open(target_file) as f:
+                            content = f.read()
+                        if r['before'] in content:
+                            content = content.replace(r['before'], r['after'], 1)
+                            with open(target_file, 'w') as f:
+                                f.write(content)
+                            print(f"  APPLIED: {target_file}:{r['line']} — {r['fix_hint']}")
+                        else:
+                            print(f"  SKIP: pattern not found in {target_file}")
                     else:
-                        print(f"  SKIP: pattern not found in {target_file}")
+                        print(f"  SKIP: file not found: {target_file}")
                 else:
-                    print(f"  SKIP: file not found: {target_file}")
-            else:
-                print(f"  SKIP (no before/after): {r['file']}:{r['line']} — {r['fix_hint']}")
-    else:
-        print(f"\nNo fixes above threshold {threshold} to auto-apply.")
+                    print(f"  SKIP (no before/after): {r['file']}:{r['line']} — {r['fix_hint']}")
+        else:
+            print(f"\nNo fixes above threshold {threshold} to auto-apply.")
 
 # Summary
 corr_count = sum(1 for r in merged
                  if any('correlated' in e for e in r.get('evidence', [])))
-print(f"\n{'─' * 60}")
-print(f"Summary: {len(merged)} repair items")
-print(f"  Auto-applicable: {auto_count}")
-print(f"  Suggestions: {len(merged) - auto_count}")
+print(f"\n{'─' * 60}", file=sys.stderr)
+print(f"Summary: {len(merged)} repair items", file=sys.stderr)
+print(f"  Auto-applicable: {auto_count}", file=sys.stderr)
+print(f"  Suggestions: {len(merged) - auto_count}", file=sys.stderr)
 if corr_count:
-    print(f"  Cross-evidence correlated: {corr_count}")
-if auto_mode and auto_count > 0:
-    print(f"  Applied: {auto_count}")
-    print(f"  Next: rebuild and reverify")
+    print(f"  Cross-evidence correlated: {corr_count}", file=sys.stderr)
+if not emit_patch and auto_mode and auto_count > 0:
+    print(f"  Applied: {auto_count}", file=sys.stderr)
+    print(f"  Next: rebuild and reverify", file=sys.stderr)
 PYEOF

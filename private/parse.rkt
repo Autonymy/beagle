@@ -175,7 +175,8 @@
 (struct with-update (field-kw value)                          #:transparent)
 (struct defenum-form (name values)                            #:transparent)
 (struct defunion-form (name members)                          #:transparent)
-(struct defscalar-form (name backing-type)                    #:transparent)
+(struct defscalar-form (name backing-type predicates)         #:transparent)
+(struct scalar-predicate (op value)                           #:transparent)
 
 (struct match-form  (target clauses)                         #:transparent)
 (struct match-clause (pattern body)                          #:transparent)
@@ -211,6 +212,7 @@
                  imported-record-field-order ; hash: record-name → (listof string?) [definition order]
                  imported-record-ns ; hash: record-name → module-ns-symbol
                  imported-scalar-fns ; set of symbols (scalar ctors/accessors from imports)
+                 imported-scalar-preds ; hash: scalar-name → (listof scalar-predicate)
                  imported-symbol-ns ; hash: unqualified-symbol → module-prefix-symbol
                  target)        ; 'clj or 'cljs
   #:transparent)
@@ -296,6 +298,7 @@
 
 (define (import-module-types! mod-path prefix externs registry imp-rec-fields imp-rec-field-order imp-rec-ns mod-ns
                               #:scalar-fns [imp-scalar-fns #f]
+                              #:scalar-preds [imp-scalar-preds #f]
                               #:symbol-ns [imp-symbol-ns #f])
   (define datums (read-beagle-datums mod-path))
   (define (reg! name type)
@@ -333,6 +336,26 @@
        (hash-set! imp-rec-field-order name
                   (map (lambda (f) (symbol->string (param-name f))) fields))
        (hash-set! imp-rec-ns name mod-ns)]
+      [(list 'defscalar (? symbol? name) (? symbol? backing) ':where preds ...)
+       (define scalar-type (type-prim name))
+       (define backing-type (parse-type backing))
+       (define name-str (symbol->string name))
+       (define name-lower (import-str-downcase name-str))
+       (define ctor (string->symbol (string-append "->" name-str)))
+       (define accessor (string->symbol (string-append name-lower "-value")))
+       (reg! ctor (type-fn (list backing-type) #f scalar-type))
+       (reg! accessor (type-fn (list scalar-type) #f backing-type))
+       (when imp-scalar-fns
+         (hash-set! imp-scalar-fns ctor #t)
+         (hash-set! imp-scalar-fns accessor #t)
+         (hash-set! imp-scalar-fns (qualify-name prefix ctor) #t)
+         (hash-set! imp-scalar-fns (qualify-name prefix accessor) #t))
+       (when imp-scalar-preds
+         (define parsed-preds
+           (for/list ([p (in-list preds)])
+             (define pd (if (syntax? p) (syntax->datum p) p))
+             (scalar-predicate (car pd) (cadr pd))))
+         (hash-set! imp-scalar-preds name parsed-preds))]
       [(list 'defscalar (? symbol? name) (? symbol? backing))
        (define scalar-type (type-prim name))
        (define backing-type (parse-type backing))
@@ -382,6 +405,7 @@
   (define requires  '())
   (define imports   '())
   (define imp-scalar-fns (make-hash))
+  (define imp-scalar-preds (make-hash))
   (define imp-symbol-ns (make-hash))
 
   (for ([d (in-list datums)])
@@ -425,6 +449,7 @@
          (when mod-path
            (import-module-types! mod-path prefix externs registry imp-rec-fields imp-rec-field-order imp-rec-ns rn
                                  #:scalar-fns imp-scalar-fns
+                                 #:scalar-preds imp-scalar-preds
                                  #:symbol-ns imp-symbol-ns)))
        (set! requires (cons (require-entry rn #f) requires))]
       [(list 'require (? symbol? rn) ':as (? symbol? alias))
@@ -433,6 +458,7 @@
          (when mod-path
            (import-module-types! mod-path alias externs registry imp-rec-fields imp-rec-field-order imp-rec-ns rn
                                  #:scalar-fns imp-scalar-fns
+                                 #:scalar-preds imp-scalar-preds
                                  #:symbol-ns imp-symbol-ns)))
        (set! requires (cons (require-entry rn alias) requires))]
 
@@ -454,7 +480,7 @@
   (define parsed (map car pairs))
   (define form-stxs (map cdr pairs))
 
-  (program mode ns parsed registry externs (reverse requires) (reverse imports) form-stxs src-table imp-rec-fields imp-rec-field-order imp-rec-ns (hash-keys imp-scalar-fns) imp-symbol-ns target))
+  (program mode ns parsed registry externs (reverse requires) (reverse imports) form-stxs src-table imp-rec-fields imp-rec-field-order imp-rec-ns (hash-keys imp-scalar-fns) imp-scalar-preds imp-symbol-ns target))
 
 (define (meta-form? d)
   (and (pair? d)
@@ -578,6 +604,16 @@
                    #f
                    (map parse-expr rest))]))
 
+(define SCALAR-PRED-OPS '(>= <= > < = not=))
+
+(define (parse-scalar-predicate p)
+  (define d (if (syntax? p) (syntax->datum p) p))
+  (unless (and (list? d) (= (length d) 2)
+               (memq (car d) SCALAR-PRED-OPS)
+               (or (exact-integer? (cadr d)) (real? (cadr d))))
+    (error 'beagle "defscalar :where predicate must be (op literal), got: ~v" d))
+  (scalar-predicate (car d) (cadr d)))
+
 (define (parse-list-form d subs)
   (match d
     [(list 'unsafe-expr inner)
@@ -690,8 +726,10 @@
     [(list 'defunion (? symbol? name) members ...)
      (defunion-form name (map ->datum (or (stx-tail subs 2) members)))]
 
+    [(list 'defscalar (? symbol? name) (? symbol? backing) ':where preds ...)
+     (defscalar-form name (->datum backing) (map parse-scalar-predicate preds))]
     [(list 'defscalar (? symbol? name) (? symbol? backing))
-     (defscalar-form name (->datum backing))]
+     (defscalar-form name (->datum backing) '())]
 
     [(list 'match target-expr clauses ...)
      (parse-match-form (or (stx-ref subs 1) target-expr)
@@ -1204,6 +1242,7 @@
  (struct-out defenum-form)
  (struct-out defunion-form)
  (struct-out defscalar-form)
+ (struct-out scalar-predicate)
  parse-program
  DEFAULT-MODE
  DEFAULT-TARGET

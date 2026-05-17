@@ -157,14 +157,49 @@ assertions — the compiler derives what "correct" means.
 - [x] Shadow-cljs integration testing: Heist full pipeline (heist-build → shadow-cljs
       compile → 40/40 playwright tests pass, 0 errors)
 
-### Distributed traces
+### Distributed traces ✓
 
-- [ ] Multi-service blame across microservice boundaries
-- [ ] Correlate trace IDs across beagle modules deployed as separate services
+- [x] Multi-service blame across microservice boundaries
+- [x] Correlate trace IDs across beagle modules deployed as separate services
+- [x] Runtime library (`lib/beagle/dtrace.clj`): span lifecycle, context propagation,
+      Ring middleware, file + TCP exporters
+- [x] Auto-instrumentation: `beagle-dtrace instrument` wraps cross-service calls
+      (432 call sites on E8, alias resolution for `:as` requires)
+- [x] Trace collection: `beagle-dtrace collect` TCP daemon, per-service JSONL files
+- [x] Trace waterfall: `beagle-dtrace view` with ASCII timeline, parent-child nesting
+- [x] Service dependency graph: `beagle-dtrace graph` with DAG, impact analysis
+- [x] Cross-service blame: `beagle-dtrace blame --oracle-output` correlates assertion
+      failures with trace call graph (oracle-cascade, cross-service-call-failure strategies)
+- [x] Cascade analysis: `beagle-dtrace cascade` walks error chains across service boundaries
+- [x] Validated: E8 golden (291/291 pass, 229 spans, 10 services), E8 buggy
+      (blame correctly identifies catalog/customers/shipping as root causes, cascade to orders/reports)
+
+### Refinement predicates ✓
+
+- [x] `(defscalar Name Backing :where (op lit) ...)` — opt-in predicate constraints
+- [x] Compile-time literal checking (violation is structured error with scalar, value, constraint)
+- [x] Runtime emission: predicated constructors emit Clojure `defn` with `:pre` (plain scalars still erase)
+- [x] Cross-module propagation: predicates imported through `require`
+- [x] Ops: `>=`, `<=`, `>`, `<`, `=`, `not=`
+
+## Next: Workflow compression
+
+E9 showed correctness is a tie at Opus 4.6; the win is wall time (-29%)
+and tokens (-36%). The repair toolchain exists but agents still repair
+incrementally instead of batch-applying. Next ROI is making the repair
+loop zero-turn for mechanical bugs.
+
+- [x] `beagle-repair --emit-patch` — output unified diff instead of human-readable queue
+      (validated: 9 fixes across 4 files on E8 buggy, `git apply --check` passes)
+- [ ] E10: workflow compression experiment (measure turn/time reduction vs E9 baseline)
+      Specs written, trial dirs populated. Run with `--dangerously-skip-permissions`.
+- [ ] E11: model tier experiment — Sonnet 4.6 on same E8 system
+      Tests whether correctness divergence reappears at lower model capability.
+      If Sonnet+beagle matches Opus+Clojure: "same correctness, 10x cheaper."
 
 ## Someday: Experiments
 
-- [ ] E10: Sonnet/Haiku model tier — test if weaker models show correctness divergence (not just efficiency)
+- [ ] E11: Sonnet/Haiku model tier (specs written, see experiments/e11-model-tier/)
 - [x] Mutation testing: beagle-muttest (13 operators, 1356 sites on E8, identifies oracle gaps)
 - [x] Multi-arg function coverage: type-aware record instances + deterministic diff testing
 
@@ -241,3 +276,7 @@ assertions — the compiler derives what "correct" means.
 - Multi-arg diff coverage: type-aware record instances, 7399 deterministic calls on E8
 - REPL daemon integration: :sig falls back to daemon TCP query, require persists imports
 - Shadow-cljs validation: Heist full pipeline 40/40 playwright tests
+- Distributed tracing: beagle-dtrace (instrument, collect, view, blame, graph, cascade) + dtrace.clj runtime
+  - 432 cross-service call sites on E8, blame identifies root cause services from oracle failures
+- Refinement predicates: `(defscalar Name Backing :where (>= 0) (<= 100))` — compile-time literal checking + runtime :pre; cross-module propagation
+- Workflow compression: `beagle-repair --emit-patch` outputs unified diff (9 fixes/4 files on E8, `git apply` compatible)

@@ -568,12 +568,9 @@ def generate_candidates(failure):
                     if f'({alt} ' in cl:
                         continue
                     alt_suffix = accessor_suffix(alt)
-                    if same_type_group(old_suffix, alt_suffix):
-                        conf = 0.75 if in_computation else 0.65
-                    else:
-                        if not in_computation:
-                            continue
-                        conf = 0.40
+                    if not same_type_group(old_suffix, alt_suffix):
+                        continue
+                    conf = 0.75 if in_computation else 0.65
                     candidates.append({
                         'label': label,
                         'module': module,
@@ -743,10 +740,16 @@ def run_oracle(build_dir_path, verify_path):
         )
         output = result.stdout + result.stderr
         failing = set()
+        passed = False
         for line in output.split('\n'):
             m_f = re.match(r'^FAIL: (.+)', line)
             if m_f:
                 failing.add(m_f.group(1))
+            if 'passed' in line:
+                passed = True
+        if result.returncode != 0 and not passed:
+            print(f"    Oracle crashed (exit {result.returncode})", file=sys.stderr)
+            return None
         return failing
     except (subprocess.TimeoutExpired, Exception) as e:
         print(f"    Error running oracle: {e}", file=sys.stderr)
@@ -911,6 +914,13 @@ for fix in verified_fixes:
     print(f"  verified: oracle passes with this fix applied")
     print(f"  assertions-fixed: {fix['fixes_count']}")
     print(f"  remaining-failures: {fix['remaining_failures']}")
+    if fix.get('type') == 'value-swap' and fix.get('swap_lines') and fix.get('swap_values'):
+        print(f"  swap-lines: {fix['swap_lines'][0]},{fix['swap_lines'][1]}")
+        print(f"  swap-values: {fix['swap_values'][0]}|||{fix['swap_values'][1]}")
+    elif fix.get('search') and fix.get('replace'):
+        print(f"  search: {fix['search']}")
+        print(f"  replace: {fix['replace']}")
+        print(f"  line-idx: {fix.get('line_idx', '?')}")
     print()
 
 # Summary

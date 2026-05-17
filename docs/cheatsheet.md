@@ -95,6 +95,18 @@ monetary values, and timestamps are all Long underneath. The checker flags:
 Cross-scalar multiplication (`price * qty = amount`) is valid — the checker
 only flags additive mixing and constructor mismatches.
 
+**Refinement predicates (opt-in):**
+```racket
+(defscalar Percentage Long :where (>= 0) (<= 100))
+(defscalar PositiveAmount Long :where (> 0))
+```
+
+`:where` adds compile-time and runtime validation:
+- **Compile-time:** `(->Percentage 150)` is a type error (literal violates `(<= 100)`)
+- **Runtime:** constructor emits Clojure `:pre` conditions for dynamic values
+- Predicates propagate across `require` boundaries
+- Ops: `>=`, `<=`, `>`, `<`, `=`, `not=`
+
 ### `defenum`
 
 ```racket
@@ -473,7 +485,7 @@ Each note means: something is wrong at that location. Common fixes:
 - `bin/beagle-impact FN-NAME FILE-OR-DIR...` — callers + impact of signature change
 
 ### Repair toolchain (use these to fix bugs efficiently)
-- `bin/beagle-repair SOURCE-DIR VERIFY [--auto]` — **start here.** Runs the full pipeline and produces a ranked repair queue. Items marked AUTO can be applied directly; SUGGEST items need manual judgment.
+- `bin/beagle-repair SOURCE-DIR VERIFY [--auto] [--emit-patch]` — **start here.** Runs the full pipeline and produces a ranked repair queue. `--emit-patch` outputs a unified diff to stdout (`git apply` compatible) — zero reasoning needed for mechanical fixes.
 - `bin/beagle-trace BUILD-DIR VERIFY [--focus FN]` — when a logic bug isn't obvious, trace shows the exact arithmetic operation that diverged and its source line.
 - `bin/beagle-specfix BUILD-DIR VERIFY` — generates candidate fixes from ratio analysis, verifies each against the oracle. Only reports fixes that pass with 0 regressions.
 - `bin/beagle-cascade SOURCE-DIR VERIFY --from-failures` — when many assertions fail, this finds root causes. Fix the highest-cascade-score function first (one fix may resolve multiple downstream failures).
@@ -483,8 +495,8 @@ Each note means: something is wrong at that location. Common fixes:
 
 ### Repair workflow (recommended order)
 
-1. `beagle-repair src/ verify.clj` — get the ranked queue
-2. Apply all AUTO fixes (or use `--auto`)
+1. `beagle-repair src/ verify.clj --emit-patch > fixes.patch` — get machine-applicable fixes
+2. `git apply fixes.patch` — apply all AUTO-tier fixes in one shot
 3. `beagle-build-all --warn src/ --out .build/` — recompile
 4. Run oracle: `bb -cp .build/ -e '(load-file "verify.clj")'`
 5. For remaining failures: `beagle-trace .build/ verify.clj` to see divergence

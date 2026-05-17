@@ -506,6 +506,27 @@
   (check-true (matches? #rx":green" out))
   (check-true (matches? #rx":blue" out)))
 
+;; --- defscalar emission -------------------------------------------------------
+
+(test-case "defscalar without :where emits comment (erased)"
+  (define out (compile '(defscalar Amount Long)
+                       '(def x : Amount (->Amount 42))))
+  (check-true (matches? #rx";; Amount : Long \\(scalar\\)" out))
+  (check-false (matches? #rx"defn ->Amount" out)))
+
+(test-case "defscalar with :where emits constructor with :pre"
+  (define out (compile '(defscalar Percentage Long :where (>= 0) (<= 100))
+                       '(def x : Percentage (->Percentage 50))))
+  (check-true (matches? #rx"defn ->Percentage" out))
+  (check-true (matches? #rx":pre" out))
+  (check-true (matches? #rx"\\(>= v 0\\)" out))
+  (check-true (matches? #rx"\\(<= v 100\\)" out)))
+
+(test-case "defscalar with :where constructor is not erased at call site"
+  (define out (compile '(defscalar Percentage Long :where (>= 0) (<= 100))
+                       '(def x : Percentage (->Percentage 50))))
+  (check-true (matches? #rx"\\(->Percentage 50\\)" out)))
+
 ;; --- varargs emission --------------------------------------------------------
 
 (test-case "defn with & rest emits Clojure varargs"

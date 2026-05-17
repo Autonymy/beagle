@@ -653,6 +653,20 @@
 (check-fixture-err "defscalar prevents passing backing type where scalar expected"
   "defscalar-call-site.bgl")
 
+(check-fixture-ok "defscalar :where with valid literal passes"
+  "defscalar-pred-ok.bgl")
+
+(check-fixture-err/rx "defscalar :where rejects literal below range"
+  #rx"violates constraint"
+  "defscalar-pred-fail-low.bgl")
+
+(check-fixture-err/rx "defscalar :where rejects literal above range"
+  #rx"violates constraint"
+  "defscalar-pred-fail-high.bgl")
+
+(check-fixture-ok "defscalar :where with dynamic arg passes (no compile-time check)"
+  "defscalar-pred-dynamic.bgl")
+
 ;; --- CLJS target tests ---
 
 (define (check-cljs-prog . forms)

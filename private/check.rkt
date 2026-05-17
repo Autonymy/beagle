@@ -214,16 +214,16 @@
        ;; OrderEvent typed as (U OrderPlaced OrderConfirmed ...)
        (hash-set! env name
                   (type-union (map (lambda (m) (type-prim m)) members)))]
-      [(defscalar-form name backing)
+      [(defscalar-form name backing preds)
        (define scalar-type (type-prim name))
        (define backing-type (type-prim backing))
-       ;; Constructor: ->ScalarName : [BackingType -> ScalarName]
        (hash-set! env (string->symbol (string-append "->" (symbol->string name)))
                   (type-fn (list backing-type) #f scalar-type))
-       ;; Accessor: scalarname-value : [ScalarName -> BackingType]
        (define name-lower (string-downcase (symbol->string name)))
        (hash-set! env (string->symbol (string-append name-lower "-value"))
-                  (type-fn (list scalar-type) #f backing-type))]
+                  (type-fn (list scalar-type) #f backing-type))
+       (unless (null? preds)
+         (hash-set! SCALAR-PREDS name preds))]
       [_ (void)]))
   env)
 
@@ -305,7 +305,7 @@
      (last-expr-type body body-env)]
     [(defenum-form _ _) (void)]
     [(defunion-form _ _) (void)]
-    [(defscalar-form _ _) (void)]
+    [(defscalar-form _ _ _) (void)]
 
     [_ (infer-expr form env)]))
 
@@ -630,6 +630,50 @@
              sym
              (if src (format " at ~a:~a" (or (src-loc-source src) "?") (src-loc-line src)) ""))))
 
+;; --- scalar predicate checking (compile-time for literals) ----------------
+
+(define (eval-scalar-predicate pred-op pred-val lit-val)
+  (case pred-op
+    [(>=)  (>= lit-val pred-val)]
+    [(<=)  (<= lit-val pred-val)]
+    [(>)   (> lit-val pred-val)]
+    [(<)   (< lit-val pred-val)]
+    [(=)   (= lit-val pred-val)]
+    [(not=) (not (= lit-val pred-val))]
+    [else #t]))
+
+(define (format-predicate p)
+  (format "(~a ~a)" (scalar-predicate-op p) (scalar-predicate-value p)))
+
+(define (ctor->scalar-name fn)
+  (define s (symbol->string fn))
+  (define bare
+    (let ([slash (regexp-match-positions #rx"/" s)])
+      (if slash (substring s (cdar slash)) s)))
+  (and (string-prefix? bare "->")
+       (> (string-length bare) 2)
+       (string->symbol (substring bare 2))))
+
+(define (check-scalar-predicate-literal fn args e)
+  (define scalar-name (ctor->scalar-name fn))
+  (when (and scalar-name
+             (= 1 (length args))
+             (hash-has-key? SCALAR-PREDS scalar-name))
+    (define arg (car args))
+    (when (or (exact-integer? arg) (real? arg))
+      (define preds (hash-ref SCALAR-PREDS scalar-name))
+      (for ([p (in-list preds)])
+        (unless (eval-scalar-predicate (scalar-predicate-op p) (scalar-predicate-value p) arg)
+          (raise-diag 'scalar-predicate
+                      (format "~a: literal ~a violates constraint ~a"
+                              fn arg (format-predicate p))
+                      (hasheq 'scalar (symbol->string scalar-name)
+                              'value (number->string arg)
+                              'constraint (format-predicate p)
+                              'all-constraints
+                              (string-join (map format-predicate preds) ", "))
+                      #:src (src-for e)))))))
+
 ;; --- inference -------------------------------------------------------------
 
 (define (infer-expr e env)
@@ -836,6 +880,7 @@
      (cond
        [(type-fn? fn-type)
         (check-args (call-form-fn e) fn-type (call-form-args e) env e)
+        (check-scalar-predicate-literal (call-form-fn e) (call-form-args e) e)
         (type-fn-ret fn-type)]
        [(and (type-union? fn-type)
              (andmap type-fn? (type-union-alts fn-type)))
@@ -1075,10 +1120,12 @@
 
 (define SCALAR-CTORS (make-hash))   ; "->Amount" → 'Amount
 (define SCALAR-ACCESSORS (make-hash)) ; "amount-value" → 'Amount
+(define SCALAR-PREDS (make-hash))    ; 'Amount → (list (scalar-predicate '>= 0) ...)
 
 (define (build-scalar-registry! prog)
   (hash-clear! SCALAR-CTORS)
   (hash-clear! SCALAR-ACCESSORS)
+  (hash-clear! SCALAR-PREDS)
   (for ([form (in-list (program-forms prog))])
     (when (defscalar-form? form)
       (define name (defscalar-form-name form))
@@ -1087,11 +1134,15 @@
       (hash-set! SCALAR-CTORS
                  (string->symbol (string-append "->" name-str)) name)
       (hash-set! SCALAR-ACCESSORS
-                 (string->symbol (string-append name-lower "-value")) name)))
+                 (string->symbol (string-append name-lower "-value")) name)
+      (unless (null? (defscalar-form-predicates form))
+        (hash-set! SCALAR-PREDS name (defscalar-form-predicates form)))))
+  ;; register imported scalar predicates
+  (for ([(name preds) (in-hash (program-imported-scalar-preds prog))])
+    (hash-set! SCALAR-PREDS name preds))
   ;; also register imported scalars
   (for ([sym (in-list (program-imported-scalar-fns prog))])
     (define s (symbol->string sym))
-    ;; Strip module prefix (e.g., "ord/->Amount" → "->Amount", "ord/amount-value" → "amount-value")
     (define bare
       (let ([slash (regexp-match-positions #rx"/" s)])
         (if slash (substring s (cdar slash)) s)))

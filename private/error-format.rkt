@@ -88,6 +88,8 @@
      "function types use the form [Arg1 Arg2 -> Ret]"]
     [(regexp-match? #rx"unsafe.*string" msg)
      "(unsafe ...) takes a single string literal: (unsafe \"raw clojure\")"]
+    [(regexp-match? #rx"violates constraint" msg)
+     "literal value is outside the range declared in defscalar :where"]
     [else #f]))
 
 (define (write-json-error msg-or-exn stx)
