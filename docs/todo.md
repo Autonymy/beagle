@@ -122,91 +122,84 @@ assertions — the compiler derives what "correct" means.
 - [ ] Multi-arg function coverage: generate valid inputs for 2+ arg functions
       using cross-product of test data instances
 
-## Now: E9 — validate the repair toolchain in an agent workflow
+## Next: Repair compiler deepening
 
-### Step 1: Agent prompt spring-cleaning
+### Deeper candidate generation (Phase 3 continuation)
 
-Update all agent-facing docs so the repair tools are discoverable:
+- [ ] Accessor swap detection: when blame shows wrong field, enumerate same-record accessors as candidates
+- [ ] Wrong-argument detection: when arity is correct but types mismatch, try argument permutations
+- [ ] Cross-evidence correlation: combine blame ratio + semantic rules + trace for confidence boost
 
-- [ ] `docs/cheatsheet.md` — add repair toolchain section (beagle-repair,
-      beagle-trace, beagle-specfix, beagle-cascade, beagle-oracle)
-- [ ] Experiment prompt template — include tool descriptions + usage examples
-      in the system context for beagle-track agents
-- [ ] `docs/agent-workflow.md` — decision tree for which tool to use when:
-      compile error → check fix plan; logic bug → blame + trace + specfix;
-      cascade → find root before fixing symptoms; oracle → verify all at once
+### Call-graph trace walk (Phase 4 continuation)
 
-### Step 2: E9 experiment design
+- [ ] Trace through function calls to find the root divergence (not just leaf operations)
+- [ ] Integrate with semantic rules: cross-reference trace ops against name expectations
+- [ ] Cross-module trace propagation: follow values across require boundaries
 
-Same E8 system (13 modules, 8570 LOC, 35 bugs, 484 assertions) but the
-agent's system prompt includes the full repair toolchain.
+### Property testing maturity (Phase 6 continuation)
 
-- [ ] E9 beagle spec: agent has beagle-check-all + beagle-repair + beagle-trace
-      + beagle-cascade. Workflow: run beagle-repair first, apply AUTO fixes,
-      then iterate on SUGGEST items with trace guidance
-- [ ] E9 clojure spec: same as E8 (no type tools, just oracle + grep)
-- [ ] Hypothesis: beagle-repair's 12 auto-applicable fixes → 12 fewer
-      reasoning cycles → ≥40% speed improvement over E8 run3 (76 turns)
+- [ ] Record generators: random valid instances from field types + scalar constraints
+- [ ] Property inference from return types (Amount → non-negative, Boolean → idempotent, Vec → length correlates)
+- [ ] Shrinking: when a property fails, minimize input to smallest failing case
+- [ ] Differential testing: run same inputs through old vs new code, flag output differences
 
-### Step 3: Run E9 (3 runs each track)
+## Next: Infrastructure
 
-- [ ] E9-beagle-run1, run2, run3
-- [ ] E9-clojure-run1, run2, run3
-- [ ] Metrics: turns, wall time, tokens, bugs found per phase (auto vs manual)
+### Daemon file watcher
 
-### Step 4: Document results
+- [ ] Auto-invalidate cached ASTs on .rkt modification (inotify/fswatch)
+- [ ] Emit invalidation event so connected tools know to re-query
 
-- [ ] `experiments/e9-repair-toolchain/results.md`
-- [ ] Devlog entry: E9 results + interpretation
-- [ ] Update todo.md Done section
+### Reader normalization pass
 
-## Now: Daemon mode (eliminate tool startup cost) ✓
+The reader currently preserves `[]` vs `()` using a `#%brackets` tag —
+a well-known symbol that parse.rkt pattern-matches on. This works but
+means every downstream pass must understand the tag convention.
 
-E9 showed beagle uses 63% fewer tokens but 73% more wall time than clojure.
-The gap is tool overhead. Benchmarked per-tool costs:
+Normalization would replace `#%brackets` tags with proper typed AST
+nodes during parsing, so the rest of the pipeline deals with structured
+data rather than tagged lists. Reduces fragility and makes pattern
+matching in check/emit cleaner.
 
-  Racket startup: 0.33s × N calls (query tools called ~60× per session)
-  Parse 13 modules: 1.6s (re-done every check/build/provides call)
-  Clojure JVM startup: 0.33s per oracle run
-  Full oracle (484 assertions): 1.8s per run
-  Specfix (5 oracle runs): 25.7s total
+- [ ] Define vector-literal, map-literal, set-literal AST nodes
+- [ ] Convert `#%brackets`/`MAP-TAG`/`SET-TAG` to nodes in parse pass
+- [ ] Update check.rkt and emit.rkt to match on nodes instead of tags
+- [ ] Remove tag-awareness from downstream code
 
-### beagle-daemon (Racket query server) ✓
+### LSP / editor integration
 
-- [x] Persistent Racket process over TCP (ephemeral port, 127.0.0.1)
-- [x] Cache: parsed ASTs with mtime invalidation (path → (mtime, datums))
-- [x] Commands: sig, fields, callers, provides, impact, check, ping, invalidate, quit
-- [x] Protocol: space-separated command line → JSON response + newline
-- [x] Integration: tool scripts check for port file, route through daemon if running
-- [x] Startup: `beagle-daemon start` (background), `beagle-daemon stop`, `beagle-daemon status`
-- [x] Validated: 45× speedup per query (0.01s vs 0.45s), 39× for mixed batches
-- [ ] File watcher: auto-invalidate on .rkt modification (inotify/fswatch)
+- [ ] Type-aware completion (query daemon for available symbols + types)
+- [ ] Jump-to-definition (cross-module, using require resolution)
+- [ ] Inline diagnostics (type errors, lint warnings)
+- [ ] Hover for type signatures
 
-### Babashka oracle replacement ✓
+### Typed REPL
 
-- [x] All oracle invocations switched from `clojure -Sdeps` to `bb -cp`
-- [x] Emitter fix: removed `:refer :all`, added `imported-symbol-ns` for qualified emission
-- [x] 484/484 golden assertions pass on both JVM Clojure and Babashka
-- [x] Tools updated: beagle-blame, beagle-specfix, beagle-trace, beagle-oracle, beagle-cascade
-- [x] Validated: 12× oracle speedup (0.18s vs 2.14s for 484 assertions)
+- [ ] Socket-REPL with compile-time checking per expression
+- [ ] Type environment persists across REPL inputs
+- [ ] Integrates with daemon for cross-module awareness
 
-### Measured impact
+### CLJS target maturity
 
-  Tool overhead (60 queries + 10 oracles):
-    Before:  27s + 21s = 48s
-    After:   0.6s + 1.8s = 2.4s (95% reduction)
+Currently `(define-target cljs)` switches the emitter to skip Java
+imports and adjust defrecord emission. Full parity means:
 
-  beagle-specfix (5 oracle runs):
-    Before:  25.7s
-    After:   ~2.5s (10× faster)
+- [ ] Audit all emit paths for JVM-specific output (import, Class/static, .method)
+- [ ] CLJS-specific stdlib subset (no Java interop functions)
+- [ ] Source map generation for ClojureScript debugging
+- [ ] Shadow-cljs / figwheel integration testing
+- [ ] JS interop forms (`js/console.log`, `js/document`, etc.)
 
-## Someday (infrastructure)
+### Distributed traces
 
-- **Reader normalization pass.** `#%brackets` tags → typed AST nodes.
-- **LSP / editor integration.** Type-aware completion, jump-to-def.
-- **Typed REPL.** Socket-repl with compile-time checking.
-- **CLJS target maturity.** Full ClojureScript emit parity.
-- **Distributed traces.** Multi-service blame across microservice boundaries.
+- [ ] Multi-service blame across microservice boundaries
+- [ ] Correlate trace IDs across beagle modules deployed as separate services
+
+## Someday: Experiments
+
+- [ ] E10: Sonnet/Haiku model tier — test if weaker models show correctness divergence (not just efficiency)
+- [ ] Mutation testing: automatically inject bugs, verify the generated oracle catches them
+- [ ] Multi-arg function coverage: generate valid inputs for 2+ arg functions using cross-product
 
 ## Done
 
@@ -260,3 +253,10 @@ The gap is tool overhead. Benchmarked per-tool costs:
 - Multi-arity `defn`: per-arity type checking, union-type call validation, proper arity error messages
 - Guard-pattern type narrowing: `(when (nil? x) (throw ...))` narrows x in subsequent `do` forms
 - Union-to-union type compatibility: (U A B) assignable to (U A B C) (subset check)
+- Repair compiler: beagle-blame, beagle-specfix, beagle-trace, beagle-cascade, beagle-oracle, beagle-repair
+- beagle-daemon: persistent TCP query server (45× speedup, mtime-invalidated AST cache)
+- Babashka oracle replacement (12× vs JVM Clojure)
+- Emitter: qualified cross-module calls (removed :refer :all)
+- Varargs (`&`) support in defn/fn parameters
+- E9 experiment: repair toolchain validation (beagle 29% faster, 36% fewer tokens vs clojure, 3/3 both tracks)
+- docs/agent-workflow.md, cheatsheet repair section, E9 specs
