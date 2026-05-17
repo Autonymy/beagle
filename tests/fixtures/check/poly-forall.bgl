@@ -1,0 +1,2 @@
+(declare-extern my-id (forall (T) [T -> T]))
+(def x : Long (my-id 42))

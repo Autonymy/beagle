@@ -1,0 +1,1 @@
+(defn process [{:keys [name age]}] (println name))

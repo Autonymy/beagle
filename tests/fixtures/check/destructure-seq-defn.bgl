@@ -1,0 +1,1 @@
+(defn process [[a b c]] (println a))

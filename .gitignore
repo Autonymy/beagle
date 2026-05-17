@@ -2,10 +2,13 @@ compiled/
 *.dep
 *.zo
 .DS_Store
-.claude/worktrees/
+.claude/
 runtime/.cpcache/
 runtime/target/
 runtime/src/beagle/target.clj
 runtime/src/beagle/run_*.clj
 runtime/src/test/
+runtime/src/test.clj
+runtime/src/heist/
+runtime/src/trading/
 pipeline/

@@ -1,0 +1,7 @@
+(declare-extern get-val [-> (U String Long Nil)])
+(defn describe [] : String
+  (let [x (get-val)]
+    (cond
+      [(nil? x) "nil"]
+      [(string? x) (subs x 0)]
+      [:else (str x)])))

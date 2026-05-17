@@ -1,0 +1,3 @@
+(defrecord Person [(name : String) (age : Long)])
+(defn update-name [(p : Person)] : Person
+  (with p [:name "bob"]))

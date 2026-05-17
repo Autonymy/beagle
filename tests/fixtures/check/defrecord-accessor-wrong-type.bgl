@@ -1,0 +1,3 @@
+(defrecord Employee [(name : String) (rate : Long)])
+(def e (->Employee "Alice" 95))
+(def n : Long (employee-name e))

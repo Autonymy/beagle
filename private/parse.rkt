@@ -244,7 +244,11 @@
          (cond
            [(file-exists? full-path) full-path]
            [(and (not (null? dir-segs))
-                 (file-exists? (build-path source-dir file-name)))
+                 (file-exists? (build-path source-dir file-name))
+                 (not (equal? (simplify-path (build-path source-dir file-name))
+                              (simplify-path (if (complete-path? source-path)
+                                                 source-path
+                                                 (path->complete-path source-path))))))
             (build-path source-dir file-name)]
            [else #f]))))
 
@@ -924,9 +928,13 @@
       (cond
         [(null? remaining) (values (reverse acc) #f)]
         [(eq? (car remaining) '&)
-         (when (not (= (length (cdr remaining)) 1))
-           (error 'beagle "& must be followed by exactly one rest parameter"))
-         (values (reverse acc) (cadr remaining))]
+         (let ([rest-items (cdr remaining)])
+           (when (null? rest-items)
+             (error 'beagle "& must be followed by a rest parameter"))
+           (values (reverse acc)
+                   (if (= (length rest-items) 1)
+                       (car rest-items)
+                       rest-items)))]
         [else (loop (cdr remaining) (cons (car remaining) acc))])))
   (define fixed
     (for/list ([item (in-list before-amp)])

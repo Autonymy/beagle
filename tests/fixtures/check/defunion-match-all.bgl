@@ -1,0 +1,7 @@
+(defrecord A [(x : Long)])
+(defrecord B [(y : String)])
+(defunion AB A B)
+(defn handle [(e : AB)] : Long
+  (match e
+    [(A x) x]
+    [(B y) 0]))

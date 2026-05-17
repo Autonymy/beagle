@@ -1,0 +1,5 @@
+(defprotocol Printable
+  (to-string [(self : Any)] : String))
+(deftype Point [(x : Long) (y : Long)]
+  Printable
+  (to-string [(self : Any)] "point"))

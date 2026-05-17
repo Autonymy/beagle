@@ -1,0 +1,268 @@
+#!/usr/bin/env racket
+#lang racket/base
+
+;; beagle-fix — auto-apply high-confidence type-error fixes
+;;
+;; Usage:
+;;   beagle-fix --dry-run .        (show what would be fixed)
+;;   beagle-fix --apply .          (apply fixes in-place)
+;;
+;; Three classes of output:
+;;   AUTO-FIXED   — applied safely (single unambiguous replacement)
+;;   SUGGESTED    — likely fix, needs manual review
+;;   DIAGNOSTIC   — something is wrong, intent unclear
+
+(require json
+         racket/string
+         racket/cmdline
+         "../private/parse.rkt"
+         "../private/check.rkt"
+         "../private/error-format.rkt"
+         "../private/query.rkt")
+
+;; --- source cache (shared with check-all) ---
+
+(define source-cache (make-hash))
+
+(define (read-source-lines file-path)
+  (hash-ref! source-cache file-path
+    (lambda ()
+      (with-handlers ([exn:fail? (lambda (_) #f)])
+        (define p (if (path? file-path) file-path (string->path file-path)))
+        (call-with-input-file p
+          (lambda (in)
+            (let loop ([acc '()])
+              (define line (read-line in))
+              (if (eof-object? line)
+                  (list->vector (reverse acc))
+                  (loop (cons line acc))))))))))
+
+(define (read-source-line file-path line-num)
+  (define lines (read-source-lines file-path))
+  (and lines
+       (> line-num 0)
+       (<= line-num (vector-length lines))
+       (vector-ref lines (sub1 line-num))))
+
+;; --- collect errors with fix metadata ---
+
+(struct fix-entry (file line kind confidence category
+                   description before after replace-old replace-new) #:transparent)
+
+(define (collect-fixable-errors files)
+  (define entries '())
+
+  (define (process-error e loc-stx path)
+    (cond
+      [(beagle-diagnostic? e)
+       (define d (beagle-diagnostic-details e))
+       (define kind (beagle-diagnostic-kind e))
+       (define stx-line (and loc-stx (syntax-line loc-stx)))
+       (define err-line (or (hash-ref d 'error-line #f) stx-line))
+       (define err-file (or (hash-ref d 'error-file #f) path))
+       (define src-line (and err-file err-line (read-source-line err-file err-line)))
+
+       (cond
+         ;; HIGH CONFIDENCE: single accessor replacement
+         [(and (eq? kind 'type-mismatch)
+               (pair? (hash-ref d 'suggestions '()))
+               (= 1 (length (hash-ref d 'suggestions '())))
+               src-line)
+          (define sugg (car (hash-ref d 'suggestions)))
+          (define old (hash-ref sugg 'replace ""))
+          (define new (hash-ref sugg 'with ""))
+          (when (regexp-match? (regexp-quote old) src-line)
+            (define new-line (string-replace src-line old new #:all? #f))
+            (set! entries
+              (cons (fix-entry err-file err-line kind "auto"
+                              "wrong-accessor"
+                              (format "Replace ~a with ~a" old new)
+                              src-line new-line old new)
+                    entries)))]
+
+         ;; SUGGESTED: missing argument (can't determine which variable)
+         [(and (eq? kind 'arity)
+               (hash-ref d 'expected-arity #f)
+               (< (hash-ref d 'actual-arity 0) (hash-ref d 'expected-arity 0)))
+          (define help (hash-ref d 'help ""))
+          (set! entries
+            (cons (fix-entry err-file err-line kind "suggested"
+                            "missing-argument"
+                            (format "~a — ~a" (exn-message e) help)
+                            (or src-line "") #f #f #f)
+                  entries))]
+
+         ;; SUGGESTED: extra arguments
+         [(and (eq? kind 'arity)
+               (hash-ref d 'expected-arity #f)
+               (> (hash-ref d 'actual-arity 0) (hash-ref d 'expected-arity 0)))
+          (set! entries
+            (cons (fix-entry err-file err-line kind "suggested"
+                            "extra-argument"
+                            (format "~a" (exn-message e))
+                            (or src-line "") #f #f #f)
+                  entries))]
+
+         ;; SUGGESTED: multiple replacement candidates
+         [(and (eq? kind 'type-mismatch)
+               (pair? (hash-ref d 'suggestions '()))
+               (> (length (hash-ref d 'suggestions '())) 1))
+          (define suggestions (hash-ref d 'suggestions))
+          (define candidates
+            (for/list ([s (in-list suggestions)])
+              (format "~a" (hash-ref s 'with "?"))))
+          (set! entries
+            (cons (fix-entry err-file err-line kind "suggested"
+                            "multiple-candidates"
+                            (format "~a — candidates: ~a"
+                                    (exn-message e)
+                                    (string-join candidates ", "))
+                            (or src-line "") #f #f #f)
+                  entries))]
+
+         ;; DIAGNOSTIC: type mismatch with no suggestions
+         [(eq? kind 'type-mismatch)
+          (set! entries
+            (cons (fix-entry err-file err-line kind "diagnostic"
+                            "type-mismatch"
+                            (format "~a" (exn-message e))
+                            (or src-line "") #f #f #f)
+                  entries))]
+
+         [else void])]
+      [else void]))
+
+  (for ([path (in-list files)])
+    (with-handlers
+      ([exn:fail?
+        (lambda (e) (process-error e #f path))])
+      (define stxs (read-beagle-syntax path))
+      (define prog (parse-program stxs #:source-path path))
+      (type-check-with-locs! prog
+        (lambda (e loc-stx)
+          (process-error e loc-stx path)))))
+
+  (reverse entries))
+
+;; --- apply fixes ---
+
+(define (apply-fix! entry)
+  (define file (fix-entry-file entry))
+  (define line-num (fix-entry-line entry))
+  (define old-text (fix-entry-replace-old entry))
+  (define new-text (fix-entry-replace-new entry))
+
+  (define lines (read-source-lines file))
+  (when (and lines old-text new-text
+             (> line-num 0) (<= line-num (vector-length lines)))
+    (define current (vector-ref lines (sub1 line-num)))
+    (when (string-contains? current old-text)
+      (define updated (string-replace current old-text new-text #:all? #f))
+      (vector-set! lines (sub1 line-num) updated)
+      ;; Write back
+      (call-with-output-file file
+        (lambda (out)
+          (for ([i (in-range (vector-length lines))])
+            (display (vector-ref lines i) out)
+            (newline out)))
+        #:exists 'replace)
+      ;; Invalidate cache
+      (hash-remove! source-cache file)
+      #t)))
+
+;; --- file expansion ---
+
+(define (find-rkt-files-in dir)
+  (for/list ([p (in-directory dir)]
+             #:when (regexp-match? #rx"\\.rkt$" (path->string p)))
+    (path->string p)))
+
+(define (expand-args args)
+  (sort
+    (apply append
+      (for/list ([a (in-list args)])
+        (cond
+          [(directory-exists? a) (find-rkt-files-in a)]
+          [(regexp-match? #rx"\\.rkt$" a) (list a)]
+          [else '()])))
+    string<?))
+
+;; --- main ---
+
+(define mode (make-parameter 'dry-run))
+
+(define files
+  (command-line
+   #:program "beagle-fix"
+   #:once-any
+   ["--dry-run" "Show what would be fixed without applying"
+    (mode 'dry-run)]
+   ["--apply" "Apply high-confidence fixes in-place"
+    (mode 'apply)]
+   #:args file-or-dirs
+   (expand-args file-or-dirs)))
+
+(when (null? files)
+  (eprintf "beagle-fix: no .rkt files found\n")
+  (exit 2))
+
+(define entries (collect-fixable-errors files))
+
+(when (null? entries)
+  (printf "No fixable errors found.\n")
+  (exit 0))
+
+;; Partition by confidence
+(define auto-entries (filter (lambda (e) (equal? "auto" (fix-entry-confidence e))) entries))
+(define suggested-entries (filter (lambda (e) (equal? "suggested" (fix-entry-confidence e))) entries))
+(define diagnostic-entries (filter (lambda (e) (equal? "diagnostic" (fix-entry-confidence e))) entries))
+
+;; Display auto-fixes
+(unless (null? auto-entries)
+  (printf "\n~a AUTO-FIX~a~a:\n"
+          (length auto-entries)
+          (if (= 1 (length auto-entries)) "" "ES")
+          (if (eq? (mode) 'apply) " (applied)" " (dry-run)"))
+  (for ([entry (in-list auto-entries)])
+    (printf "  ~a:~a  ~a\n"
+            (fix-entry-file entry)
+            (fix-entry-line entry)
+            (fix-entry-description entry))
+    (when (fix-entry-after entry)
+      (printf "    before: ~a\n" (string-trim (fix-entry-before entry)))
+      (printf "    after:  ~a\n" (string-trim (fix-entry-after entry))))))
+
+;; Apply if --apply mode
+(when (eq? (mode) 'apply)
+  (for ([entry (in-list auto-entries)])
+    (apply-fix! entry)))
+
+;; Display suggested
+(unless (null? suggested-entries)
+  (printf "\n~a SUGGESTED (needs review):\n" (length suggested-entries))
+  (for ([entry (in-list suggested-entries)])
+    (printf "  ~a:~a  [~a] ~a\n"
+            (fix-entry-file entry)
+            (fix-entry-line entry)
+            (fix-entry-category entry)
+            (fix-entry-description entry))))
+
+;; Display diagnostics
+(unless (null? diagnostic-entries)
+  (printf "\n~a DIAGNOSTIC ONLY:\n" (length diagnostic-entries))
+  (for ([entry (in-list diagnostic-entries)])
+    (printf "  ~a:~a  ~a\n"
+            (fix-entry-file entry)
+            (fix-entry-line entry)
+            (fix-entry-description entry))))
+
+;; Summary
+(printf "\n---\n")
+(printf "~a auto-fixable, ~a suggested, ~a diagnostic-only\n"
+        (length auto-entries)
+        (length suggested-entries)
+        (length diagnostic-entries))
+(when (eq? (mode) 'dry-run)
+  (printf "Run with --apply to apply auto-fixes.\n"))
+(when (eq? (mode) 'apply)
+  (printf "Run beagle-check-all to verify.\n"))

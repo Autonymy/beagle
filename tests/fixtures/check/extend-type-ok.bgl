@@ -1,0 +1,3 @@
+(extend-type String
+  Showable
+  (show [(self : String)] (str self)))

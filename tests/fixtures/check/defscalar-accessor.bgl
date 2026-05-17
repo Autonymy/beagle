@@ -1,0 +1,3 @@
+(defscalar Timestamp Long)
+(def ts : Timestamp (->Timestamp 100))
+(def raw : Long (timestamp-value ts))
