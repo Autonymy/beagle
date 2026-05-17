@@ -16,7 +16,7 @@ if [[ $# -ge 2 ]]; then
     # Direct mode: run verify and pipe through self
     BUILD_DIR="$1"
     VERIFY_SCRIPT="$2"
-    clojure -Sdeps "{:paths [\"$BUILD_DIR\"]}" -M -e "(load-file \"$VERIFY_SCRIPT\")" 2>&1 | "$0"
+    bb -cp "$BUILD_DIR" -e "(load-file \"$VERIFY_SCRIPT\")" 2>&1 | "$0"
     exit $?
 fi
 

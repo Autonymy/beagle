@@ -10,7 +10,7 @@ You have a large inventory & order management system (13 modules, ~4700 LOC) wri
 
 To run verify:
 ```bash
-clojure -Sdeps '{:paths ["."]}' -M -e '(load-file "../../verify/e8-full.verify.clj")'
+bb -cp . -e '(load-file "../../verify/e8-full.verify.clj")'
 ```
 
 ## Available tools

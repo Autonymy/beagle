@@ -160,18 +160,45 @@ agent's system prompt includes the full repair toolchain.
 - [ ] Devlog entry: E9 results + interpretation
 - [ ] Update todo.md Done section
 
-## Soon: Daemon mode (reduce startup cost)
+## Now: Daemon mode (eliminate tool startup cost) ✓
 
-As tools are invoked more frequently (repair pipeline calls specfix, blame,
-trace, cascade in sequence), the per-invocation startup cost of loading
-Racket modules + parsing source adds up. A long-running daemon would:
+E9 showed beagle uses 63% fewer tokens but 73% more wall time than clojure.
+The gap is tool overhead. Benchmarked per-tool costs:
 
-- [ ] `beagle-daemon` — persistent Racket process accepting queries over socket/pipe
-- [ ] Cache parsed ASTs, type environments, call graphs across invocations
-- [ ] Protocol: JSON-RPC or simple line protocol (tool name + args → result)
-- [ ] Benchmark: measure current per-tool startup cost vs daemon amortized cost
-- [ ] Integration: tool scripts detect running daemon and route through it
-- [ ] Threshold experiment: at what invocation frequency does daemon pay for itself?
+  Racket startup: 0.33s × N calls (query tools called ~60× per session)
+  Parse 13 modules: 1.6s (re-done every check/build/provides call)
+  Clojure JVM startup: 0.33s per oracle run
+  Full oracle (484 assertions): 1.8s per run
+  Specfix (5 oracle runs): 25.7s total
+
+### beagle-daemon (Racket query server) ✓
+
+- [x] Persistent Racket process over TCP (ephemeral port, 127.0.0.1)
+- [x] Cache: parsed ASTs with mtime invalidation (path → (mtime, datums))
+- [x] Commands: sig, fields, callers, provides, impact, check, ping, invalidate, quit
+- [x] Protocol: space-separated command line → JSON response + newline
+- [x] Integration: tool scripts check for port file, route through daemon if running
+- [x] Startup: `beagle-daemon start` (background), `beagle-daemon stop`, `beagle-daemon status`
+- [x] Validated: 45× speedup per query (0.01s vs 0.45s), 39× for mixed batches
+- [ ] File watcher: auto-invalidate on .rkt modification (inotify/fswatch)
+
+### Babashka oracle replacement ✓
+
+- [x] All oracle invocations switched from `clojure -Sdeps` to `bb -cp`
+- [x] Emitter fix: removed `:refer :all`, added `imported-symbol-ns` for qualified emission
+- [x] 484/484 golden assertions pass on both JVM Clojure and Babashka
+- [x] Tools updated: beagle-blame, beagle-specfix, beagle-trace, beagle-oracle, beagle-cascade
+- [x] Validated: 12× oracle speedup (0.18s vs 2.14s for 484 assertions)
+
+### Measured impact
+
+  Tool overhead (60 queries + 10 oracles):
+    Before:  27s + 21s = 48s
+    After:   0.6s + 1.8s = 2.4s (95% reduction)
+
+  beagle-specfix (5 oracle runs):
+    Before:  25.7s
+    After:   ~2.5s (10× faster)
 
 ## Someday (infrastructure)
 

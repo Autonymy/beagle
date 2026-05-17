@@ -171,8 +171,8 @@ if from_failures:
     )
 
     result = subprocess.run(
-        ['clojure', '-Sdeps', '{:paths ["' + build_dir + '"]}',
-         '-M', '-e', f'(load-file "{verify_script}")'],
+        ['bb', '-cp', build_dir,
+         '-e', f'(load-file "{verify_script}")'],
         capture_output=True, text=True, timeout=120
     )
     output = result.stdout + result.stderr

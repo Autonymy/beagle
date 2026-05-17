@@ -1,6 +1,6 @@
 (ns procurement
-  (:require [catalog :refer :all :as cat]
-            [inventory :refer :all :as inv]))
+  (:require [catalog :as cat]
+            [inventory :as inv]))
 
 ;; POId : Long (scalar)
 

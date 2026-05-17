@@ -259,6 +259,5 @@ if [[ "$RUN_MODE" == "true" ]]; then
 
     echo "" >&2
     echo "=== Running properties ===" >&2
-    clojure -Sdeps "{:paths [\"$BUILD_DIR\"]}" \
-        -M -e "(load-file \"$WORK_DIR/proptest.clj\")" 2>&1
+    bb -cp "$BUILD_DIR" -e "(load-file \"$WORK_DIR/proptest.clj\")" 2>&1
 fi

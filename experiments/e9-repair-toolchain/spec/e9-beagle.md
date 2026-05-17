@@ -26,7 +26,7 @@ To auto-apply all high-confidence fixes:
 ## Step 2: Rebuild and verify
 
 ```bash
-/home/tom/code/beagle/bin/beagle-build-all --warn *.rkt --out .build/ && clojure -Sdeps '{:paths [".build"]}' -M -e '(load-file "../../verify/e8-full.verify.clj")'
+/home/tom/code/beagle/bin/beagle-build-all --warn *.rkt --out .build/ && bb -cp .build -e '(load-file "../../verify/e8-full.verify.clj")'
 ```
 
 ## Step 3: Trace remaining failures

@@ -1,7 +1,7 @@
 (ns orders
-  (:require [catalog :refer :all :as cat]
-            [inventory :refer :all :as inv]
-            [customers :refer :all :as cust]))
+  (:require [catalog :as cat]
+            [inventory :as inv]
+            [customers :as cust]))
 
 ;; OrderId : Long (scalar)
 

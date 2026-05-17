@@ -268,8 +268,8 @@ print(f"  Generated {calls_generated} function calls to capture", file=sys.stder
 print("─── Phase 3: Running capture ───", file=sys.stderr)
 
 result = subprocess.run(
-    ['clojure', '-Sdeps', '{:paths ["' + build_dir + '"]}',
-     '-M', '-e', f'(load-file "{capture_path}")'],
+    ['bb', '-cp', build_dir,
+     '-e', f'(load-file "{capture_path}")'],
     capture_output=True, text=True, timeout=120
 )
 
@@ -370,8 +370,8 @@ if diff_dir:
 
     # Run same capture on modified code
     result = subprocess.run(
-        ['clojure', '-Sdeps', '{:paths ["' + diff_build_dir + '"]}',
-         '-M', '-e', f'(load-file "{capture_path}")'],
+        ['bb', '-cp', diff_build_dir,
+         '-e', f'(load-file "{capture_path}")'],
         capture_output=True, text=True, timeout=120
     )
 

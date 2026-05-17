@@ -1,9 +1,9 @@
 (ns analytics
-  (:require [orders :refer :all :as ord]
-            [inventory :refer :all :as inv]
-            [catalog :refer :all :as cat]
-            [billing :refer :all]
-            [shipping :refer :all :as ship]))
+  (:require [orders :as ord]
+            [inventory :as inv]
+            [catalog :as cat]
+            [billing :as billing]
+            [shipping :as ship]))
 
 ^{:line 16 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (defrecord PeriodMetric [period metric-name value])
 
@@ -146,33 +146,33 @@
   ^{:line 235 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (mapv ^{:line 235 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (fn [p] ^{:line 236 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (let [start ^{:line 236 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (first p)
    end ^{:line 237 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (second p)
    label ^{:line 238 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (nth p 2)
-   period-payments ^{:line 239 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (filterv ^{:line 240 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (fn [pay] ^{:line 241 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (and ^{:line 241 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (= ^{:line 241 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (payment-status pay) "completed") ^{:line 242 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (>= ^{:line 242 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (payment-processed-at pay) start) ^{:line 243 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (<= ^{:line 243 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (payment-processed-at pay) end))) payments)
-   total ^{:line 245 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (reduce ^{:line 245 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (fn [acc pay] ^{:line 245 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (+ acc ^{:line 245 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (payment-amount pay))) 0 period-payments)]
+   period-payments ^{:line 239 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (filterv ^{:line 240 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (fn [pay] ^{:line 241 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (and ^{:line 241 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (= ^{:line 241 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (billing/payment-status pay) "completed") ^{:line 242 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (>= ^{:line 242 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (billing/payment-processed-at pay) start) ^{:line 243 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (<= ^{:line 243 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (billing/payment-processed-at pay) end))) payments)
+   total ^{:line 245 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (reduce ^{:line 245 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (fn [acc pay] ^{:line 245 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (+ acc ^{:line 245 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (billing/payment-amount pay))) 0 period-payments)]
   ^{:line 247 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (->PeriodMetric label "collections" total))) periods))
 
 ^{:line 252 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (defn outstanding-by-period [invoices payments periods]
   ^{:line 254 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (mapv ^{:line 254 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (fn [p] ^{:line 255 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (let [label ^{:line 255 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (nth p 2)
-   outstanding ^{:line 256 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (total-outstanding invoices payments)]
+   outstanding ^{:line 256 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (billing/total-outstanding invoices payments)]
   ^{:line 257 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (->PeriodMetric label "outstanding" outstanding))) periods))
 
 ^{:line 262 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (defn invoiced-by-period [invoices periods]
   ^{:line 263 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (mapv ^{:line 263 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (fn [p] ^{:line 264 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (let [start ^{:line 264 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (first p)
    end ^{:line 265 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (second p)
    label ^{:line 266 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (nth p 2)
-   period-invoices ^{:line 267 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (filterv ^{:line 268 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (fn [inv] ^{:line 269 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (and ^{:line 269 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (>= ^{:line 269 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (invoice-issued-at inv) start) ^{:line 270 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (<= ^{:line 270 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (invoice-issued-at inv) end))) invoices)
-   total ^{:line 272 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (reduce ^{:line 272 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (fn [acc inv] ^{:line 272 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (+ acc ^{:line 272 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (invoice-total inv))) 0 period-invoices)]
+   period-invoices ^{:line 267 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (filterv ^{:line 268 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (fn [inv] ^{:line 269 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (and ^{:line 269 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (>= ^{:line 269 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (billing/invoice-issued-at inv) start) ^{:line 270 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (<= ^{:line 270 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (billing/invoice-issued-at inv) end))) invoices)
+   total ^{:line 272 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (reduce ^{:line 272 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (fn [acc inv] ^{:line 272 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (+ acc ^{:line 272 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (billing/invoice-total inv))) 0 period-invoices)]
   ^{:line 274 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (->PeriodMetric label "invoiced" total))) periods))
 
 ^{:line 279 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (defn overdue-count-by-period [invoices periods]
   ^{:line 280 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (mapv ^{:line 280 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (fn [p] ^{:line 281 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (let [end ^{:line 281 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (second p)
    label ^{:line 282 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (nth p 2)
-   overdue ^{:line 283 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (overdue-invoices invoices end)
+   overdue ^{:line 283 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (billing/overdue-invoices invoices end)
    cnt ^{:line 284 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (count overdue)]
   ^{:line 285 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (->PeriodMetric label "overdue-count" cnt))) periods))
 
 ^{:line 290 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (defn collection-rate-by-period [invoices payments periods]
   ^{:line 292 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (mapv ^{:line 292 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (fn [p] ^{:line 293 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (let [label ^{:line 293 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (nth p 2)
-   rate ^{:line 294 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (collection-rate-pct invoices payments)]
+   rate ^{:line 294 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (billing/collection-rate-pct invoices payments)]
   ^{:line 295 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (->PeriodMetric label "collection-rate" rate))) periods))
 
 ^{:line 304 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (defn shipping-cost-by-period [shipments periods]
@@ -331,8 +331,8 @@
 
 ^{:line 632 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (defn kpi-dashboard [orders invoices payments shipments levels products]
   ^{:line 635 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (let [total-rev ^{:line 635 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (ord/total-revenue orders)
-   total-collected ^{:line 636 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (total-revenue-collected payments)
-   total-out ^{:line 637 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (total-outstanding invoices payments)
+   total-collected ^{:line 636 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (billing/total-revenue-collected payments)
+   total-out ^{:line 637 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (billing/total-outstanding invoices payments)
    total-ship ^{:line 638 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (ship/total-shipping-revenue shipments)
    inv-val ^{:line 639 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (inv/total-inventory-value levels products)
    order-cnt ^{:line 640 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (count orders)]
@@ -352,9 +352,9 @@
    ship-rev ^{:line 664 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (ship/total-shipping-revenue shipments)
    avg-ship ^{:line 665 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (ship/avg-shipping-cost shipments)
    avg-delivery ^{:line 666 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (ship/avg-delivery-time-days shipments)
-   coll-rate ^{:line 667 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (collection-rate-pct invoices payments)
-   overdue-cnt ^{:line 668 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (count ^{:line 668 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (overdue-invoices invoices 0))
-   net-rev ^{:line 669 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (net-revenue payments)]
+   coll-rate ^{:line 667 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (billing/collection-rate-pct invoices payments)
+   overdue-cnt ^{:line 668 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (count ^{:line 668 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (billing/overdue-invoices invoices 0))
+   net-rev ^{:line 669 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (billing/net-revenue payments)]
   ^{:line 670 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} {:total-revenue ^{:line 670 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (:total-revenue base) :total-collected ^{:line 670 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (:total-collected base) :total-outstanding ^{:line 670 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (:total-outstanding base) :total-shipping ^{:line 670 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (:total-shipping base) :inventory-value ^{:line 670 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (:inventory-value base) :order-count ^{:line 670 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (:order-count base) :avg-order-value avg-order :total-line-items total-lines :total-units-ordered total-units :total-discounts total-disc :total-tax total-tax :pending-orders pending-cnt :active-orders active-cnt :low-stock-count low-stock-cnt :out-of-stock-count oos-cnt :avg-shipping-cost avg-ship :avg-delivery-days avg-delivery :collection-rate coll-rate :overdue-invoices overdue-cnt :net-revenue net-rev}))
 
 ^{:line 698 :file "/home/tom/code/beagle/experiments/e8-scaled/golden/beagle/analytics.rkt"} (defn period-over-period [metrics metric-name period1 period2]

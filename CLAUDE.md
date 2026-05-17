@@ -59,7 +59,7 @@ it as canonical when explaining the language.
   with compile-time field existence and type checking
 - `defenum` form: `(defenum Name :a :b)` → `(def Name-values #{:a :b})`
 - Exhaustive match warnings: match on record types warns about missing cases
-- 315 tests passing
+- 331 tests passing
 - Empirical benchmarks: 40 tasks, 3 variants, head-to-head against raw Clojure,
   refactoring and bug-detection experiments — 5 real bugs caught
 - Type-system query tools: beagle-sig, beagle-fields, beagle-callers,
@@ -101,6 +101,7 @@ parse → check → emit
 - `private/query.rkt` — type-system query engine for `beagle-sig`,
   `beagle-fields`, `beagle-callers`, `beagle-provides`, `beagle-impact`.
 - `private/blame.rkt` — semantic property rules + static suspicion analysis.
+- `private/daemon.rkt` — persistent query server (TCP, AST cache with mtime invalidation, 45× query speedup).
 - `private/check-all.rkt` — batch type-checker (10x vs sequential `beagle-check`).
 - `private/build-all.rkt` — batch compiler (9x vs sequential `beagle-build`).
 - `main.rkt` — language module; `#%module-begin` runs the pipeline,
@@ -130,11 +131,12 @@ parse → check → emit
 - `bin/beagle-proptest SOURCE-DIR [--run] [--build-dir DIR]` — auto-generate property tests from type information (record round-trips, scalar constraints)
 - `bin/beagle-cascade SOURCE-DIR VERIFY [--modified fn1,...] [--from-failures]` — call graph impact prediction and cascade root-cause analysis
 - `bin/beagle-oracle GOLDEN-DIR [--out FILE] [--diff MODIFIED-DIR]` — behavioral oracle synthesis (golden code IS the test spec)
-- `bin/beagle-sig FN-NAME FILE-OR-DIR...` — print a function's typed signature
-- `bin/beagle-fields RECORD FILE-OR-DIR...` — print record fields, types, and accessors
-- `bin/beagle-callers FN-NAME FILE-OR-DIR...` — find all call sites of a function
-- `bin/beagle-provides FILE-OR-DIR...` — list all exports with types from a module
-- `bin/beagle-impact FN-NAME FILE-OR-DIR...` — show callers and impact of changing a signature
+- `bin/beagle-daemon start|stop|status|query CMD` — persistent query server (45× faster than cold tools)
+- `bin/beagle-sig FN-NAME FILE-OR-DIR...` — print a function's typed signature (daemon-accelerated)
+- `bin/beagle-fields RECORD FILE-OR-DIR...` — print record fields, types, and accessors (daemon-accelerated)
+- `bin/beagle-callers FN-NAME FILE-OR-DIR...` — find all call sites of a function (daemon-accelerated)
+- `bin/beagle-provides FILE-OR-DIR...` — list all exports with types from a module (daemon-accelerated)
+- `bin/beagle-impact FN-NAME FILE-OR-DIR...` — show callers and impact of changing a signature (daemon-accelerated)
 - `raco test tests/` — test suite
 - `experiments/` — benchmark framework (see `experiments/README.md`)
 

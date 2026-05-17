@@ -45,11 +45,10 @@ echo "=== Phase 1: Running oracle ===" >&2
 
 FAILURES_FILE="$WORK_DIR/failures.txt"
 
-clojure -Sdeps "{:paths [\"$BUILD_DIR\"]}" \
-    -M -e "(load-file \"$VERIFY_SCRIPT\")" 2>&1 \
+bb -cp "$BUILD_DIR" -e "(load-file \"$VERIFY_SCRIPT\")" 2>&1 \
     | grep -A2 "^FAIL:" > "$FAILURES_FILE" || true
 
-FAIL_COUNT=$(grep -c "^FAIL:" "$FAILURES_FILE" || echo 0)
+FAIL_COUNT="$(grep -c "^FAIL:" "$FAILURES_FILE" 2>/dev/null)" || FAIL_COUNT=0
 echo "  Found $FAIL_COUNT failing assertions" >&2
 
 if [[ "$FAIL_COUNT" -eq 0 ]]; then
@@ -303,7 +302,8 @@ def generate_candidates(failure):
                 prefix = accessor.rsplit('-id', 1)[0]
                 for alt_suffix in ['base-rate', 'base-fee', 'cost', 'rate', 'amount', 'fee']:
                     alt_accessor = f'{prefix}-{alt_suffix}'
-                    if f'(defn {alt_accessor}' in raw_content_full:
+                    # Exact match: (defn name followed by space or [
+                    if re.search(r'\(defn ' + re.escape(alt_accessor) + r'[\s\[]', raw_content_full):
                         candidates.append({
                             'label': label,
                             'module': module,
@@ -356,6 +356,47 @@ def generate_candidates(failure):
                     'type': 'plus-to-times',
                 })
 
+    # Strategy 6: wrong comparator (> vs <) — actual==0 or boolean inversion
+    # For filterv predicates where the comparison is inverted
+    if actual == '0' and expected != '0':
+        # Look for (> ...) or (< ...) in filter predicates within this function
+        # or in functions this function calls (within the same module)
+        # First: check functions called by fn_name
+        called_fns = set()
+        for i in range(start, end):
+            cl = clean_lines[i]
+            for m in re.finditer(r'\(([a-z][\w-]*)\s', cl):
+                called_fns.add(m.group(1))
+
+        # For each called function in this module, look for comparator flips
+        for called_fn in called_fns:
+            c_start, c_end = find_function_range(clean_lines, called_fn)
+            if c_start == 0 and c_end == len(clean_lines) and called_fn != fn_name:
+                continue  # not found
+            for i in range(c_start, c_end):
+                cl = clean_lines[i]
+                # Look for (> X Y) that could be (< X Y)
+                for m in re.finditer(r'\(>\s+(\([^)]+\)|\S+)\s+(\([^)]+\)|\S+)\)', cl):
+                    arg1 = m.group(1)
+                    arg2 = m.group(2)
+                    candidates.append({
+                        'label': label,
+                        'module': module,
+                        'fn_name': called_fn,
+                        'line': i + 1,
+                        'line_idx': i,
+                        'search': f'(> {arg1} {arg2})',
+                        'replace': f'(< {arg1} {arg2})',
+                        'description': f'comparator flip in {called_fn}: `(> {arg1} {arg2})` -> `(< {arg1} {arg2})`',
+                        'confidence': 0.75,
+                        'type': 'comparator-flip',
+                    })
+
+    # Strategy 7: swapped cond values
+    # Detect: two failures in same fn with reciprocal expected/actual
+    # e.g., gold expects 15, gets 5; bronze expects 5, gets 15
+    # This is hard to do per-failure, so we handle it via a cross-failure check below
+
     return candidates
 
 # ---------------------------------------------------------------------------
@@ -363,54 +404,66 @@ def generate_candidates(failure):
 # ---------------------------------------------------------------------------
 
 def apply_fix_to_file(src_path, dst_path, candidate):
-    """Apply a candidate fix, handling metadata annotations in the source."""
+    """Apply a candidate fix, handling metadata annotations in the source.
+
+    Uses line_idx to target the correct line, avoiding accidental matches
+    elsewhere in the file.
+    """
     with open(src_path) as f:
         raw_lines = f.readlines()
+
+    # Special case: value-swap (swap two values on different lines)
+    if candidate.get('type') == 'value-swap':
+        line1_idx, line2_idx = candidate['swap_lines']
+        val1, val2 = candidate['swap_values']
+        if 0 <= line1_idx < len(raw_lines) and 0 <= line2_idx < len(raw_lines):
+            # Use a placeholder to avoid double-swap
+            placeholder = '__SPECFIX_PLACEHOLDER__'
+            raw_lines[line1_idx] = re.sub(
+                r'(?<![0-9])' + re.escape(val1) + r'(?![0-9])',
+                placeholder, raw_lines[line1_idx], count=1)
+            raw_lines[line2_idx] = re.sub(
+                r'(?<![0-9])' + re.escape(val2) + r'(?![0-9])',
+                val1, raw_lines[line2_idx], count=1)
+            raw_lines[line1_idx] = raw_lines[line1_idx].replace(placeholder, val2)
+            with open(dst_path, 'w') as f:
+                f.writelines(raw_lines)
+            return True
+        return False
 
     target_line_idx = candidate['line_idx']
     search_text = candidate['search']
     replace_text = candidate['replace']
 
-    # First try: exact match in the raw file (works for simple patterns like "pending")
-    raw_content = ''.join(raw_lines)
-    if search_text in raw_content:
-        fixed = raw_content.replace(search_text, replace_text, 1)
-        with open(dst_path, 'w') as f:
-            f.write(fixed)
-        return True
+    # Strategy A: try exact match on the target line first
+    if 0 <= target_line_idx < len(raw_lines):
+        raw_line = raw_lines[target_line_idx]
+        if search_text in raw_line:
+            raw_lines[target_line_idx] = raw_line.replace(search_text, replace_text, 1)
+            with open(dst_path, 'w') as f:
+                f.writelines(raw_lines)
+            return True
 
-    # Second try: metadata-aware replacement on the target line
-    # Strip metadata from the target line, do the replacement, then rebuild
-    # But we need to handle the case where the pattern spans metadata annotations
-    #
-    # Strategy: build a regex that matches the search_text with optional metadata
-    # between every token. E.g., "(- X Y)" becomes "(- <meta?>X <meta?>Y)"
-
-    # For the target line, try stripping metadata and replacing
+    # Strategy B: metadata-aware replacement on the target line
+    # The search_text is what the CLEAN line looks like; the raw line has metadata
     if 0 <= target_line_idx < len(raw_lines):
         raw_line = raw_lines[target_line_idx]
         clean_line = strip_meta(raw_line)
 
         if search_text in clean_line:
-            # Build metadata-aware regex from the search pattern
-            # Split search into tokens and allow metadata between them
+            # Build a flexible regex that allows metadata between tokens
             meta_opt = r'(?:\^\{[^}]*\}\s*)?'
 
-            # Escape regex special chars in the search text
-            # Then insert optional metadata between each meaningful boundary
+            # Tokenize the search text and build regex
             escaped = re.escape(search_text)
-            # Allow metadata between any space or before parens
-            # Replace escaped spaces with: space + optional_metadata
+            # Allow metadata between spaces
             flexible_pattern = escaped.replace(r'\ ', r'\s+' + meta_opt)
-            # Also allow metadata after opening parens
+            # Allow metadata after opening parens
             flexible_pattern = flexible_pattern.replace(r'\(', r'\(' + meta_opt)
 
             try:
                 m = re.search(flexible_pattern, raw_line)
                 if m:
-                    # Replace the matched span with the replacement
-                    # But we need to preserve any metadata in the replacement
-                    # Simple approach: just replace the matched region with the replacement text
                     new_line = raw_line[:m.start()] + replace_text + raw_line[m.end():]
                     raw_lines[target_line_idx] = new_line
                     with open(dst_path, 'w') as f:
@@ -419,13 +472,28 @@ def apply_fix_to_file(src_path, dst_path, candidate):
             except re.error:
                 pass
 
-    # Third try: strip ALL metadata from the file, then do the replacement
+    # Strategy C: strip all metadata from the entire file, do replacement
+    # (last resort — loses metadata but preserves logic)
+    raw_content = ''.join(raw_lines)
     stripped_content = strip_meta(raw_content)
     if search_text in stripped_content:
-        fixed = stripped_content.replace(search_text, replace_text, 1)
-        with open(dst_path, 'w') as f:
-            f.write(fixed)
-        return True
+        # To avoid wrong-line hits, use the clean content split by lines
+        clean_lines_all = stripped_content.split('\n')
+        if 0 <= target_line_idx < len(clean_lines_all):
+            cl = clean_lines_all[target_line_idx]
+            if search_text in cl:
+                clean_lines_all[target_line_idx] = cl.replace(search_text, replace_text, 1)
+                with open(dst_path, 'w') as f:
+                    f.write('\n'.join(clean_lines_all))
+                return True
+        # If not on exact line, try nearby lines (function might span multiple)
+        for offset in range(-3, 4):
+            idx = target_line_idx + offset
+            if 0 <= idx < len(clean_lines_all) and search_text in clean_lines_all[idx]:
+                clean_lines_all[idx] = clean_lines_all[idx].replace(search_text, replace_text, 1)
+                with open(dst_path, 'w') as f:
+                    f.write('\n'.join(clean_lines_all))
+                return True
 
     return False
 
@@ -437,8 +505,8 @@ def run_oracle(build_dir_path, verify_path):
     """Run oracle, return set of failing labels (or None on error)."""
     try:
         result = subprocess.run(
-            ['clojure', '-Sdeps', f'{{:paths ["{build_dir_path}"]}}',
-             '-M', '-e', f'(load-file "{verify_path}")'],
+            ['bb', '-cp', build_dir_path,
+             '-e', f'(load-file "{verify_path}")'],
             capture_output=True, text=True, timeout=120
         )
         output = result.stdout + result.stderr
@@ -461,6 +529,63 @@ print("=== Phase 2: Generating candidates ===", file=sys.stderr)
 all_candidates = []
 for failure in failures:
     all_candidates.extend(generate_candidates(failure))
+
+# Cross-failure strategy: swapped cond values
+# Detect pairs where fn_name is the same, and expected/actual are swapped
+# e.g., "cust/tier-discount-pct gold" expects 15, gets 5
+#        "cust/tier-discount-pct bronze" expects 5, gets 15
+from itertools import combinations
+by_function = {}
+for f in failures:
+    fn = label_to_function(f['label'])
+    mod = label_to_module(f['label'])
+    if fn and mod:
+        key = (mod, fn)
+        by_function.setdefault(key, []).append(f)
+
+for (mod, fn), group in by_function.items():
+    if len(group) < 2:
+        continue
+    for f1, f2 in combinations(group, 2):
+        # Check if expected/actual are swapped
+        if (f1['expected'] == f2['actual'] and f1['actual'] == f2['expected']
+                and f1['expected'] is not None and f2['expected'] is not None):
+            # Values are swapped! Generate a candidate that swaps the literal values
+            # in the cond/case within the function
+            path, raw_lines, clean_lines = read_module(mod)
+            if path is None:
+                continue
+            start, end = find_function_range(clean_lines, fn)
+            val1 = f1['expected']
+            val2 = f2['expected']
+            # Find lines with these values and swap them
+            line_with_val1 = None
+            line_with_val2 = None
+            for i in range(start, end):
+                cl = clean_lines[i]
+                # In a cond, return values appear after `) value` at end of line/before next clause
+                # Pattern: `...) VAL` where VAL is our target
+                # Look for the value as a trailing token (after a closing paren)
+                if re.search(r'\)\s+' + re.escape(val1) + r'\s*$', cl) and line_with_val1 is None:
+                    line_with_val1 = i
+                if re.search(r'\)\s+' + re.escape(val2) + r'\s*$', cl) and line_with_val2 is None:
+                    line_with_val2 = i
+            if line_with_val1 is not None and line_with_val2 is not None and line_with_val1 != line_with_val2:
+                # Generate a two-line swap candidate
+                all_candidates.append({
+                    'label': f1['label'],
+                    'module': mod,
+                    'fn_name': fn,
+                    'line': line_with_val1 + 1,
+                    'line_idx': line_with_val1,
+                    'search': f'__SWAP__{val1}__{val2}__',  # special marker
+                    'replace': f'__SWAP__{val2}__{val1}__',
+                    'description': f'swap values in cond: `{val1}` <-> `{val2}`',
+                    'confidence': 0.80,
+                    'type': 'value-swap',
+                    'swap_lines': (line_with_val1, line_with_val2),
+                    'swap_values': (val1, val2),
+                })
 
 # Deduplicate by (module, search, replace)
 seen = set()
@@ -550,5 +675,11 @@ for fix in verified_fixes:
     print(f"  assertions-fixed: {fix['fixes_count']}")
     print(f"  remaining-failures: {fix['remaining_failures']}")
     print()
+
+# Summary
+modules_fixed = len(set(f['module'] for f in verified_fixes))
+print(f"---")
+print(f"Summary: {len(verified_fixes)} verified fixes across {modules_fixed} modules")
+print(f"  Bug types found: {', '.join(sorted(set(f['type'] for f in verified_fixes)))}")
 
 PYEOF

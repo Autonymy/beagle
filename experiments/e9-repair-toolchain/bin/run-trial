@@ -79,9 +79,9 @@ fi
 echo "Trial complete. Verify result:" >&2
 if [[ "$TRACK" == "beagle" ]]; then
     "$BEAGLE_BIN/beagle-build-all" --warn *.rkt --out .build/ 2>/dev/null
-    RESULT=$(clojure -Sdeps '{:paths [".build"]}' -M -e "(load-file \"$E8_DIR/verify/e8-full.verify.clj\")" 2>&1 | tail -1)
+    RESULT=$(bb -cp .build -e "(load-file \"$E8_DIR/verify/e8-full.verify.clj\")" 2>&1 | tail -1)
 else
-    RESULT=$(clojure -Sdeps '{:paths ["."]}' -M -e "(load-file \"$E8_DIR/verify/e8-full.verify.clj\")" 2>&1 | tail -1)
+    RESULT=$(bb -cp . -e "(load-file \"$E8_DIR/verify/e8-full.verify.clj\")" 2>&1 | tail -1)
 fi
 echo "  $RESULT" >&2
 echo "$RESULT" > verify-result.txt

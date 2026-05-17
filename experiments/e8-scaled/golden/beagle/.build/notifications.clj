@@ -1,8 +1,8 @@
 (ns notifications
-  (:require [customers :refer :all :as cust]
-            [orders :refer :all :as ord]
-            [shipping :refer :all :as ship]
-            [billing :refer :all]))
+  (:require [customers :as cust]
+            [orders :as ord]
+            [shipping :as ship]
+            [billing :as billing]))
 
 ;; NotificationId : Long (scalar)
 

@@ -119,10 +119,10 @@
   (check-true (matches? #rx":require" out))
   (check-true (matches? #rx"\\[beagle\\.example\\.helpers :as h\\]" out)))
 
-(test-case "require without alias emits refer-all"
+(test-case "require without alias emits :as with module name"
   (define out (compile '(require beagle.helpers)
                        '(def x 1)))
-  (check-true (matches? #rx"\\[beagle\\.helpers :refer :all\\]" out)))
+  (check-true (matches? #rx"\\[beagle\\.helpers :as helpers\\]" out)))
 
 (test-case "clojure namespace require emits in ns :require"
   (define out (compile '(require clojure.string :as str)
@@ -505,3 +505,19 @@
   (check-true (matches? #rx":red" out))
   (check-true (matches? #rx":green" out))
   (check-true (matches? #rx":blue" out)))
+
+;; --- varargs emission --------------------------------------------------------
+
+(test-case "defn with & rest emits Clojure varargs"
+  (define out (compile '(defn my-sum [(x : Long) & (rest : Long)] : Long
+                          (+ x (reduce + 0 rest)))))
+  (check-true (matches? #rx"\\(defn my-sum \\[x & rest\\]" out)))
+
+(test-case "fn with & rest emits varargs"
+  (define out (compile '(def f : Any (fn [(a : Long) & (b : Long)] (+ a 1)))))
+  (check-true (matches? #rx"\\(fn \\[a & b\\]" out)))
+
+(test-case "defn with only & rest and no fixed params"
+  (define out (compile '(defn log-it [& (msgs : String)] : String
+                          (clojure.string/join ", " msgs))))
+  (check-true (matches? #rx"\\(defn log-it \\[& msgs\\]" out)))

@@ -16,6 +16,8 @@
 (define current-emit-target (make-parameter 'clj))
 ;; Scalar constructors/accessors that erase to identity at runtime
 (define current-emit-scalar-fns (make-parameter (set)))
+;; Unqualified imported symbol → module prefix (for qualifying in output)
+(define current-emit-symbol-ns (make-parameter (hasheq)))
 
 (define (emit-srcloc loc)
   (define src (src-loc-source loc))
@@ -62,7 +64,8 @@
                  [current-emit-record-fields (build-record-field-table prog)]
                  [current-emit-record-ns (program-imported-record-ns prog)]
                  [current-emit-target (program-target prog)]
-                 [current-emit-scalar-fns (build-scalar-fns prog)])
+                 [current-emit-scalar-fns (build-scalar-fns prog)]
+                 [current-emit-symbol-ns (program-imported-symbol-ns prog)])
     (string-append
      (emit-ns prog)
      "\n\n"
@@ -102,16 +105,17 @@
 
 (define (emit-require r)
   (define ns (require-entry-ns r))
-  (define is-beagle-module?
-    (for/or ([(rec-name mod-ns) (in-hash (current-emit-record-ns))])
-      (eq? mod-ns ns)))
   (cond
-    [(and (require-entry-alias r) is-beagle-module?)
-     (format "[~a :refer :all :as ~a]" ns (require-entry-alias r))]
     [(require-entry-alias r)
      (format "[~a :as ~a]" ns (require-entry-alias r))]
     [else
-     (format "[~a :refer :all]" ns)]))
+     (define ns-str (symbol->string ns))
+     (define last-seg
+       (let ([idx (for/last ([i (in-range (string-length ns-str))]
+                             #:when (char=? (string-ref ns-str i) #\.))
+                    i)])
+         (if idx (substring ns-str (+ idx 1)) ns-str)))
+     (format "[~a :as ~a]" ns last-seg)]))
 
 ;; Split a fully-qualified Java class symbol like 'java.io.File into
 ;; package ("java.io") and class name ("File"), then emit Clojure-style
@@ -147,14 +151,14 @@
     [(defn-form? f)
      (format "(defn ~a [~a]\n  ~a)"
              (defn-form-name f)
-             (emit-params (defn-form-params f))
+             (emit-params-with-rest (defn-form-params f) (defn-form-rest-param f))
              (emit-body (defn-form-body f) "  "))]
 
     [(defn-multi? f)
      (define arity-strs
        (for/list ([a (in-list (defn-multi-arities f))])
          (format "  ([~a]\n    ~a)"
-                 (emit-params (arity-clause-params a))
+                 (emit-params-with-rest (arity-clause-params a) (arity-clause-rest-param a))
                  (emit-body (arity-clause-body a) "    "))))
      (format "(defn ~a\n~a)" (defn-multi-name f) (string-join arity-strs "\n"))]
 
@@ -269,7 +273,7 @@
              (emit-body (for-form-body e) "  "))]
     [(fn-form? e)
      (format "(fn [~a] ~a)"
-             (emit-params (fn-form-params e))
+             (emit-params-with-rest (fn-form-params e) (fn-form-rest-param e))
              (emit-body (fn-form-body e) "  "))]
     [(method-call? e)
      (format "(~a ~a~a)"
@@ -327,8 +331,14 @@
              (= 1 (length (call-form-args e))))
         (emit-expr (car (call-form-args e)))]
        [else
+        (define sym-str (symbol->string fn-sym))
+        (define qualified-str
+          (let ([mod-prefix (hash-ref (current-emit-symbol-ns) fn-sym #f)])
+            (if (and mod-prefix (not (string-contains? sym-str "/")))
+                (string-append (symbol->string mod-prefix) "/" sym-str)
+                sym-str)))
         (format "(~a~a)"
-                (symbol->string fn-sym)
+                qualified-str
                 (emit-args (call-form-args e)))])]
     [else (error 'beagle-emit "don't know how to emit: ~v" e)]))
 
@@ -496,6 +506,14 @@
 
 (define (emit-params params)
   (string-join (map emit-param params) " "))
+
+(define (emit-params-with-rest params rest-p)
+  (define fixed (emit-params params))
+  (if rest-p
+      (if (string=? fixed "")
+          (format "& ~a" (emit-param rest-p))
+          (format "~a & ~a" fixed (emit-param rest-p)))
+      fixed))
 
 (define (emit-let-bindings bindings)
   (string-join

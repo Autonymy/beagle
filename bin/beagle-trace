@@ -253,8 +253,7 @@ PATCHEOF
 
 echo "=== Phase 3: Running traced oracle ===" >&2
 
-clojure -Sdeps "{:paths [\"$WORK_DIR\"]}" \
-    -M -e "(load-file \"$WORK_DIR/traced-verify.clj\")" 2>&1
+bb -cp "$WORK_DIR" -e "(load-file \"$WORK_DIR/traced-verify.clj\")" 2>&1
 
 echo "" >&2
 echo "=== beagle-trace complete ===" >&2

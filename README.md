@@ -2,166 +2,160 @@
 
 > follow your nose
 
-A typed authoring layer for Clojure. Compile-time type checking, hygienic
-macros with safe/unsafe boundaries, custom `#lang`, and full Clojure
-ecosystem access via emitted `.clj` source.
+A typed authoring layer for Clojure that minimizes repair distance for
+LLM agents. Compile-time type checking, a repair compiler toolchain,
+and persistent query infrastructure — all designed so AI can find and
+fix bugs faster than untyped alternatives.
 
-**LLM authoring is a first-class concern.** Rich types, explicit forms, low
-syntactic surface area, structured errors. One canonical idiom per concept.
+**LLM authoring is a first-class concern.** Rich types, explicit forms,
+low syntactic surface area, structured errors. One canonical idiom per
+concept. The type system is a query interface, not a proof obligation.
 
-## Why
+## Status
 
-Clojure has macros and a thriving ecosystem (Datomic, Datascript, JVM, CLJS)
-but no native static types. Beagle is a Racket-frontend dialect that
-compiles to Clojure source — Racket's macro and type-checking machinery up
-front; Clojure's runtime ecosystem behind.
+`#lang beagle` v0.3 — 331 tests passing, empirically validated at 8500
+LOC scale.
 
-## What works today
+**Key result (E4):** At 13 modules / 8570 LOC / 35 injected bugs,
+beagle achieves 3/3 correctness passes vs clojure's 0/3 — the first
+reproducible divergence where types produce measurably better outcomes.
 
-`#lang beagle` v0 — end-to-end working, empirically validated (229 tests):
+## Architecture
 
-**Forms:**
-`def`, `defn`, `fn`, `let`, `if`, `cond`, `when`, `do`, `loop`/`recur`,
-`for` (with `:when`), `doseq`, `try`/`catch`/`finally`, `case`,
-`defrecord`, constructor calls (`ClassName.`), function calls, vector
-literals, map literals (`{}`), set literals (`#{}`), quote
+```
+source.rkt → parse → check → emit → output.clj
+                ↑
+      repair compiler (blame, trace, specfix, cascade)
+                ↑
+          daemon (persistent AST cache, 45× query speedup)
+```
 
-**Meta:**
-`ns`, `define-mode`, `require`, `declare-extern`, `define-macro`, `import`,
-`unsafe` (top-level and expression position)
+## What works
+
+**Language:**
+`def`, `defn` (single + multi-arity), `fn`, `let`, `if`, `cond`,
+`when`, `do`, `match`, `loop`/`recur`, `for`/`doseq`, `try`/`catch`,
+`case`, `defrecord`, `with` (typed record update), `defenum`,
+`defprotocol`, `defmulti`/`defmethod`, `deftype`, `extend-type`,
+threading (`->`, `->>`), map/set literals, keyword-as-function,
+destructuring (map + sequential), `defscalar` (nominal wrappers)
 
 **Types:**
-Primitives (`String`, `Long`, `Double`, `Boolean`, `Keyword`, `Symbol`,
-`Nil`, `Any`), function types (`[A B -> R]`, variadic `[A & T -> R]`),
-parametric (`(Vec T)`, `(Map K V)`, `(Set T)`, `(List T)`), union (`(U A B)`),
-polymorphic (`forall`), user-defined record types
+Primitives, function types (variadic), parametric (`Vec`, `Map`, `Set`),
+union, nullable sugar (`String?`), polymorphic (`forall`), user records,
+nominal scalars. Flow-sensitive narrowing in `if`/`cond`/`when`.
 
-**Type checking:**
-Annotations against literals and known returns, arity checking (incl.
-variadic), flow-sensitive narrowing in `if`/`cond`/`when`, cross-file
-type import via `(require module)`, ~100 pre-typed stdlib functions
+**Stdlib:** ~607 Clojure functions pre-typed. Key HOFs polymorphic.
 
-**Macros:**
-`(define-macro safe ...)` — expansion re-checked by type system.
-`(define-macro unsafe ...)` — expansion typed as `Any` (escape boundary).
-Gensym-hygienic, `&rest` params, `(splice ...)` for list inlining.
+**Cross-module:** `(require module :as alias)` imports types, records,
+constructors, accessors, macros. All validated at call sites.
 
-**Java interop:**
-`.method` calls, `Class/staticMethod`, `*dynamic-vars*`, `(import java.io.File)`,
-constructor calls (`ClassName.`). ~30 common methods/statics pre-typed.
+**Diagnostics:** Rust-style error display with source lines, signatures,
+"did you mean?" suggestions. JSON mode for zero-tool-call bug fixes.
 
-**Reader:**
-Custom readtable preserving `[]` vs `()`, intercepting `{}` and `#{}` as
-map/set literals, `#"..."` regex literals.
+## Repair compiler
 
-## A sample beagle program
+The repair compiler closes the loop: agent writes code → evidence
+system produces a ranked repair queue → agent applies fixes → done.
+
+| Tool | Purpose | Speed |
+|------|---------|-------|
+| `beagle-repair` | Unified pipeline: type errors + blame + specfix → ranked queue | ~5s with daemon |
+| `beagle-trace` | Per-assertion arithmetic trace — exact divergence point | ~0.5s/assertion |
+| `beagle-specfix` | Oracle-guided candidate fixes (verified, not suggested) | ~5s with bb |
+| `beagle-cascade` | Call graph impact — find root causes, not symptoms | <1s |
+| `beagle-blame` | Ratio analysis: sign error, wrong operator, missing term | <1s |
+| `beagle-oracle` | Generate oracle from golden code (golden = test spec) | ~0.5s with bb |
+
+## Query tools (daemon-accelerated)
+
+The type system is a query interface for agents:
+
+```bash
+beagle-sig order-total .           # [Order -> Amount]
+beagle-fields Invoice .            # id, order-id, total, status...
+beagle-callers order-total .       # all call sites + arg counts
+beagle-provides billing.rkt        # full module export list
+beagle-impact order-total .        # callers + downstream effects
+```
+
+With daemon running: 10ms per query (vs 450ms cold).
+
+## Daemon
+
+`beagle-daemon start` launches a persistent Racket process that caches
+parsed ASTs with mtime invalidation. Query tools transparently route
+through it when running, fall back to cold Racket when not.
+
+```bash
+beagle-daemon start     # TCP server, ephemeral port
+beagle-daemon status    # JSON: cached file count, uptime
+beagle-daemon stop      # graceful shutdown
+```
+
+Oracle runs use Babashka (`bb`) instead of JVM Clojure: 0.18s vs 2.14s
+for 484 assertions.
+
+## Build & check
+
+```bash
+bin/beagle-build-all *.rkt --out .build/   # batch compile (9× vs sequential)
+bin/beagle-check-all .                      # batch type-check (10× vs sequential)
+bin/beagle-build source.rkt [out.clj]       # single file
+bin/beagle-check source.rkt                 # type-check only
+bin/beagle-expand source.rkt                # post-macro expansion
+```
+
+## A sample program
 
 ```racket
 #lang beagle
+(ns inventory.core)
+(define-mode strict)
+(require catalog :as cat)
 
-(ns beagle.example.hello)
+(defscalar WarehouseId Long)
 
-(import java.io.File)
+(defrecord StockLevel [(warehouse-id : WarehouseId)
+                       (product-id : cat/ProductId)
+                       (quantity : Long)
+                       (min-quantity : Long)])
 
-(def greeting : String "hello, world")
+(defn understocked? [(s : StockLevel)] : Boolean
+  (< (stocklevel-quantity s) (stocklevel-min-quantity s)))
 
-(defn add [(x : Long) (y : Long)] : Long
-  (+ x y))
-
-(defn pick [(n : Long)] : String
-  (cond
-    [(< n 0)  "negative"]
-    [(= n 0)  "zero"]
-    [(> n 0)  "positive"]))
-
-(defn safe-parse [(s : String)] : Long
-  (try
-    (Long/parseLong s)
-    (catch Exception e -1)))
-
-(def config {:name "beagle" :version 1})
-
-(define-macro safe inc1 (x)
-  (+ x 1))
-
-(defn use-it [(n : Long)] : Long
-  (inc1 n))
-```
-
-Compiles to:
-
-```clojure
-(ns beagle.example.hello
-  (:import [java.io File]))
-
-(def greeting "hello, world")
-
-(defn add [x y]
-  (+ x y))
-
-(defn pick [n]
-  (cond
-  (< n 0) "negative"
-  (= n 0) "zero"
-  (> n 0) "positive"))
-
-(defn safe-parse [s]
-  (try
-  (Long/parseLong s)
-  (catch Exception e
-    -1)))
-
-(def config {:name "beagle" :version 1})
-
-(defn use-it [n]
-  (+ n 1))
-```
-
-## Build
-
-```
-bin/beagle-build examples/hello.rkt [output.clj]
-bin/beagle-build-all [dir]          # compile every .rkt in tree
-bin/beagle-expand examples/hello.rkt  # show post-macro source
-bin/beagle-check examples/hello.rkt   # type-check only, no emit
-```
-
-Or via raco:
-
-```
-raco beagle build examples/hello.rkt
-raco beagle check examples/hello.rkt
-raco beagle expand examples/hello.rkt
-```
-
-## Run tests
-
-```
-raco test tests/
+(defn reorder-quantity [(s : StockLevel)] : Long
+  (if (understocked? s)
+      (- (stocklevel-min-quantity s) (stocklevel-quantity s))
+      0))
 ```
 
 ## Escape hatches
 
-Four levels, narrowest to widest:
-
-1. **`(unsafe "raw clojure")`** — emit a literal string of Clojure verbatim.
-2. **`(define-macro unsafe NAME ...)`** — macro whose expansion is typed
-   as `Any`.
-3. **`(define-mode dynamic)`** — skip all type checking for a file.
-4. **Hand-written `.clj` files** — the module boundary itself is an escape
-   hatch.
+1. `(unsafe "raw clojure")` — literal Clojure string
+2. `(define-macro unsafe ...)` — macro expansion typed as `Any`
+3. `(define-mode dynamic)` — skip type checking for a file
+4. Hand-written `.clj` — the module boundary is an escape hatch
 
 ## Setup
 
-Requires [Racket](https://racket-lang.org/). One-time install:
+Requires [Racket](https://racket-lang.org/) and [Babashka](https://babashka.org/).
 
 ```
 raco pkg install --link --auto /path/to/beagle
 ```
 
+## Tests
+
+```
+raco test tests/
+```
+
 ## Reference
 
 - `docs/cheatsheet.md` — single-page LLM-grounding reference
+- `docs/agent-workflow.md` — decision tree for repair tool routing
 - `docs/forms.md` — canonical form catalog
 - `docs/todo.md` — roadmap and completed work
-- `experiments/README.md` — benchmark framework
+- `docs/devlog/` — development journal (discoveries + experiments)
+- `experiments/` — benchmark framework (E1–E9)

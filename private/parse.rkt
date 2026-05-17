@@ -120,10 +120,10 @@
 (struct ns-decl     (name)                                  #:transparent)
 (struct mode-decl   (mode)                                  #:transparent)
 (struct def-form    (name type value)                       #:transparent)
-(struct defn-form   (name params return-type body)          #:transparent)
+(struct defn-form   (name params rest-param return-type body) #:transparent)
 (struct defn-multi  (name arities)                           #:transparent)
-(struct arity-clause (params return-type body)               #:transparent)
-(struct fn-form     (params return-type body)               #:transparent)
+(struct arity-clause (params rest-param return-type body)    #:transparent)
+(struct fn-form     (params rest-param return-type body)    #:transparent)
 (struct let-form    (bindings body)                         #:transparent)
 (struct if-form     (cond-expr then-expr else-expr)         #:transparent)
 (struct cond-form   (clauses)                               #:transparent)
@@ -199,6 +199,7 @@
                  imported-record-field-order ; hash: record-name → (listof string?) [definition order]
                  imported-record-ns ; hash: record-name → module-ns-symbol
                  imported-scalar-fns ; set of symbols (scalar ctors/accessors from imports)
+                 imported-symbol-ns ; hash: unqualified-symbol → module-prefix-symbol
                  target)        ; 'clj or 'cljs
   #:transparent)
 
@@ -278,12 +279,15 @@
   (list->string (map char-downcase (string->list s))))
 
 (define (import-module-types! mod-path prefix externs registry imp-rec-fields imp-rec-field-order imp-rec-ns mod-ns
-                              #:scalar-fns [imp-scalar-fns #f])
+                              #:scalar-fns [imp-scalar-fns #f]
+                              #:symbol-ns [imp-symbol-ns #f])
   (define datums (read-beagle-datums mod-path))
   (define (reg! name type)
     (hash-set! externs (qualify-name prefix name) type)
     (unless (hash-has-key? externs name)
-      (hash-set! externs name type)))
+      (hash-set! externs name type))
+    (when imp-symbol-ns
+      (hash-set! imp-symbol-ns name prefix)))
   (for ([d (in-list datums)])
     (match d
       [(list 'declare-extern (? symbol? name) type-expr)
@@ -330,14 +334,16 @@
       [(list 'def (? symbol? name) ': type-expr _)
        (reg! name (parse-type type-expr))]
       [(list 'defn (? symbol? name) params-form ': ret-type body ...)
-       (define parsed (parse-params params-form))
+       (define-values (parsed rest-p) (parse-params params-form))
        (define ptypes (map (lambda (p) (or (param-type p) (type-prim 'Any))) parsed))
-       (reg! name (type-fn ptypes #f (parse-type ret-type)))]
+       (define rtype (and rest-p (or (param-type rest-p) (type-prim 'Any))))
+       (reg! name (type-fn ptypes rtype (parse-type ret-type)))]
       [(list 'defn (? symbol? name) params-form body ...)
        #:when (or (null? body) (not (eq? (car body) ':)))
-       (define parsed (parse-params params-form))
+       (define-values (parsed rest-p) (parse-params params-form))
        (define ptypes (map (lambda (p) (or (param-type p) (type-prim 'Any))) parsed))
-       (reg! name (type-fn ptypes #f (type-prim 'Any)))]
+       (define rtype (and rest-p (or (param-type rest-p) (type-prim 'Any))))
+       (reg! name (type-fn ptypes rtype (type-prim 'Any)))]
       [_ (void)])))
 
 ;; --- entry point -----------------------------------------------------------
@@ -360,6 +366,7 @@
   (define requires  '())
   (define imports   '())
   (define imp-scalar-fns (make-hash))
+  (define imp-symbol-ns (make-hash))
 
   (for ([d (in-list datums)])
     (match d
@@ -401,14 +408,16 @@
          (define mod-path (resolve-module-path rn source-path))
          (when mod-path
            (import-module-types! mod-path prefix externs registry imp-rec-fields imp-rec-field-order imp-rec-ns rn
-                                 #:scalar-fns imp-scalar-fns)))
+                                 #:scalar-fns imp-scalar-fns
+                                 #:symbol-ns imp-symbol-ns)))
        (set! requires (cons (require-entry rn #f) requires))]
       [(list 'require (? symbol? rn) ':as (? symbol? alias))
        (with-handlers ([exn:fail? (lambda (_e) (void))])
          (define mod-path (resolve-module-path rn source-path))
          (when mod-path
            (import-module-types! mod-path alias externs registry imp-rec-fields imp-rec-field-order imp-rec-ns rn
-                                 #:scalar-fns imp-scalar-fns)))
+                                 #:scalar-fns imp-scalar-fns
+                                 #:symbol-ns imp-symbol-ns)))
        (set! requires (cons (require-entry rn alias) requires))]
 
       [(list 'import (? symbol? class-name))
@@ -429,7 +438,7 @@
   (define parsed (map car pairs))
   (define form-stxs (map cdr pairs))
 
-  (program mode ns parsed registry externs (reverse requires) (reverse imports) form-stxs src-table imp-rec-fields imp-rec-field-order imp-rec-ns (hash-keys imp-scalar-fns) target))
+  (program mode ns parsed registry externs (reverse requires) (reverse imports) form-stxs src-table imp-rec-fields imp-rec-field-order imp-rec-ns (hash-keys imp-scalar-fns) imp-symbol-ns target))
 
 (define (meta-form? d)
   (and (pair? d)
@@ -542,13 +551,14 @@
     (error 'beagle "multi-arity clause must be (params body...) or (params : Type body...)"))
   (define params-form (car clause))
   (define rest (cdr clause))
+  (define-values (parsed rest-p) (parse-params params-form))
   (cond
     [(and (>= (length rest) 2) (annotation-marker? (car rest)))
-     (arity-clause (parse-params params-form)
+     (arity-clause parsed rest-p
                    (parse-type (cadr rest))
                    (map parse-expr (cddr rest)))]
     [else
-     (arity-clause (parse-params params-form)
+     (arity-clause parsed rest-p
                    #f
                    (map parse-expr rest))]))
 
@@ -573,12 +583,14 @@
 
     [(list 'defn (? symbol? name) params-form marker return-type body ...)
      #:when (annotation-marker? marker)
-     (defn-form name (parse-params (or (stx-ref subs 2) params-form))
-                (parse-type return-type)
-                (parse-body (or (stx-tail subs 5) body)))]
+     (let-values ([(parsed rest-p) (parse-params (or (stx-ref subs 2) params-form))])
+       (defn-form name parsed rest-p
+                  (parse-type return-type)
+                  (parse-body (or (stx-tail subs 5) body))))]
     [(list 'defn (? symbol? name) params-form body ...)
-     (defn-form name (parse-params (or (stx-ref subs 2) params-form))
-                #f (parse-body (or (stx-tail subs 3) body)))]
+     (let-values ([(parsed rest-p) (parse-params (or (stx-ref subs 2) params-form))])
+       (defn-form name parsed rest-p
+                  #f (parse-body (or (stx-tail subs 3) body))))]
 
     [(list 'defrecord (? symbol? name) fields-form)
      (record-form name (parse-record-fields (or (stx-ref subs 2) fields-form)))]
@@ -590,9 +602,10 @@
      (defmulti-form name (parse-expr (or (stx-ref subs 2) dispatch-expr)))]
 
     [(list 'defmethod (? symbol? name) dispatch-val params-form body ...)
-     (defmethod-form name (parse-expr (or (stx-ref subs 2) dispatch-val))
-                     (parse-params (or (stx-ref subs 3) params-form))
-                     (parse-body (or (stx-tail subs 4) body)))]
+     (let-values ([(parsed _rest-p) (parse-params (or (stx-ref subs 3) params-form))])
+       (defmethod-form name (parse-expr (or (stx-ref subs 2) dispatch-val))
+                       parsed
+                       (parse-body (or (stx-tail subs 4) body))))]
 
     [(list 'deftype (? symbol? name) fields-form rest ...)
      (deftype-form name (parse-record-fields (or (stx-ref subs 2) fields-form))
@@ -603,12 +616,14 @@
 
     [(list 'fn params-form marker return-type body ...)
      #:when (annotation-marker? marker)
-     (fn-form (parse-params (or (stx-ref subs 1) params-form))
-              (parse-type return-type)
-              (parse-body (or (stx-tail subs 4) body)))]
+     (let-values ([(parsed rest-p) (parse-params (or (stx-ref subs 1) params-form))])
+       (fn-form parsed rest-p
+                (parse-type return-type)
+                (parse-body (or (stx-tail subs 4) body))))]
     [(list 'fn params-form body ...)
-     (fn-form (parse-params (or (stx-ref subs 1) params-form))
-              #f (parse-body (or (stx-tail subs 2) body)))]
+     (let-values ([(parsed rest-p) (parse-params (or (stx-ref subs 1) params-form))])
+       (fn-form parsed rest-p
+                #f (parse-body (or (stx-tail subs 2) body))))]
 
     [(list 'let bindings-form body ...)
      (let-form (parse-let-bindings (or (stx-ref subs 1) bindings-form))
@@ -695,9 +710,11 @@
   (define d (->datum sig))
   (match d
     [(list (? symbol? name) params-form ': return-type)
-     (protocol-method name (parse-params params-form) (parse-type return-type))]
+     (let-values ([(parsed _rp) (parse-params params-form)])
+       (protocol-method name parsed (parse-type return-type)))]
     [(list (? symbol? name) params-form)
-     (protocol-method name (parse-params params-form) #f)]
+     (let-values ([(parsed _rp) (parse-params params-form)])
+       (protocol-method name parsed #f))]
     [_ (error 'beagle "defprotocol method signature must be (name [params] : RetType) or (name [params]), got: ~v" d)]))
 
 (define (parse-with-form target-stx updates)
@@ -902,23 +919,46 @@
       [(bracketed? d) (bracket-body d)]
       [(list? d)      d]
       [else (error 'beagle "expected parameter list, got: ~v" d)]))
-  (for/list ([item (in-list items)])
-    (cond
-      [(bracketed? item)
-       (parse-seq-destructure item)]
-      [(map-destructure-form? item)
-       (parse-map-destructure item)]
-      [(and (list? item)
-            (= (length item) 3)
-            (symbol? (car item))
-            (annotation-marker? (cadr item)))
-       (param (car item) (parse-type (caddr item)))]
-      [(symbol? item)
-       (param item #f)]
-      [else
-       (error 'beagle
-              "bad parameter: ~v~nexpected name, (name : Type), or {:keys [...]}"
-              item)])))
+  (define-values (before-amp after-amp)
+    (let loop ([remaining items] [acc '()])
+      (cond
+        [(null? remaining) (values (reverse acc) #f)]
+        [(eq? (car remaining) '&)
+         (when (not (= (length (cdr remaining)) 1))
+           (error 'beagle "& must be followed by exactly one rest parameter"))
+         (values (reverse acc) (cadr remaining))]
+        [else (loop (cdr remaining) (cons (car remaining) acc))])))
+  (define fixed
+    (for/list ([item (in-list before-amp)])
+      (cond
+        [(bracketed? item)
+         (parse-seq-destructure item)]
+        [(map-destructure-form? item)
+         (parse-map-destructure item)]
+        [(and (list? item)
+              (= (length item) 3)
+              (symbol? (car item))
+              (annotation-marker? (cadr item)))
+         (param (car item) (parse-type (caddr item)))]
+        [(symbol? item)
+         (param item #f)]
+        [else
+         (error 'beagle
+                "bad parameter: ~v~nexpected name, (name : Type), or {:keys [...]}"
+                item)])))
+  (define rest-p
+    (and after-amp
+         (cond
+           [(and (list? after-amp)
+                 (= (length after-amp) 3)
+                 (symbol? (car after-amp))
+                 (annotation-marker? (cadr after-amp)))
+            (param (car after-amp) (parse-type (caddr after-amp)))]
+           [(symbol? after-amp)
+            (param after-amp #f)]
+           [else
+            (error 'beagle "bad rest parameter after &: ~v" after-amp)])))
+  (values fixed rest-p))
 
 (define (map-destructure-form? item)
   (and (map-tagged? item)
@@ -1046,8 +1086,9 @@
   (define subs (stx-subs x))
   (match d
     [(list (? symbol? name) params-form body ...)
-     (impl-method name (parse-params (or (stx-ref subs 1) params-form))
-                  (parse-body (or (stx-tail subs 2) body)))]
+     (let-values ([(parsed _rp) (parse-params (or (stx-ref subs 1) params-form))])
+       (impl-method name parsed
+                    (parse-body (or (stx-tail subs 2) body))))]
     [_ (error 'beagle "bad method implementation: ~v" d)]))
 
 (define (parse-seq-destructure item)
