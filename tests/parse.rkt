@@ -690,3 +690,31 @@
 (test-case "defenum with two values"
   (define f (car (parse-one '(defenum Status :active :inactive))))
   (check-equal? (length (defenum-form-values f)) 2))
+
+;; --- varargs (& rest) in defn/fn params ---
+
+(test-case "defn with & rest-param parses rest-param"
+  (define f (car (parse-one '(defn foo [(x : Long) & (rest : Long)] : Long (+ x 1)))))
+  (check-true (defn-form? f))
+  (check-equal? (length (defn-form-params f)) 1)
+  (check-true (param? (defn-form-rest-param f)))
+  (check-eq? (param-name (defn-form-rest-param f)) 'rest)
+  (check-true (type-prim? (param-type (defn-form-rest-param f))))
+  (check-eq? (type-prim-name (param-type (defn-form-rest-param f))) 'Long))
+
+(test-case "defn without & has #f rest-param"
+  (define f (car (parse-one '(defn bar [(x : Long)] : Long x))))
+  (check-false (defn-form-rest-param f)))
+
+(test-case "fn with & rest-param"
+  (define f (car (parse-one '(fn [(a : Long) & (b : String)] (str a b)))))
+  (check-true (fn-form? f))
+  (check-equal? (length (fn-form-params f)) 1)
+  (check-true (param? (fn-form-rest-param f)))
+  (check-eq? (param-name (fn-form-rest-param f)) 'b))
+
+(test-case "defn & with untyped rest-param"
+  (define f (car (parse-one '(defn baz [x & rest] x))))
+  (check-true (defn-form? f))
+  (check-eq? (param-name (defn-form-rest-param f)) 'rest)
+  (check-false (param-type (defn-form-rest-param f))))

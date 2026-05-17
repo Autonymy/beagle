@@ -132,7 +132,7 @@
 
 (define (check-shadow form scope ctx)
   (match form
-    [(fn-form params _ body)
+    [(fn-form params _rest-p _ body)
      (define inner (scope-copy scope))
      (for ([p (in-list params)])
        (cond
@@ -175,7 +175,7 @@
           (hash-set! inner n #t)])
        (check-shadow (let-binding-value b) inner ctx))
      (for ([e (in-list body)]) (check-shadow e inner ctx))]
-    [(defn-form name params _ body)
+    [(defn-form name params _rest-p _ body)
      (define inner (scope-copy scope))
      (for ([p (in-list params)])
        (add-param-to-scope! p inner))
@@ -297,9 +297,9 @@
   (match form
     [(? symbol?) (hash-set! used form #t)]
     [(def-form _ _ value) (collect-symbols value used)]
-    [(defn-form _ _ _ body)
+    [(defn-form _ _ _ _ body)
      (for ([e (in-list body)]) (collect-symbols e used))]
-    [(fn-form _ _ body)
+    [(fn-form _ _ _ body)
      (for ([e (in-list body)]) (collect-symbols e used))]
     [(let-form bindings body)
      (for ([b (in-list bindings)]) (collect-symbols (let-binding-value b) used))

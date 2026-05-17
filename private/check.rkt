@@ -144,17 +144,20 @@
   (for ([form (in-list (program-forms prog))])
     (match form
       [(def-form name (? type? t) _) (hash-set! env name t)]
-      [(defn-form name params (? type? ret) _)
+      [(defn-form name params rest-p (? type? ret) _)
+       (define rtype (and rest-p (param-or-destr-type rest-p)))
        (hash-set! env name
-                  (type-fn (map param-or-destr-type params) #f ret))]
-      [(defn-form name params #f _)
+                  (type-fn (map param-or-destr-type params) rtype ret))]
+      [(defn-form name params rest-p #f _)
+       (define rtype (and rest-p (param-or-destr-type rest-p)))
        (hash-set! env name
-                  (type-fn (map param-or-destr-type params) #f ANY))]
+                  (type-fn (map param-or-destr-type params) rtype ANY))]
       [(defn-multi name arities)
        (define alt-types
          (for/list ([a (in-list arities)])
+           (define rp (arity-clause-rest-param a))
            (type-fn (map param-or-destr-type (arity-clause-params a))
-                    #f
+                    (and rp (param-or-destr-type rp))
                     (or (arity-clause-return-type a) ANY))))
        (hash-set! env name
                   (if (= 1 (length alt-types))
@@ -249,13 +252,15 @@
                              'expected (type->string expected-type)
                              'actual (type->string inferred)))))]
 
-    [(defn-form name params expected-ret body)
-     (define body-env (extend-with-params env params))
+    [(defn-form name params rest-p expected-ret body)
+     (define all-params (if rest-p (append params (list rest-p)) params))
+     (define body-env (extend-with-params env all-params))
      (parameterize ([current-check-fn-name name])
        (define last-type (last-expr-type body body-env))
        (when expected-ret
          (unless (type-compatible? last-type expected-ret)
-           (define sig (type->string (type-fn (map param-or-destr-type params) #f expected-ret)))
+           (define rtype (and rest-p (param-or-destr-type rest-p)))
+           (define sig (type->string (type-fn (map param-or-destr-type params) rtype expected-ret)))
            (raise-diag 'return-type
                        (format "defn ~a: expected return ~a, got ~a"
                                name (type->string expected-ret) (type->string last-type))
