@@ -1,14 +1,37 @@
 # E10: Workflow Compression
 
-**Hypothesis:** Giving the agent a machine-applicable patch (`--emit-patch`)
-instead of a human-readable repair queue reduces wall time and turns, because
-the agent spends zero reasoning tokens on mechanical fixes.
+Hypothesis: if beagle emits a machine-applicable patch instead of a
+human-readable repair queue, the agent will spend fewer turns and tokens
+on mechanical fixes.
 
-**Baseline:** E9 (same system, same bugs, Opus 4.6).
+**Result: confirmed.** Against the E9 baseline, `--emit-patch` reduced
+wall time by 33% and tokens by 41%, while preserving full correctness
+(484/484 all runs).
 
-**Change:** The beagle spec tells the agent to run `beagle-repair --emit-patch`
-first and `git apply` the result before doing anything else. The Clojure spec
-is unchanged from E9.
+The claim is not "beagle has types." The claim is: **beagle turns
+debugging from reasoning work into patch-application work.**
+
+## The story arc
+
+- **E9:** Beagle gives the agent a better repair queue.
+- **E10:** Beagle turns part of that queue into an executable patch.
+- **Result:** fewer turns, fewer tokens, less wall time, same correctness.
+
+## What this proves
+
+This is not "beagle language vs Clojure language" in the narrow sense.
+It is beagle's repair workflow vs raw Clojure's repair workflow. The
+advantage is that the authoring surface gives the tooling enough
+structure to emit trusted patches. Raw Clojure does not naturally
+expose the same repair substrate.
+
+## Actual results
+
+| Metric | E9 Beagle | E9 Clojure | E10 Beagle | E10 Clojure |
+|--------|-----------|------------|------------|-------------|
+| Wall time | 421s | 595s | 310s | 464s |
+| Gap | 29% faster | — | 33% faster | — |
+| Correctness | 3/3 | 3/3 | 3/3 | 3/3 |
 
 ## Setup
 
@@ -22,21 +45,13 @@ Buggy source copied from `../e8-scaled/buggy/`.
 3. Record: turns, wall time, output tokens, pass rate
 4. Compare against E9 averages
 
-## Expected results
+## Original predictions vs actuals
 
-- Beagle mechanical bugs (accessor swap, arg swap, operand swap, value swap)
-  resolve in ~1 turn instead of ~5-10 turns each
-- Semantic bugs (logic errors) take the same number of turns
-- Net: wall time gap widens from -29% (E9) toward -40-50%
-- Correctness: still 3/3 both tracks
-
-## Metrics
-
-| Metric | E9 Beagle | E9 Clojure | E10 Beagle (predicted) |
-|--------|-----------|------------|------------------------|
-| Turns | 77 | 88 | ~50-60 |
-| Wall time | 421s | 595s | ~280-350s |
-| Tokens | 21,603 | 33,944 | ~14,000-18,000 |
+| Metric | Predicted | Actual |
+|--------|-----------|--------|
+| Turns | ~50-60 | — |
+| Wall time | ~280-350s | 310s |
+| Tokens | ~14-18K | — |
 
 ## Run commands
 

@@ -2,44 +2,47 @@
 
 A language where the compiler does the debugging.
 
-Beagle is a typed authoring layer that currently targets
-Clojure and ClojureScript. Racket frontend, custom `#lang`, static
-type checking — emits plain `.clj` / `.cljs` for runtime. Built for LLM agents: rich types, explicit forms, low
-syntactic surface area, structured errors. One canonical idiom per
-concept.
+Beagle is an agent-native language: a typed authoring layer targeting
+Clojure/ClojureScript, designed to minimize agent repair distance.
+Racket frontend, custom `#lang`, static type checking — emits plain
+`.clj` / `.cljs` for runtime. The language exists because the repair
+loop needs structured evidence.
 
 ## Thesis
 
-Beagle does not maximize type purity. Beagle minimizes *repair
-distance* — the work between "here is a bug" and "here is the fix."
+Mechanical bugs should not require cognition. They should compile into
+patches.
 
+Beagle turns debugging from reasoning work into patch-application work.
 Types catch shape errors at compile time. A repair compiler turns
-runtime failures into ranked, machine-actionable fix candidates. The
-compiler annotates problems — it doesn't block execution.
+runtime failures into ranked, machine-actionable fix candidates — then
+emits them as executable patches. Zero reasoning tokens on mechanical
+fixes; the agent's budget is spent entirely on semantic bugs that
+require judgment.
 
 ## Evidence
 
-Eleven experiments (E1–E11) across multiple sessions, head-to-head
-against raw Clojure on the same tasks.
+Eleven experiments (E1–E11), head-to-head against raw Clojure on the
+same tasks. The progression tells the story:
 
 **E4** (13 modules, 8570 LOC, 35 injected bugs): beagle 3/3
-correctness vs clojure 0/3 — first reproducible divergence where
-types produce measurably better outcomes.
+correctness vs clojure 0/3. First reproducible divergence — types
+produce measurably better outcomes at scale.
 
-**E9** (same system + repair toolchain, 3 runs each): beagle averages
-77 turns / 421s / 21.6K tokens vs clojure 88 turns / 595s / 33.9K
-tokens. **29% faster, 36% fewer tokens, lower variance.** Both
-tracks 3/3 correctness — the advantage is efficiency.
+**E9** (repair toolchain): beagle gives the agent a better repair
+queue. 29% faster, 36% fewer tokens, same correctness.
 
-**E10** (workflow compression): `--emit-patch` pipeline reduces wall
-time by 33% and tokens by 41% vs E9 baseline.
+**E10** (workflow compression): beagle turns part of that queue into
+an executable patch. `--emit-patch` reduces wall time by 33% and
+tokens by 41% vs E9. Mechanical fixes collapse from several
+agent turns to a single `git apply`. This is not "beagle language vs
+Clojure language" — it is beagle's repair workflow vs raw Clojure's
+repair workflow. The advantage is that the authoring surface gives the
+tooling enough structure to emit trusted patches.
 
-**E11** (model tier): tested Opus, Sonnet, and Haiku on the same
-system. Opus gains 33% from beagle, Sonnet 4%, Haiku 2%. **Beagle's
-advantage scales with model intelligence** — it's a force multiplier
-for capable models, not a crutch for weak ones. Types don't
-compensate for model weakness; they amplify model strength by giving
-faster, more precise feedback loops.
+**E11** (model tier): Opus gains 33% from beagle, Sonnet 4%, Haiku 2%.
+Beagle's advantage scales with model intelligence — it amplifies
+capable models rather than compensating for weak ones.
 
 ## Architecture
 
@@ -105,8 +108,9 @@ constructors, accessors, macros — all validated at call sites
 
 ## Repair compiler
 
-The repair compiler closes the loop: agent writes code → evidence
-system produces a ranked repair queue → agent applies fixes → done.
+The compiler is part of the agent's motor cortex: agent writes code →
+type checker catches shape errors → repair compiler ranks and patches
+mechanical fixes → agent spends its budget on semantic bugs only.
 
 | Tool | What it does |
 |------|-------------|

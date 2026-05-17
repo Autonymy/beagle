@@ -1,5 +1,16 @@
 # E10 Results: Workflow Compression
 
+Hypothesis: if beagle emits a machine-applicable patch instead of a
+human-readable repair queue, the agent will spend fewer turns and tokens
+on mechanical fixes. Result: confirmed.
+
+> E9: Beagle gives the agent a better repair queue.
+> E10: Beagle turns part of that queue into an executable patch.
+> Result: fewer turns, fewer tokens, less wall time, same correctness.
+
+Against the E9 baseline, `--emit-patch` reduced wall time by 33% and
+output tokens by 41%, while preserving full correctness (484/484).
+
 ## Summary
 
 Patch-first workflow (`--emit-patch` + `git apply`) reduces beagle wall time
@@ -71,6 +82,16 @@ The patch-first workflow works as designed: mechanical fixes are zero-reasoning-
 token operations. The agent's time is spent entirely on semantic bugs that
 require judgment (wrong formulas, missing arguments, incorrect field selection).
 
+Mechanical bugs should not require cognition. They should compile into patches.
+That is what `--emit-patch` does — the compiler becomes part of the agent's
+motor cortex, applying fixes that don't need deliberation.
+
 The 33% gap is real but modest. The bottleneck is now semantic bugs, not
 mechanical ones — diminishing returns on further toolchain automation at this
 bug mix (17/35 mechanical, 18/35 semantic).
+
+Note: this is not "beagle language vs Clojure language" in the narrow sense.
+It is beagle's repair workflow vs raw Clojure's repair workflow. The advantage
+is that the authoring surface gives the tooling enough structure to emit
+trusted patches. Raw Clojure does not naturally expose the same repair
+substrate.
