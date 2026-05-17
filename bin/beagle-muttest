@@ -1,0 +1,226 @@
+#!/usr/bin/env bash
+# beagle-muttest: automated mutation testing.
+#
+# Injects known bugs into golden compiled code, runs the oracle/verify script,
+# and reports which mutations were caught (killed) vs which survived.
+#
+# Usage:
+#   beagle-muttest <build-dir> <verify-script>
+#   beagle-muttest <build-dir> <verify-script> --limit N   (default: 50 mutations)
+#
+# Mutation operators:
+#   - Arithmetic: + ↔ -, * ↔ /, swap operand order
+#   - Comparison: > ↔ <, >= ↔ <=, = ↔ not=
+#   - Constants: N → 0, N → N+1, N → -N
+#   - Boolean: true ↔ false
+
+set -euo pipefail
+
+if [[ $# -lt 2 ]]; then
+    echo "Usage: beagle-muttest <build-dir> <verify-script> [--limit N]" >&2
+    exit 1
+fi
+
+BUILD_DIR="$(cd "$1" && pwd)"
+VERIFY_SCRIPT="$(realpath "$2")"
+shift 2
+
+LIMIT=50
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --limit) LIMIT="$2"; shift 2 ;;
+        *) echo "Unknown option: $1" >&2; exit 1 ;;
+    esac
+done
+
+WORK_DIR="$(mktemp -d /tmp/beagle-muttest.XXXXXX)"
+trap 'rm -rf "$WORK_DIR"' EXIT
+
+echo "=== beagle-muttest: mutation testing ===" >&2
+echo "  build: $BUILD_DIR" >&2
+echo "  oracle: $VERIFY_SCRIPT" >&2
+echo "  limit: $LIMIT mutations" >&2
+
+# ---------------------------------------------------------------------------
+# Phase 1: Generate mutation candidates
+# ---------------------------------------------------------------------------
+
+python3 - "$BUILD_DIR" "$VERIFY_SCRIPT" "$WORK_DIR" "$LIMIT" << 'PYEOF'
+import sys, os, re, subprocess, json, shutil, random
+
+build_dir = sys.argv[1]
+verify_script = sys.argv[2]
+work_dir = sys.argv[3]
+limit = int(sys.argv[4])
+
+MUTATIONS = [
+    # (pattern, replacement, name)
+    (r'\(\+ ', '(- ', 'arith:+→-'),
+    (r'\(- ', '(+ ', 'arith:-→+'),
+    (r'\(\* ', '(/ ', 'arith:*→/'),
+    (r'\(> ', '(< ', 'cmp:>→<'),
+    (r'\(< ', '(> ', 'cmp:<→>'),
+    (r'\(>= ', '(<= ', 'cmp:>=→<='),
+    (r'\(<= ', '(>= ', 'cmp:<=→>='),
+    (r'\(= ', '(not= ', 'cmp:=→not='),
+    (r'\(not= ', '(= ', 'cmp:not=→='),
+    (r' true\b', ' false', 'bool:true→false'),
+    (r' false\b', ' true', 'bool:false→true'),
+    (r'\(quot ', '(mod ', 'arith:quot→mod'),
+    (r'\(mod ', '(quot ', 'arith:mod→quot'),
+]
+
+# Collect all mutation sites
+sites = []
+for fname in sorted(os.listdir(build_dir)):
+    if not fname.endswith('.clj'):
+        continue
+    fpath = os.path.join(build_dir, fname)
+    with open(fpath) as f:
+        lines = f.readlines()
+    module = fname[:-4]
+    for i, line in enumerate(lines):
+        for pattern, replacement, name in MUTATIONS:
+            matches = list(re.finditer(pattern, line))
+            for m in matches:
+                # Extract source location if present
+                meta = re.search(r'\^\{:line\s+(\d+)\s+:file\s+"([^"]+)"\}', line)
+                src_line = int(meta.group(1)) if meta else i+1
+                src_file = meta.group(2) if meta else fname
+                sites.append({
+                    'file': fname,
+                    'module': module,
+                    'line_no': i,
+                    'col': m.start(),
+                    'pattern': pattern,
+                    'replacement': replacement,
+                    'mutation': name,
+                    'src_line': src_line,
+                    'src_file': src_file,
+                    'original': line.rstrip(),
+                })
+
+print(f"  Found {len(sites)} mutation sites across {len(set(s['file'] for s in sites))} files", file=sys.stderr)
+
+# Sample up to limit
+if len(sites) > limit:
+    random.seed(42)
+    sites = random.sample(sites, limit)
+    print(f"  Sampled {limit} mutations", file=sys.stderr)
+
+# ---------------------------------------------------------------------------
+# Phase 2: Run baseline oracle (should pass on golden code)
+# ---------------------------------------------------------------------------
+
+print("  Running baseline oracle...", file=sys.stderr)
+baseline = subprocess.run(
+    ['bb', '-cp', build_dir, '-e', f'(load-file "{verify_script}")'],
+    capture_output=True, text=True, timeout=60
+)
+if baseline.returncode != 0:
+    print(f"  WARNING: baseline oracle failed! Results may be misleading.", file=sys.stderr)
+    print(f"  stderr: {baseline.stderr[:200]}", file=sys.stderr)
+
+baseline_pass = baseline.returncode == 0
+# Count baseline assertions
+pass_match = re.search(r'(\d+) passed', baseline.stdout)
+fail_match = re.search(r'(\d+) fail', baseline.stdout)
+baseline_assertions = int(pass_match.group(1)) if pass_match else 0
+print(f"  Baseline: {'PASS' if baseline_pass else 'FAIL'} ({baseline_assertions} assertions)", file=sys.stderr)
+
+# ---------------------------------------------------------------------------
+# Phase 3: Apply each mutation and run oracle
+# ---------------------------------------------------------------------------
+
+killed = 0
+survived = 0
+errors = 0
+results = []
+
+for idx, site in enumerate(sites):
+    mutant_dir = os.path.join(work_dir, f'mutant-{idx}')
+    shutil.copytree(build_dir, mutant_dir)
+
+    # Apply mutation
+    fpath = os.path.join(mutant_dir, site['file'])
+    with open(fpath) as f:
+        lines = f.readlines()
+
+    original_line = lines[site['line_no']]
+    mutated_line = re.sub(site['pattern'], site['replacement'], original_line, count=1)
+    lines[site['line_no']] = mutated_line
+
+    with open(fpath, 'w') as f:
+        f.writelines(lines)
+
+    # Run oracle
+    try:
+        result = subprocess.run(
+            ['bb', '-cp', mutant_dir, '-e', f'(load-file "{verify_script}")'],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode != 0:
+            status = 'killed'
+            killed += 1
+        else:
+            status = 'survived'
+            survived += 1
+    except subprocess.TimeoutExpired:
+        status = 'killed'
+        killed += 1
+    except Exception as e:
+        status = 'error'
+        errors += 1
+
+    results.append({
+        'mutation': site['mutation'],
+        'file': site['file'],
+        'src_file': os.path.basename(site['src_file']),
+        'src_line': site['src_line'],
+        'status': status,
+    })
+
+    # Clean up mutant
+    shutil.rmtree(mutant_dir)
+
+    if (idx + 1) % 10 == 0:
+        print(f"  {idx+1}/{len(sites)} mutations tested...", file=sys.stderr)
+
+# ---------------------------------------------------------------------------
+# Phase 4: Report
+# ---------------------------------------------------------------------------
+
+total = killed + survived + errors
+score = (killed / total * 100) if total > 0 else 0
+
+print(f"\n=== Mutation Testing Results ===")
+print(f"  Total mutations: {total}")
+print(f"  Killed:   {killed} ({killed/total*100:.0f}%)" if total else "  Killed:   0")
+print(f"  Survived: {survived} ({survived/total*100:.0f}%)" if total else "  Survived: 0")
+if errors:
+    print(f"  Errors:   {errors}")
+print(f"  Mutation score: {score:.1f}%")
+print()
+
+# Show survived mutations (these are gaps in test coverage)
+survived_list = [r for r in results if r['status'] == 'survived']
+if survived_list:
+    print("Surviving mutations (oracle gaps):")
+    for r in survived_list:
+        print(f"  {r['mutation']}  {r['src_file']}:{r['src_line']}  ({r['file']})")
+else:
+    print("All mutations killed — oracle has full coverage.")
+
+# Write detailed results
+with open(os.path.join(work_dir, 'muttest-results.json'), 'w') as f:
+    json.dump({
+        'total': total,
+        'killed': killed,
+        'survived': survived,
+        'errors': errors,
+        'score': score,
+        'results': results,
+    }, f, indent=2)
+
+sys.exit(0 if survived == 0 else 1)
+PYEOF

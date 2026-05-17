@@ -51,24 +51,36 @@ def extract_meta(expr_before):
         return int(m.group(1)), m.group(2)
     return None, None
 
+def collect_user_fns(build_dir):
+    """Collect all user-defined function names across modules."""
+    fns = set()
+    for fname in os.listdir(build_dir):
+        if not fname.endswith('.clj'):
+            continue
+        module = fname[:-4]
+        with open(os.path.join(build_dir, fname)) as f:
+            content = f.read()
+        for m in re.finditer(r'\(defn\s+([\w?!<>*+\-/=]+)', content):
+            fn_name = m.group(1)
+            fns.add(fn_name)
+            fns.add(f'{module}/{fn_name}')
+    return fns
+
+user_fns = collect_user_fns(build_dir)
+
 def instrument_file(src_path, dst_path, focus_fn=None):
-    """Instrument a .clj file by wrapping arithmetic ops with trace capture."""
+    """Instrument a .clj file by wrapping arithmetic ops and function calls with trace capture."""
     with open(src_path) as f:
         content = f.read()
 
-    # Strategy: find all (op arg1 arg2 ...) patterns where op is in TRACED_OPS,
-    # and wrap them with (beagle-trace/trace-op "op" line file arg1 arg2 ...)
-    #
-    # We only instrument ops inside function bodies (after defn lines).
-    # We preserve the original metadata annotations.
+    module = Path(src_path).stem
 
     lines = content.split('\n')
     instrumented_lines = []
-    in_target_fn = focus_fn is None  # if no focus, instrument everything
+    in_target_fn = focus_fn is None
     current_fn = None
 
     for i, line in enumerate(lines):
-        # Track which function we're in
         fn_match = re.search(r'\(defn\s+([\w?!<>*+\-/=]+)', line)
         if fn_match:
             current_fn = fn_match.group(1)
@@ -81,13 +93,10 @@ def instrument_file(src_path, dst_path, focus_fn=None):
             instrumented_lines.append(line)
             continue
 
-        # Find metadata-annotated arithmetic expressions
-        # Pattern: ^{:line N :file "path"} (op ...)
-        # We need to be careful not to break nested expressions
         new_line = line
+
+        # Instrument arithmetic ops
         for op in TRACED_OPS:
-            # Match: ^{:line N :file "path"} (OP <rest>)
-            # We wrap the whole (OP ...) to become (beagle.trace/t "op" N "file" <rest>)
             pattern = r'(\^\{:line\s+(\d+)\s+:file\s+"([^"]+)"\}\s*)\(' + re.escape(op) + r'\s+'
             def replace_op(m):
                 meta = m.group(1)
@@ -95,6 +104,20 @@ def instrument_file(src_path, dst_path, focus_fn=None):
                 fl = m.group(3)
                 return f'{meta}(beagle.trace/t "{op}" {ln} "{fl}" '
             new_line = re.sub(pattern, replace_op, new_line)
+
+        # Instrument user-defined function calls (call-graph walk)
+        # Match: ^{:line N :file "path"} (fn-name ...)
+        # Replace with: ^{:line N :file "path"} (beagle.trace/tc "fn-name" N "file" fn-name ...)
+        fn_call_pattern = r'(\^\{:line\s+(\d+)\s+:file\s+"([^"]+)"\}\s*)\(([\w?!<>*+\-/=]+)\s+'
+        def replace_call(m):
+            meta = m.group(1)
+            ln = m.group(2)
+            fl = m.group(3)
+            called = m.group(4)
+            if called in user_fns and called not in TRACED_OPS:
+                return f'{meta}(beagle.trace/tc "{called}" {ln} "{fl}" {called} '
+            return m.group(0)
+        new_line = re.sub(fn_call_pattern, replace_call, new_line)
 
         instrumented_lines.append(new_line)
 
@@ -142,19 +165,56 @@ with open(trace_runtime, 'w') as f:
              :depth depth})
           result)))))
 
+(defn tc
+  "Traced function call wrapper. Records call entry/exit with args and result."
+  [fn-name line file target-fn & args]
+  (let [depth @*trace-depth*]
+    (if (or (not @*trace-enabled*) (> depth max-trace-depth))
+      (apply target-fn args)
+      (do
+        (swap! *trace-log* conj
+          {:op (str "call:" fn-name)
+           :args (vec args)
+           :result :pending
+           :line line
+           :file file
+           :depth depth})
+        (swap! *trace-depth* inc)
+        (let [result (apply target-fn args)]
+          (swap! *trace-depth* dec)
+          (swap! *trace-log* conj
+            {:op (str "ret:" fn-name)
+             :args []
+             :result result
+             :line line
+             :file file
+             :depth depth})
+          result)))))
+
 (defn reset-trace! [] (reset! *trace-log* []))
 
 (defn get-trace [] @*trace-log*)
 
 (defn format-trace-entry [entry]
   (let [{:keys [op args result line file depth]} entry
-        indent (apply str (repeat depth "  "))]
-    (format "%s(%s %s) = %s  ; %s:%s"
-      indent op
-      (clojure.string/join " " (map str args))
-      (str result)
-      (last (clojure.string/split file #"/"))
-      line)))
+        indent (apply str (repeat depth "  "))
+        short-file (last (clojure.string/split file #"/"))]
+    (cond
+      (.startsWith ^String op "call:")
+        (format "%s→ %s(%s)  ; %s:%s"
+          indent (subs op 5)
+          (clojure.string/join ", " (map #(if (> (count (str %)) 30) (str (subs (str %) 0 27) "...") (str %)) args))
+          short-file line)
+      (.startsWith ^String op "ret:")
+        (format "%s← %s = %s  ; %s:%s"
+          indent (subs op 4) (str result)
+          short-file line)
+      :else
+        (format "%s(%s %s) = %s  ; %s:%s"
+          indent op
+          (clojure.string/join " " (map str args))
+          (str result)
+          short-file line))))
 
 (defn dump-trace
   "Print the trace log, optionally filtered to a file or function."
@@ -172,6 +232,29 @@ with open(trace_runtime, 'w') as f:
   (reset-trace!)
   (let [result (thunk)]
     {:result result :trace @*trace-log*}))
+
+;; Semantic rules: function name patterns → expected/suspicious ops
+(def semantic-rules
+  [{:pattern #"total|sum-of|aggregate" :expected #{"+" "*"} :suspicious #{"-"} :reason "aggregation"}
+   {:pattern #"discount|rebate|deduct" :expected #{"-"} :suspicious #{"+"} :reason "reduction"}
+   {:pattern #"margin|profit|markup" :expected #{"-"} :suspicious #{} :reason "price-minus-cost"}
+   {:pattern #"commission|surcharge|fee-amount|tax-amount" :expected #{"*"} :suspicious #{"+"} :reason "rate*base"}
+   {:pattern #"line-total|line-cost|poline-total" :expected #{"*"} :suspicious #{"+" "-"} :reason "unit*quantity"}
+   {:pattern #"count-|num-|-count$" :expected #{} :suspicious #{"-"} :reason "count (non-negative)"}])
+
+(defn check-op-semantic [fn-name op]
+  (when fn-name
+    (first
+      (for [rule semantic-rules
+            :when (re-find (:pattern rule) fn-name)
+            :when (contains? (:suspicious rule) op)]
+        (:reason rule)))))
+
+(defn annotate-trace [entries fn-context]
+  (mapv (fn [entry]
+    (let [warning (check-op-semantic fn-context (:op entry))]
+      (if warning (assoc entry :warning warning) entry)))
+    entries))
 ''')
 
 print(f"  wrote trace runtime: beagle/trace.clj", file=sys.stderr)
@@ -212,12 +295,19 @@ traced_assert = '''(defn assert-eq [label expected actual]
     (do (swap! *fail-count* inc)
         (println (str "FAIL: " label "\\n  expected: " expected "\\n  actual:   " actual))
         (let [trace (beagle.trace/get-trace)
-              arith-ops (filter #(#{"+" "-" "*" "/" ">" "<" ">=" "<="} (:op %)) trace)
-              relevant (if (> (count arith-ops) 15) (take-last 15 arith-ops) arith-ops)]
-          (when (seq relevant)
-            (println "  trace (last ops):")
-            (doseq [entry relevant]
-              (println (str "    " (beagle.trace/format-trace-entry entry)))))
+              fn-name (second (re-find #"^[^/]*/(.+)" label))
+              relevant (filter #(or (#{"+" "-" "*" "/" ">" "<" ">=" "<="} (:op %))
+                                    (.startsWith ^String (:op %) "call:")
+                                    (.startsWith ^String (:op %) "ret:")) trace)
+              annotated (beagle.trace/annotate-trace (vec relevant) fn-name)
+              trimmed (if (> (count annotated) 20) (take-last 20 annotated) annotated)]
+          (when (seq trimmed)
+            (println "  trace:")
+            (doseq [entry trimmed]
+              (print (str "    " (beagle.trace/format-trace-entry entry)))
+              (when (:warning entry)
+                (print (str "  ⚠ SUSPECT: " (:warning entry))))
+              (println)))
           (println))
         (beagle.trace/reset-trace!))))'''
 

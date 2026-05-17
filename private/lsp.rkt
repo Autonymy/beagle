@@ -388,6 +388,117 @@
                     #:when (search-file (path->string f)))
           (search-file (path->string f))))))
 
+;; --- Completion -------------------------------------------------------------
+
+(define (handle-completion params)
+  (define uri (hash-ref (hash-ref params 'textDocument) 'uri))
+  (define pos (hash-ref params 'position))
+  (define line (hash-ref pos 'line))
+  (define col (hash-ref pos 'character))
+  (define path (uri->path uri))
+  (define prefix (prefix-at-position path line col))
+  (cond
+    [(or (not prefix) (< (string-length prefix) 1)) '()]
+    [else
+     (define items (collect-completions path prefix))
+     (if (null? items) '() items)]))
+
+(define (prefix-at-position path line col)
+  (define content (or (hash-ref open-docs (path->uri path) #f)
+                      (and (file-exists? path) (file->string path))))
+  (when (not content) #f)
+  (define lines (string-split content "\n" #:trim? #f))
+  (cond
+    [(>= line (length lines)) #f]
+    [else
+     (define ln (list-ref lines line))
+     (define word-chars
+       (string->list "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-?!<>*/+.:"))
+     (define (word-char? c) (member c word-chars))
+     (define start
+       (let loop ([i col])
+         (if (and (> i 0) (word-char? (string-ref ln (sub1 i))))
+             (loop (sub1 i))
+             i)))
+     (if (= start col) #f
+         (substring ln start col))]))
+
+(define (collect-completions path prefix)
+  (define items '())
+  ;; File-local definitions
+  (with-handlers ([exn:fail? (lambda (_) (void))])
+    (define datums (read-beagle-datums path))
+    (for ([d (in-list datums)])
+      (define defn-entry (extract-defn-entry d))
+      (when defn-entry
+        (define name (symbol->string (car defn-entry)))
+        (when (string-prefix? name prefix)
+          (define ftype (caddr defn-entry))
+          (set! items
+                (cons (hasheq 'label name
+                              'kind 3  ; Function
+                              'detail (type->string ftype))
+                      items))))
+      (define rec (extract-record-entry d))
+      (when rec
+        (define name (symbol->string (car rec)))
+        (when (string-prefix? name prefix)
+          (set! items
+                (cons (hasheq 'label name
+                              'kind 22  ; Struct
+                              'detail "defrecord")
+                      items)))
+        (define ctor (format "->~a" name))
+        (when (string-prefix? ctor prefix)
+          (set! items
+                (cons (hasheq 'label ctor
+                              'kind 4  ; Constructor
+                              'detail (format "-> ~a" name))
+                      items))))
+      (define def-e (extract-def-entry d))
+      (when def-e
+        (define name (symbol->string (car def-e)))
+        (when (string-prefix? name prefix)
+          (set! items
+                (cons (hasheq 'label name
+                              'kind 6  ; Variable
+                              'detail (type->string (cadr def-e)))
+                      items))))))
+  ;; Directory-sibling definitions (for cross-module)
+  (with-handlers ([exn:fail? (lambda (_) (void))])
+    (define dir (path->string
+                  (let-values ([(base _name _dir?) (split-path (string->path path))])
+                    base)))
+    (for ([f (in-directory dir)]
+          #:when (regexp-match? #rx"\\.rkt$" (path->string f))
+          #:when (not (equal? (path->string f) path)))
+      (define mod-name
+        (path->string (let-values ([(_base name _dir?) (split-path f)]) name)))
+      (define mod-prefix (string-append (substring mod-name 0 (- (string-length mod-name) 4)) "/"))
+      (when (string-prefix? mod-prefix prefix)
+        (with-handlers ([exn:fail? (lambda (_) (void))])
+          (define datums (read-beagle-datums (path->string f)))
+          (for ([d (in-list datums)])
+            (define defn-entry (extract-defn-entry d))
+            (when defn-entry
+              (define qual (string-append mod-prefix (symbol->string (car defn-entry))))
+              (when (string-prefix? qual prefix)
+                (set! items
+                      (cons (hasheq 'label qual
+                                    'kind 3
+                                    'detail (type->string (caddr defn-entry)))
+                            items)))))))))
+  ;; Stdlib completions
+  (for ([(k v) (in-hash STDLIB-TYPES)])
+    (define name (symbol->string k))
+    (when (string-prefix? name prefix)
+      (set! items
+            (cons (hasheq 'label name
+                          'kind 3
+                          'detail (type->string v))
+                  items))))
+  (if (> (length items) 100) (take items 100) items))
+
 ;; --- Initialization ---------------------------------------------------------
 
 (define (server-capabilities)
@@ -398,7 +509,10 @@
                           'save (hasheq 'includeText #f))
                   'hoverProvider #t
                   'definitionProvider #t
-                  'documentSymbolProvider #t)))
+                  'documentSymbolProvider #t
+                  'completionProvider
+                  (hasheq 'triggerCharacters (list "(" ":" "/")
+                          'resolveProvider #f))))
 
 ;; --- Main dispatch ----------------------------------------------------------
 
@@ -415,6 +529,8 @@
      (send-response out id (handle-definition params))]
     [("textDocument/documentSymbol")
      (send-response out id (handle-document-symbols params))]
+    [("textDocument/completion")
+     (send-response out id (handle-completion params))]
     [else
      (send-error out id -32601 (format "method not found: ~a" method))]))
 

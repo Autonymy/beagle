@@ -61,6 +61,10 @@
     ;; Type check
     (for ([form (in-list (program-forms prog))])
       (check-form form env))
+    ;; Persist imported types from require into repl-env
+    (for ([(k v) (in-hash (program-externs prog))])
+      (unless (hash-has-key? repl-env k)
+        (hash-set! repl-env k v)))
     ;; Register any new defs/defns/records in persistent env
     (for ([form (in-list (program-forms prog))])
       (register-form! form env))

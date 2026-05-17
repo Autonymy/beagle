@@ -31,11 +31,13 @@ shift
 
 RUN_MODE=false
 BUILD_DIR=""
+DIFF_DIR=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --run) RUN_MODE=true; shift ;;
         --build-dir) BUILD_DIR="$2"; shift 2 ;;
+        --diff) DIFF_DIR="$2"; shift 2 ;;
         *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
 done
@@ -456,6 +458,57 @@ output_lines.append('    (do (swap! *fail-count* inc)')
 output_lines.append('        (println (str "FAIL: " label')
 output_lines.append('                      "\\n  expected non-negative, got: " v)))))')
 output_lines.append('')
+output_lines.append(';; === Shrinking ===')
+output_lines.append('(def ^:dynamic *shrink-count* (atom 0))')
+output_lines.append('')
+output_lines.append('(defn shrink-long [n]')
+output_lines.append('  (cond (= n 0) []')
+output_lines.append('        (= n 1) [0]')
+output_lines.append('        (= n -1) [0]')
+output_lines.append('        (pos? n) [0 (quot n 2)]')
+output_lines.append('        :else [0 (quot n 2)]))')
+output_lines.append('')
+output_lines.append('(defn shrink-string [s]')
+output_lines.append('  (if (= s "") []')
+output_lines.append('    ["" (subs s 0 (quot (count s) 2))]))')
+output_lines.append('')
+output_lines.append('(defn shrink-val [v]')
+output_lines.append('  (cond (integer? v) (shrink-long v)')
+output_lines.append('        (float? v) (if (zero? v) [] [0.0 (/ v 2.0)])')
+output_lines.append('        (string? v) (shrink-string v)')
+output_lines.append('        (boolean? v) []')
+output_lines.append('        (keyword? v) []')
+output_lines.append('        (map? v) (let [ks (keys v)]')
+output_lines.append('                   (mapv (fn [k]')
+output_lines.append('                     (let [sv (first (shrink-val (get v k)))]')
+output_lines.append('                       (if sv (assoc v k sv) v))) ks))')
+output_lines.append('        :else []))')
+output_lines.append('')
+output_lines.append('(defn shrink-record [rec]')
+output_lines.append('  (if-not (record? rec) []')
+output_lines.append('    (let [m (into {} rec)')
+output_lines.append('          ks (keys m)]')
+output_lines.append('      (filterv #(not= % rec)')
+output_lines.append('        (mapv (fn [k]')
+output_lines.append('          (let [v (get m k)')
+output_lines.append('                shrunk (first (shrink-val v))]')
+output_lines.append('            (if (some? shrunk)')
+output_lines.append('              (merge rec {k shrunk})')
+output_lines.append('              rec))) ks)))))')
+output_lines.append('')
+output_lines.append('(defn shrink-input [input]')
+output_lines.append('  (if (record? input) (shrink-record input) (shrink-val input)))')
+output_lines.append('')
+output_lines.append('(defn find-minimal [pred input max-shrinks]')
+output_lines.append('  (loop [current input n 0]')
+output_lines.append('    (if (>= n max-shrinks) current')
+output_lines.append('      (let [candidates (shrink-input current)')
+output_lines.append('            smaller (first (filter pred candidates))]')
+output_lines.append('        (if smaller')
+output_lines.append('          (do (swap! *shrink-count* inc)')
+output_lines.append('              (recur smaller (inc n)))')
+output_lines.append('          current)))))')
+output_lines.append('')
 output_lines.append(f'(def N {N_ITERATIONS})')
 output_lines.append('')
 
@@ -497,15 +550,20 @@ for prop in gen_properties:
         if len(arg_types) == 1:
             arg_t = arg_types[0]
             bare = arg_t.split('/')[-1] if '/' in arg_t else arg_t
-            # Scalar return values are plain Longs at runtime (scalars erase)
             if bare in all_records:
                 gen_name = gen_fn_name(bare)
                 output_lines.append(f';; {label}')
                 output_lines.append(f'(dotimes [_ N]')
                 output_lines.append(f'  (let [input ({gen_name})')
                 output_lines.append(f'        result ({module}/{fn_name} input)]')
-                output_lines.append(f'    (when (some? result)')
-                output_lines.append(f'      (assert-nonneg "{label}" result))))')
+                output_lines.append(f'    (when (and (some? result) (neg? result))')
+                output_lines.append(f'      (let [minimal (find-minimal')
+                output_lines.append(f'                     (fn [i] (neg? ({module}/{fn_name} i)))')
+                output_lines.append(f'                     input 20)]')
+                output_lines.append(f'        (swap! *fail-count* inc)')
+                output_lines.append(f'        (println (str "FAIL: {label}\\n  input: " input')
+                output_lines.append(f'                      "\\n  shrunk: " minimal')
+                output_lines.append(f'                      "\\n  result: " ({module}/{fn_name} minimal)))))))')
                 output_lines.append('')
             elif bare in all_scalars:
                 gen_input = gen_expr_for_type(arg_t)
@@ -513,8 +571,14 @@ for prop in gen_properties:
                 output_lines.append(f'(dotimes [_ N]')
                 output_lines.append(f'  (let [input {gen_input}')
                 output_lines.append(f'        result ({module}/{fn_name} input)]')
-                output_lines.append(f'    (when (some? result)')
-                output_lines.append(f'      (assert-nonneg "{label}" result))))')
+                output_lines.append(f'    (when (and (some? result) (neg? result))')
+                output_lines.append(f'      (let [minimal (find-minimal')
+                output_lines.append(f'                     (fn [i] (neg? ({module}/{fn_name} i)))')
+                output_lines.append(f'                     input 20)]')
+                output_lines.append(f'        (swap! *fail-count* inc)')
+                output_lines.append(f'        (println (str "FAIL: {label}\\n  input: " input')
+                output_lines.append(f'                      "\\n  shrunk: " minimal')
+                output_lines.append(f'                      "\\n  result: " ({module}/{fn_name} minimal)))))))')
                 output_lines.append('')
 
     elif kind == 'nonneg-return' and not prop.get('executable', True):
@@ -568,8 +632,8 @@ for prop in gen_properties:
 # --- Summary ---
 output_lines.append('')
 output_lines.append(';; === Summary ===')
-output_lines.append('(println (format "\\n%d properties checked, %d failures"')
-output_lines.append('                 (+ @*pass-count* @*fail-count*) @*fail-count*))')
+output_lines.append('(println (format "\\n%d properties checked, %d failures, %d shrink steps"')
+output_lines.append('                 (+ @*pass-count* @*fail-count*) @*fail-count* @*shrink-count*))')
 output_lines.append('(when (pos? @*fail-count*) (System/exit 1))')
 
 # Write output
@@ -600,4 +664,261 @@ if [[ "$RUN_MODE" == "true" ]]; then
     echo "" >&2
     echo "=== Running properties ===" >&2
     bb -cp "$BUILD_DIR" -e "(load-file \"$WORK_DIR/proptest.clj\")" 2>&1
+fi
+
+# ---------------------------------------------------------------------------
+# Phase 3 (optional): Differential testing — compare two builds
+# ---------------------------------------------------------------------------
+
+if [[ -n "$DIFF_DIR" ]]; then
+    if [[ -z "$BUILD_DIR" ]]; then
+        BUILD_DIR="$WORK_DIR/build"
+        mkdir -p "$BUILD_DIR"
+        echo "" >&2
+        echo "=== Building golden modules ===" >&2
+        "$BEAGLE_BIN/beagle-build-all" --warn "$SOURCE_DIR" --out "$BUILD_DIR" 2>&1 | tail -3 >&2
+    fi
+
+    echo "" >&2
+    echo "=== Differential testing: $BUILD_DIR vs $DIFF_DIR ===" >&2
+
+    BEAGLE_BIN="$BEAGLE_BIN" SOURCE_DIR="$SOURCE_DIR" python3 - "$BUILD_DIR" "$DIFF_DIR" "$WORK_DIR" << 'DIFF_PYEOF'
+import sys, os, re, subprocess, json
+
+golden_dir = sys.argv[1]
+modified_dir = sys.argv[2]
+work_dir = sys.argv[3]
+
+# Find functions shared between both builds (with type signatures)
+def extract_functions(build_dir):
+    """Parse defn signatures from compiled .clj files."""
+    fns = {}
+    for fname in sorted(os.listdir(build_dir)):
+        if not fname.endswith('.clj'):
+            continue
+        module = fname[:-4]
+        path = os.path.join(build_dir, fname)
+        with open(path) as f:
+            content = f.read()
+        for m in re.finditer(r'\(defn\s+([\w?!<>*+\-/]+)\s+\[([^\]]*)\]', content):
+            fn_name = m.group(1)
+            params_str = m.group(2).strip()
+            params = [p.strip() for p in params_str.split() if p.strip()] if params_str else []
+            if params == ['r'] or fn_name.startswith('gen-'):
+                continue
+            fns.setdefault(module, []).append({'name': fn_name, 'arity': len(params)})
+    return fns
+
+def extract_typed_functions(source_dir, beagle_bin):
+    """Use beagle-provides to get typed function signatures."""
+    typed = {}
+    if not source_dir or not os.path.isdir(source_dir):
+        return typed
+    for fname in sorted(os.listdir(source_dir)):
+        if not fname.endswith('.rkt'):
+            continue
+        fpath = os.path.join(source_dir, fname)
+        module = fname[:-4]
+        try:
+            result = subprocess.run(
+                [os.path.join(beagle_bin, 'beagle-provides'), fpath],
+                capture_output=True, text=True, timeout=30
+            )
+            for fm in re.finditer(r'^\s+([\w?!<>*+\-/]+)\s+:\s+\[(.+)\]$', result.stdout, re.MULTILINE):
+                fn_name = fm.group(1)
+                sig = fm.group(2)
+                parts = sig.rsplit(' -> ', 1)
+                if len(parts) == 2:
+                    arg_types = [a for a in parts[0].strip().split() if a != '->']
+                    typed.setdefault(module, {})[fn_name] = arg_types
+        except:
+            pass
+    return typed
+
+golden_fns = extract_functions(golden_dir)
+modified_fns = extract_functions(modified_dir)
+
+# Try to get typed signatures from source if available
+beagle_bin = os.environ.get('BEAGLE_BIN', '')
+source_dir = os.environ.get('SOURCE_DIR', '')
+typed_fns = extract_typed_functions(source_dir, beagle_bin) if beagle_bin else {}
+
+shared_modules = set(golden_fns.keys()) & set(modified_fns.keys())
+if not shared_modules:
+    print("No shared modules found between builds", file=sys.stderr)
+    sys.exit(0)
+
+# Find records for test data generation
+def extract_records(build_dir):
+    records = {}
+    for fname in sorted(os.listdir(build_dir)):
+        if not fname.endswith('.clj'):
+            continue
+        module = fname[:-4]
+        path = os.path.join(build_dir, fname)
+        with open(path) as f:
+            content = f.read()
+        for m in re.finditer(r'\(defrecord\s+(\w+)\s+\[([^\]]*)\]\)', content):
+            rec_name = m.group(1)
+            fields = [f.strip() for f in m.group(2).split() if f.strip()]
+            records[rec_name] = {'module': module, 'fields': fields}
+    return records
+
+records = extract_records(golden_dir)
+
+# Generate differential test script
+diff_script = os.path.join(work_dir, 'diff-test.clj')
+with open(diff_script, 'w') as out:
+    out.write(';; Differential test: compare golden vs modified outputs\n')
+    # Require all shared modules
+    module_list = ' '.join(f'[{m}]' for m in sorted(shared_modules))
+    out.write(f'(ns beagle.diff-test (:require {module_list}))\n\n')
+
+    # Test data
+    out.write(';; Test data\n')
+    out.write('(def test-longs [0 1 -1 42 100 999 -50])\n')
+    out.write('(def test-strings ["" "hello" "test" "foo bar"])\n')
+    out.write('(def test-doubles [0.0 1.5 -3.14 100.0])\n')
+    out.write('(def test-booleans [true false])\n\n')
+
+    # Fixed record instances for deterministic diff testing
+    for rec_name, rec_info in sorted(records.items()):
+        mod = rec_info['module']
+        n_fields = len(rec_info['fields'])
+        # Generate 5 deterministic instances with varied field values
+        for i in range(5):
+            vals = ' '.join([str((i * 37 + j * 13 + 100) % 10000) for j in range(n_fields)])
+            out.write(f'(def test-{rec_name}-{i} ({mod}/->{rec_name} {vals}))\n')
+        out.write(f'(def test-{rec_name}s [' + ' '.join(f'test-{rec_name}-{i}' for i in range(5)) + '])\n')
+    out.write('\n')
+
+    out.write('(def results (atom []))\n\n')
+    out.write('(defn record-result! [module fn-name args result]\n')
+    out.write('  (swap! results conj {:module module :fn fn-name\n')
+    out.write('                        :args (pr-str args) :result (pr-str result)}))\n\n')
+
+    test_calls = 0
+    for module in sorted(shared_modules):
+        golden_fn_set = {f['name']: f for f in golden_fns[module]}
+        modified_fn_set = {f['name']: f for f in modified_fns[module]}
+        shared_fn_names = set(golden_fn_set.keys()) & set(modified_fn_set.keys())
+
+        module_types = typed_fns.get(module, {})
+
+        for fn_name in sorted(shared_fn_names):
+            fn = golden_fn_set[fn_name]
+            arity = fn['arity']
+            qual_name = f"{module}/{fn_name}"
+            arg_types = module_types.get(fn_name, [])
+
+            if arity == 0:
+                out.write(f'(try (record-result! "{module}" "{fn_name}" [] ({qual_name}))\n')
+                out.write(f'  (catch Exception e (record-result! "{module}" "{fn_name}" [] (str "ERROR:" (.getMessage e)))))\n')
+                test_calls += 1
+            elif arity == 1:
+                if arg_types and arg_types[0] in records:
+                    rec = arg_types[0]
+                    out.write(f'(doseq [v test-{rec}s]\n')
+                    out.write(f'  (try (record-result! "{module}" "{fn_name}" [v] ({qual_name} v))\n')
+                    out.write(f'    (catch Exception e (record-result! "{module}" "{fn_name}" [v] (str "ERROR:" (.getMessage e))))))\n')
+                    test_calls += 5
+                else:
+                    out.write(f'(doseq [v test-longs]\n')
+                    out.write(f'  (try (record-result! "{module}" "{fn_name}" [v] ({qual_name} v))\n')
+                    out.write(f'    (catch Exception e (record-result! "{module}" "{fn_name}" [v] (str "ERROR:" (.getMessage e))))))\n')
+                    test_calls += 7
+            elif arity == 2 and arg_types and len(arg_types) >= 2:
+                t0, t1 = arg_types[0], arg_types[1]
+                if t0 in records and t1 in records:
+                    out.write(f'(doseq [a test-{t0}s b (take 3 test-{t1}s)]\n')
+                    out.write(f'  (try (record-result! "{module}" "{fn_name}" [a b] ({qual_name} a b))\n')
+                    out.write(f'    (catch Exception e (record-result! "{module}" "{fn_name}" [a b] (str "ERROR:" (.getMessage e))))))\n')
+                    test_calls += 15
+                elif t0 in records:
+                    out.write(f'(doseq [a test-{t0}s b (take 3 test-longs)]\n')
+                    out.write(f'  (try (record-result! "{module}" "{fn_name}" [a b] ({qual_name} a b))\n')
+                    out.write(f'    (catch Exception e (record-result! "{module}" "{fn_name}" [a b] (str "ERROR:" (.getMessage e))))))\n')
+                    test_calls += 15
+                elif t1 in records:
+                    out.write(f'(doseq [a (take 3 test-longs) b test-{t1}s]\n')
+                    out.write(f'  (try (record-result! "{module}" "{fn_name}" [a b] ({qual_name} a b))\n')
+                    out.write(f'    (catch Exception e (record-result! "{module}" "{fn_name}" [a b] (str "ERROR:" (.getMessage e))))))\n')
+                    test_calls += 15
+                else:
+                    out.write(f'(doseq [a (take 3 test-longs) b (take 3 test-longs)]\n')
+                    out.write(f'  (try (record-result! "{module}" "{fn_name}" [a b] ({qual_name} a b))\n')
+                    out.write(f'    (catch Exception e (record-result! "{module}" "{fn_name}" [a b] (str "ERROR:" (.getMessage e))))))\n')
+                    test_calls += 9
+            elif arity == 2:
+                out.write(f'(doseq [a (take 3 test-longs) b (take 3 test-longs)]\n')
+                out.write(f'  (try (record-result! "{module}" "{fn_name}" [a b] ({qual_name} a b))\n')
+                out.write(f'    (catch Exception e (record-result! "{module}" "{fn_name}" [a b] (str "ERROR:" (.getMessage e))))))\n')
+                test_calls += 9
+            elif arity == 3 and arg_types and len(arg_types) >= 3:
+                all_scalar = all(t not in records for t in arg_types[:3])
+                if all_scalar:
+                    out.write(f'(doseq [a (take 2 test-longs) b (take 2 test-longs) c (take 2 test-longs)]\n')
+                    out.write(f'  (try (record-result! "{module}" "{fn_name}" [a b c] ({qual_name} a b c))\n')
+                    out.write(f'    (catch Exception e (record-result! "{module}" "{fn_name}" [a b c] (str "ERROR:" (.getMessage e))))))\n')
+                    test_calls += 8
+
+    out.write(f'\n;; {test_calls} test calls generated\n')
+    out.write('(println (str "  " (count @results) " function calls executed"))\n')
+    out.write(';; Output results as EDN\n')
+    out.write(f'(spit "{work_dir}/results.edn" (pr-str @results))\n')
+
+print(f"  Generated {test_calls} differential test calls across {len(shared_modules)} modules", file=sys.stderr)
+
+# Run against golden
+golden_results_file = os.path.join(work_dir, 'golden-results.edn')
+golden_result = subprocess.run(
+    ['bb', '-cp', golden_dir, '-e', f'(load-file "{diff_script}")'],
+    capture_output=True, text=True, timeout=60
+)
+if golden_result.returncode != 0:
+    print(f"  Golden run failed: {golden_result.stderr[:200]}", file=sys.stderr)
+    sys.exit(1)
+print(f"  Golden:{golden_result.stdout.strip()}", file=sys.stderr)
+os.rename(os.path.join(work_dir, 'results.edn'), golden_results_file)
+
+# Run against modified
+modified_results_file = os.path.join(work_dir, 'modified-results.edn')
+modified_result = subprocess.run(
+    ['bb', '-cp', modified_dir, '-e', f'(load-file "{diff_script}")'],
+    capture_output=True, text=True, timeout=60
+)
+if modified_result.returncode != 0:
+    print(f"  Modified run failed: {modified_result.stderr[:200]}", file=sys.stderr)
+    sys.exit(1)
+print(f"  Modified:{modified_result.stdout.strip()}", file=sys.stderr)
+os.rename(os.path.join(work_dir, 'results.edn'), modified_results_file)
+
+# Compare results
+compare_script = os.path.join(work_dir, 'compare.clj')
+with open(compare_script, 'w') as out:
+    out.write(f'(def golden (read-string (slurp "{golden_results_file}")))\n')
+    out.write(f'(def modified (read-string (slurp "{modified_results_file}")))\n')
+    out.write('(def diffs (atom []))\n')
+    out.write('(doseq [[g m] (map vector golden modified)]\n')
+    out.write('  (when (not= (:result g) (:result m))\n')
+    out.write('    (swap! diffs conj {:module (:module g) :fn (:fn g)\n')
+    out.write('                       :args (:args g)\n')
+    out.write('                       :golden (:result g) :modified (:result m)})))\n')
+    out.write('(println (str (count @diffs) " behavioral difference(s) found"))\n')
+    out.write('(doseq [d (take 20 @diffs)]\n')
+    out.write('  (println (str "  DIFF " (:module d) "/" (:fn d) " args=" (:args d)))\n')
+    out.write('  (println (str "    golden:   " (:golden d)))\n')
+    out.write('  (println (str "    modified: " (:modified d))))\n')
+    out.write('(when (> (count @diffs) 20) (println (str "  ... and " (- (count @diffs) 20) " more")))\n')
+    out.write('(when (pos? (count @diffs)) (System/exit 1))\n')
+
+compare_result = subprocess.run(
+    ['bb', '-e', f'(load-file "{compare_script}")'],
+    capture_output=True, text=True, timeout=30
+)
+print(compare_result.stdout, end='')
+if compare_result.stderr:
+    print(compare_result.stderr, file=sys.stderr, end='')
+sys.exit(compare_result.returncode)
+DIFF_PYEOF
 fi

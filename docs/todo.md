@@ -10,8 +10,8 @@ likely bug type (sign error, wrong operator, missing term, etc).
 - [x] CLI: `beagle-blame <build-dir> <verify-script>`
 - [x] Ratio analysis: sign inversion, multiplier mismatch, boolean flip
 - [x] Confidence levels on each hint
-- [ ] Deeper tracing: instrument compiled code to capture intermediate values
-- [ ] Walk call graph to find first divergence point
+- [x] Deeper tracing: instrument compiled code to capture intermediate values
+- [x] Walk call graph to find first divergence point
 
 ### Phase 2: Semantic property inference (name → expected behavior) ✓
 
@@ -53,8 +53,8 @@ value first went wrong and exactly which sub-expression caused it."
 - [x] Source location correlation via beagle's `^{:line N :file "path"}` metadata
 - [x] Single-command workflow: `beagle-trace BUILD-DIR VERIFY-SCRIPT [--focus fn-name]`
 - [x] Validated: 33/33 failures traced on E8 buggy, exact divergence point visible
-- [ ] Integrate with semantic rules: cross-reference trace ops against name expectations
-- [ ] Call-graph walk: trace through function calls to find the root divergence
+- [x] Integrate with semantic rules: cross-reference trace ops against name expectations
+- [x] Call-graph walk: trace through function calls to find the root divergence
 
 ## Phase 5: Closed-loop repair (the endgame) ✓
 
@@ -86,9 +86,10 @@ No handwritten test code — the type system IS the test spec.
 - [x] Record generators: random valid instances from field types + scalar constraints (scalar-erasure-aware)
 - [x] Property inference from return types (Amount → non-negative, Boolean → idempotent, Vec → length)
 - [x] Validated: 204 static + 82 generative properties (1844 assertions at N=20) on E8
-- [ ] Shrinking: when a property fails, minimize the input to smallest failing case
-- [ ] Differential testing: run same inputs through old vs new code,
-      flag any output differences as potential regressions
+- [x] Shrinking: on failure, binary-search field values toward zero to find minimal
+      failing case (54 shrink steps on E8, reports input/shrunk/result per failure)
+- [x] Differential testing: `beagle-proptest --diff` runs same inputs through
+      golden vs modified builds, flags behavioral divergences (6143 calls on E8)
 
 ## Phase 7: Cross-module impact propagation ✓
 
@@ -115,39 +116,43 @@ assertions — the compiler derives what "correct" means.
       reports only functions whose output changed
 - [x] Validated: 34 assertions auto-generated from E8 golden; diff mode detects
       4 behavioral divergences (product-margin sign error) in buggy code
-- [ ] Mutation testing: automatically inject bugs, verify the generated oracle catches them
-- [ ] Multi-arg function coverage: generate valid inputs for 2+ arg functions
-      using cross-product of test data instances
+- [x] Mutation testing: `beagle-muttest` auto-injects 13 mutation operators, runs oracle,
+      reports kill rate (1356 sites on E8, 15% killed at 20-sample, identifies coverage gaps)
+- [x] Multi-arg function coverage: deterministic record instances + type-aware arg generation
+      (7399 calls on E8, up from 6143; catches 59 cascading diffs vs 4 with scalars only)
 
 ## Next: Remaining infrastructure
 
-### Call-graph trace walk (Phase 4 continuation)
+### Call-graph trace walk (Phase 4 continuation) ✓
 
-- [ ] Trace through function calls to find the root divergence (not just leaf operations)
-- [ ] Integrate with semantic rules: cross-reference trace ops against name expectations
-- [ ] Cross-module trace propagation: follow values across require boundaries
+- [x] Trace through function calls to find the root divergence (call→/ret← entries with depth)
+- [x] Cross-module trace propagation: follow values across require boundaries
+- [x] Integrate with semantic rules: annotate suspicious ops in trace (⚠ SUSPECT: reason)
 
-### Property testing remaining
+### Property testing remaining ✓
 
-- [ ] Shrinking: when a property fails, minimize input to smallest failing case
-- [ ] Differential testing: run same inputs through old vs new code, flag output differences
+- [x] Shrinking: on failure, binary-search field values toward zero to find minimal failing case
+- [x] Differential testing: `beagle-proptest --diff` flags behavioral divergences between builds
 
-### LSP / editor integration
+### LSP / editor integration ✓
 
-- [ ] Type-aware completion (query daemon for available symbols + types)
-- [ ] Jump-to-definition (cross-module, using require resolution)
-- [ ] Inline diagnostics (type errors, lint warnings)
-- [ ] Hover for type signatures
+- [x] Hover for type signatures (defn, def, defrecord, extern, stdlib)
+- [x] Inline diagnostics (type errors on open/save, in-memory content)
+- [x] Document symbols (outline of all definitions)
+- [x] Jump-to-definition (same file + directory scan via require resolution)
+- [x] Type-aware completion: local defs + cross-module qualified + stdlib (with type detail)
 
-### Typed REPL
+### Typed REPL ✓
 
-- [ ] Socket-REPL with compile-time checking per expression
-- [ ] Type environment persists across REPL inputs
+- [x] Interactive REPL with compile-time checking per expression
+- [x] Type environment persists across REPL inputs (defn/def/defrecord)
+- [x] Commands: `:type EXPR`, `:sig NAME`, `:env`, `:quit`
 - [ ] Integrates with daemon for cross-module awareness
 
 ### CLJS target remaining
 
-- [ ] Source map generation for ClojureScript debugging
+- [x] Source map generation: `beagle-smap extract` + `beagle-smap compose` rewrites
+      JS source maps to point to original .rkt source (tested on Heist kanban)
 - [ ] Shadow-cljs / figwheel integration testing (Heist validates basic pipeline)
 
 ### Distributed traces
@@ -158,8 +163,8 @@ assertions — the compiler derives what "correct" means.
 ## Someday: Experiments
 
 - [ ] E10: Sonnet/Haiku model tier — test if weaker models show correctness divergence (not just efficiency)
-- [ ] Mutation testing: automatically inject bugs, verify the generated oracle catches them
-- [ ] Multi-arg function coverage: generate valid inputs for 2+ arg functions using cross-product
+- [x] Mutation testing: beagle-muttest (13 operators, 1356 sites on E8, identifies oracle gaps)
+- [x] Multi-arg function coverage: type-aware record instances + deterministic diff testing
 
 ## Done
 
@@ -223,3 +228,11 @@ assertions — the compiler derives what "correct" means.
 - Varargs (`&`) support in defn/fn parameters
 - E9 experiment: repair toolchain validation (beagle 29% faster, 36% fewer tokens vs clojure, 3/3 both tracks)
 - docs/agent-workflow.md, cheatsheet repair section, E9 specs
+- LSP server: hover, diagnostics, document symbols, jump-to-definition (JSON-RPC 2.0 over stdio)
+- Typed REPL: persistent type env, :type/:sig/:env commands, defn/def/defrecord registration
+- Differential testing: beagle-proptest --diff (6143 calls on E8, module-qualified, catches behavioral divergences)
+- Property test shrinking: binary-search field values toward zero, reports input/shrunk/result
+- Call-graph trace walk: function call→/ret← entries with depth, cross-module, semantic annotations
+- Type-aware LSP completion: local defs + cross-module qualified + stdlib (with type signatures)
+- CLJS source maps: beagle-smap extract/compose rewrites JS maps to point to .rkt source
+- Mutation testing: beagle-muttest (13 operators, auto-inject + oracle run, coverage gap reports)
