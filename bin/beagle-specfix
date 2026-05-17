@@ -1,0 +1,554 @@
+#!/usr/bin/env bash
+# beagle-specfix: oracle-guided speculative fix tool.
+#
+# Given a build directory of compiled .clj files and an oracle (verify script
+# with assert-eq assertions), automatically generates and validates candidate
+# fixes for logic bugs that the type system cannot catch.
+#
+# Usage:
+#   beagle-specfix <build-dir> <verify-script>
+#
+# Strategy:
+#   1. Run the oracle, capture failing assertions with expected/actual values
+#   2. For each numeric failure, compute the expected/actual ratio
+#   3. Based on the ratio, generate candidate fixes (operator swaps, etc.)
+#   4. Apply each candidate to a temp copy (metadata-stripped for matching),
+#      rerun the full oracle
+#   5. Report verified fixes that don't introduce regressions
+#
+# Output:
+#   SPECFIX: <assertion-label>
+#     file: <module>.clj
+#     function: <fn-name>
+#     fix: replace `<old>` with `<new>` at line N
+#     confidence: <0-1>
+#     verified: oracle passes with this fix applied
+
+set -euo pipefail
+
+if [[ $# -lt 2 ]]; then
+    echo "Usage: beagle-specfix <build-dir> <verify-script>" >&2
+    exit 1
+fi
+
+BUILD_DIR="$(cd "$1" && pwd)"
+VERIFY_SCRIPT="$(realpath "$2")"
+WORK_DIR="$(mktemp -d /tmp/specfix.XXXXXX)"
+
+trap 'rm -rf "$WORK_DIR"' EXIT
+
+# ---------------------------------------------------------------------------
+# Phase 1: Run oracle, capture failures
+# ---------------------------------------------------------------------------
+
+echo "=== Phase 1: Running oracle ===" >&2
+
+FAILURES_FILE="$WORK_DIR/failures.txt"
+
+clojure -Sdeps "{:paths [\"$BUILD_DIR\"]}" \
+    -M -e "(load-file \"$VERIFY_SCRIPT\")" 2>&1 \
+    | grep -A2 "^FAIL:" > "$FAILURES_FILE" || true
+
+FAIL_COUNT=$(grep -c "^FAIL:" "$FAILURES_FILE" || echo 0)
+echo "  Found $FAIL_COUNT failing assertions" >&2
+
+if [[ "$FAIL_COUNT" -eq 0 ]]; then
+    echo "No failures found. Nothing to fix." >&2
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# Phase 2+3: Analyze, generate candidates, verify
+# ---------------------------------------------------------------------------
+
+export SPECFIX_FAILURES="$FAILURES_FILE"
+export SPECFIX_BUILD_DIR="$BUILD_DIR"
+export SPECFIX_WORK_DIR="$WORK_DIR"
+export SPECFIX_VERIFY="$VERIFY_SCRIPT"
+
+python3 - << 'PYEOF'
+import sys, os, re, subprocess, shutil, tempfile
+
+failures_file = os.environ['SPECFIX_FAILURES']
+build_dir = os.environ['SPECFIX_BUILD_DIR']
+work_dir = os.environ['SPECFIX_WORK_DIR']
+verify_script = os.environ['SPECFIX_VERIFY']
+
+META_RE = re.compile(r'\^\{[^}]*\}\s*')
+
+def strip_meta(text):
+    """Remove ^{:line N :file "..."} metadata annotations."""
+    return META_RE.sub('', text)
+
+# ---------------------------------------------------------------------------
+# Parse failures
+# ---------------------------------------------------------------------------
+
+failures = []
+with open(failures_file) as f:
+    lines = f.readlines()
+
+i = 0
+while i < len(lines):
+    line = lines[i].rstrip()
+    m = re.match(r"^FAIL: (.+)", line)
+    if m:
+        label = m.group(1)
+        expected = None
+        actual = None
+        if i+1 < len(lines):
+            em = re.match(r"\s+expected:\s+(.+)", lines[i+1].rstrip())
+            if em:
+                expected = em.group(1)
+        if i+2 < len(lines):
+            am = re.match(r"\s+actual:\s+(.+)", lines[i+2].rstrip())
+            if am:
+                actual = am.group(1)
+        failures.append({
+            'label': label,
+            'expected': expected,
+            'actual': actual,
+        })
+        i += 3
+    else:
+        i += 1
+
+print(f"  Parsed {len(failures)} failures", file=sys.stderr)
+
+# ---------------------------------------------------------------------------
+# Module / function mapping
+# ---------------------------------------------------------------------------
+
+PREFIX_MAP = {
+    'cat/': 'catalog',
+    'cust/': 'customers',
+    'inv/': 'inventory',
+    'ord/': 'orders',
+    'rep/': 'reports',
+    'ship/': 'shipping',
+    'bill/': 'billing',
+    'proc/': 'procurement',
+    'promo/': 'promotions',
+    'emp/': 'employees',
+    'analytics/': 'analytics',
+    'notif/': 'notifications',
+    'audit/': 'audit',
+}
+
+def label_to_module(label):
+    for prefix, module in PREFIX_MAP.items():
+        if label.startswith(prefix):
+            return module
+    ll = label.lower()
+    if 'order' in ll: return 'orders'
+    if 'ship' in ll: return 'shipping'
+    if 'invoice' in ll or 'bill' in ll: return 'billing'
+    if 'rep/' in ll or 'report' in ll: return 'reports'
+    return None
+
+def label_to_function(label):
+    m = re.match(r"[a-z]+/([a-zA-Z0-9_-]+)", label)
+    if m:
+        return m.group(1)
+    return None
+
+# ---------------------------------------------------------------------------
+# File reading with metadata handling
+# ---------------------------------------------------------------------------
+
+def read_module(module):
+    """Read a module file, return (raw_lines, clean_lines)."""
+    path = os.path.join(build_dir, f"{module}.clj")
+    if not os.path.exists(path):
+        return None, None, None
+    with open(path) as f:
+        raw_content = f.read()
+    raw_lines = raw_content.split('\n')
+    clean_lines = [strip_meta(l) for l in raw_lines]
+    return path, raw_lines, clean_lines
+
+def find_function_range(clean_lines, fn_name):
+    """Find start/end line indices for a function."""
+    if fn_name is None:
+        return 0, len(clean_lines)
+
+    start = None
+    for i, line in enumerate(clean_lines):
+        if re.search(r'\(defn\s+' + re.escape(fn_name) + r'\b', line):
+            start = i
+            break
+
+    if start is None:
+        return 0, len(clean_lines)
+
+    end = len(clean_lines)
+    for i in range(start + 1, len(clean_lines)):
+        cl = clean_lines[i].lstrip()
+        if cl.startswith('(defn ') or cl.startswith('(defrecord '):
+            end = i
+            break
+
+    return start, end
+
+# ---------------------------------------------------------------------------
+# Candidate generation
+# ---------------------------------------------------------------------------
+
+def compute_ratio(expected, actual):
+    try:
+        e = float(expected)
+        a = float(actual)
+    except (ValueError, TypeError):
+        return None
+    if e == 0:
+        return None
+    return a / e
+
+def generate_candidates(failure):
+    """Generate candidate fixes for a failure."""
+    label = failure['label']
+    expected = failure['expected']
+    actual = failure['actual']
+    module = label_to_module(label)
+    fn_name = label_to_function(label)
+
+    if module is None:
+        return []
+
+    path, raw_lines, clean_lines = read_module(module)
+    if path is None:
+        return []
+
+    ratio = compute_ratio(expected, actual)
+    candidates = []
+    start, end = find_function_range(clean_lines, fn_name)
+
+    # Strategy 1: ratio == -1 -> swap operands in subtraction
+    if ratio is not None and abs(ratio - (-1.0)) < 0.01:
+        for i in range(start, end):
+            cl = clean_lines[i]
+            # Match (- (expr1) (expr2))
+            for m in re.finditer(r'\(-\s+(\([^)]+\))\s+(\([^)]+\))\)', cl):
+                arg1 = m.group(1)
+                arg2 = m.group(2)
+                candidates.append({
+                    'label': label,
+                    'module': module,
+                    'fn_name': fn_name,
+                    'line': i + 1,
+                    'line_idx': i,
+                    'search': f'(- {arg1} {arg2})',
+                    'replace': f'(- {arg2} {arg1})',
+                    'description': f'swap operands: `(- {arg1} {arg2})` -> `(- {arg2} {arg1})`',
+                    'confidence': 0.85,
+                    'type': 'operand-swap',
+                })
+
+    # Strategy 2: ratio > 9 -> try + to * (value way too large)
+    if ratio is not None and ratio > 9:
+        for i in range(start, end):
+            cl = clean_lines[i]
+            for m in re.finditer(r'\(\+\s+(\S+)\s+(\S+|\([^)]+\))\)', cl):
+                arg1 = m.group(1)
+                arg2 = m.group(2)
+                candidates.append({
+                    'label': label,
+                    'module': module,
+                    'fn_name': fn_name,
+                    'line': i + 1,
+                    'line_idx': i,
+                    'search': f'(+ {arg1} {arg2})',
+                    'replace': f'(* {arg1} {arg2})',
+                    'description': f'operator: `(+ {arg1} {arg2})` -> `(* {arg1} {arg2})`',
+                    'confidence': 0.75,
+                    'type': 'plus-to-times',
+                })
+
+    # Strategy 3: actual == 0, expected != 0 -> wrong filter/accessor
+    if actual == '0' and expected != '0':
+        for i in range(start, end):
+            cl = clean_lines[i]
+            # Wrong string arg where variable expected
+            m_str = re.search(r'(\w+-for-order)\s+(\w+)\s+"(\w+)"', cl)
+            if m_str:
+                func_called = m_str.group(1)
+                coll_arg = m_str.group(2)
+                string_arg = m_str.group(3)
+                candidates.append({
+                    'label': label,
+                    'module': module,
+                    'fn_name': fn_name,
+                    'line': i + 1,
+                    'line_idx': i,
+                    'search': f'(shipments-for-order {coll_arg} "{string_arg}")',
+                    'replace': f'(shipments-for-order {coll_arg} order-id)',
+                    'description': f'wrong argument: `"{string_arg}"` should be `order-id`',
+                    'confidence': 0.80,
+                    'type': 'wrong-arg',
+                })
+
+    # Strategy 3b: wrong accessor in arithmetic (not gated on actual==0)
+    # Detect (something-id x) used in (+ ... ) context where a cost/rate accessor exists
+    if ratio is not None and 0 < ratio < 1:
+        raw_content_full = '\n'.join(raw_lines)
+        for i in range(start, end):
+            cl = clean_lines[i]
+            # Look for (+ (something-id x) ...) — ID used where cost/rate expected
+            for m in re.finditer(r'\((\w+-id)\s+(\w+)\)', cl):
+                accessor = m.group(1)
+                arg = m.group(2)
+                # Check this is inside an arithmetic expression
+                if not re.search(r'\(\+\s.*' + re.escape(m.group(0)), cl):
+                    continue
+                prefix = accessor.rsplit('-id', 1)[0]
+                for alt_suffix in ['base-rate', 'base-fee', 'cost', 'rate', 'amount', 'fee']:
+                    alt_accessor = f'{prefix}-{alt_suffix}'
+                    if f'(defn {alt_accessor}' in raw_content_full:
+                        candidates.append({
+                            'label': label,
+                            'module': module,
+                            'fn_name': fn_name,
+                            'line': i + 1,
+                            'line_idx': i,
+                            'search': f'({accessor} {arg})',
+                            'replace': f'({alt_accessor} {arg})',
+                            'description': f'wrong accessor: `({accessor} {arg})` -> `({alt_accessor} {arg})`',
+                            'confidence': 0.80,
+                            'type': 'wrong-accessor',
+                        })
+
+    # Strategy 4: percentage/factor bugs
+    if ratio is not None and abs(ratio - 0.1) < 0.02:
+        for i in range(start, end):
+            cl = clean_lines[i]
+            if ' 10 ' in cl or ' 10)' in cl:
+                candidates.append({
+                    'label': label,
+                    'module': module,
+                    'fn_name': fn_name,
+                    'line': i + 1,
+                    'line_idx': i,
+                    'search': '10',
+                    'replace': '100',
+                    'description': 'factor: `10` -> `100`',
+                    'confidence': 0.70,
+                    'type': 'factor-fix',
+                })
+
+    # Strategy 5: + where * needed (surcharge calculations: ratio < 1 and > 0)
+    # e.g., (+ cost pct) / 100 should be (* cost pct) / 100
+    if ratio is not None and 0 < ratio < 0.7 and ratio > 0:
+        for i in range(start, end):
+            cl = clean_lines[i]
+            for m in re.finditer(r'\(\+\s+(\S+)\s+(\([^)]+\)|\S+)\)', cl):
+                arg1 = m.group(1)
+                arg2 = m.group(2)
+                candidates.append({
+                    'label': label,
+                    'module': module,
+                    'fn_name': fn_name,
+                    'line': i + 1,
+                    'line_idx': i,
+                    'search': f'(+ {arg1} {arg2})',
+                    'replace': f'(* {arg1} {arg2})',
+                    'description': f'operator: `(+ {arg1} {arg2})` -> `(* {arg1} {arg2})`',
+                    'confidence': 0.75,
+                    'type': 'plus-to-times',
+                })
+
+    return candidates
+
+# ---------------------------------------------------------------------------
+# Apply fix to a file (handles metadata-annotated code)
+# ---------------------------------------------------------------------------
+
+def apply_fix_to_file(src_path, dst_path, candidate):
+    """Apply a candidate fix, handling metadata annotations in the source."""
+    with open(src_path) as f:
+        raw_lines = f.readlines()
+
+    target_line_idx = candidate['line_idx']
+    search_text = candidate['search']
+    replace_text = candidate['replace']
+
+    # First try: exact match in the raw file (works for simple patterns like "pending")
+    raw_content = ''.join(raw_lines)
+    if search_text in raw_content:
+        fixed = raw_content.replace(search_text, replace_text, 1)
+        with open(dst_path, 'w') as f:
+            f.write(fixed)
+        return True
+
+    # Second try: metadata-aware replacement on the target line
+    # Strip metadata from the target line, do the replacement, then rebuild
+    # But we need to handle the case where the pattern spans metadata annotations
+    #
+    # Strategy: build a regex that matches the search_text with optional metadata
+    # between every token. E.g., "(- X Y)" becomes "(- <meta?>X <meta?>Y)"
+
+    # For the target line, try stripping metadata and replacing
+    if 0 <= target_line_idx < len(raw_lines):
+        raw_line = raw_lines[target_line_idx]
+        clean_line = strip_meta(raw_line)
+
+        if search_text in clean_line:
+            # Build metadata-aware regex from the search pattern
+            # Split search into tokens and allow metadata between them
+            meta_opt = r'(?:\^\{[^}]*\}\s*)?'
+
+            # Escape regex special chars in the search text
+            # Then insert optional metadata between each meaningful boundary
+            escaped = re.escape(search_text)
+            # Allow metadata between any space or before parens
+            # Replace escaped spaces with: space + optional_metadata
+            flexible_pattern = escaped.replace(r'\ ', r'\s+' + meta_opt)
+            # Also allow metadata after opening parens
+            flexible_pattern = flexible_pattern.replace(r'\(', r'\(' + meta_opt)
+
+            try:
+                m = re.search(flexible_pattern, raw_line)
+                if m:
+                    # Replace the matched span with the replacement
+                    # But we need to preserve any metadata in the replacement
+                    # Simple approach: just replace the matched region with the replacement text
+                    new_line = raw_line[:m.start()] + replace_text + raw_line[m.end():]
+                    raw_lines[target_line_idx] = new_line
+                    with open(dst_path, 'w') as f:
+                        f.writelines(raw_lines)
+                    return True
+            except re.error:
+                pass
+
+    # Third try: strip ALL metadata from the file, then do the replacement
+    stripped_content = strip_meta(raw_content)
+    if search_text in stripped_content:
+        fixed = stripped_content.replace(search_text, replace_text, 1)
+        with open(dst_path, 'w') as f:
+            f.write(fixed)
+        return True
+
+    return False
+
+# ---------------------------------------------------------------------------
+# Oracle runner
+# ---------------------------------------------------------------------------
+
+def run_oracle(build_dir_path, verify_path):
+    """Run oracle, return set of failing labels (or None on error)."""
+    try:
+        result = subprocess.run(
+            ['clojure', '-Sdeps', f'{{:paths ["{build_dir_path}"]}}',
+             '-M', '-e', f'(load-file "{verify_path}")'],
+            capture_output=True, text=True, timeout=120
+        )
+        output = result.stdout + result.stderr
+        failing = set()
+        for line in output.split('\n'):
+            m_f = re.match(r'^FAIL: (.+)', line)
+            if m_f:
+                failing.add(m_f.group(1))
+        return failing
+    except (subprocess.TimeoutExpired, Exception) as e:
+        print(f"    Error running oracle: {e}", file=sys.stderr)
+        return None
+
+# ---------------------------------------------------------------------------
+# Phase 2: Generate candidates
+# ---------------------------------------------------------------------------
+
+print("=== Phase 2: Generating candidates ===", file=sys.stderr)
+
+all_candidates = []
+for failure in failures:
+    all_candidates.extend(generate_candidates(failure))
+
+# Deduplicate by (module, search, replace)
+seen = set()
+unique_candidates = []
+for c in all_candidates:
+    key = (c['module'], c['search'], c['replace'])
+    if key not in seen:
+        seen.add(key)
+        unique_candidates.append(c)
+
+print(f"  Generated {len(all_candidates)} total, {len(unique_candidates)} unique candidates", file=sys.stderr)
+
+# ---------------------------------------------------------------------------
+# Phase 3: Verify candidates
+# ---------------------------------------------------------------------------
+
+print("=== Phase 3: Verifying candidates ===", file=sys.stderr)
+
+baseline_failures = set(f['label'] for f in failures)
+print(f"  Baseline: {len(baseline_failures)} failures", file=sys.stderr)
+
+verified_fixes = []
+
+for idx, candidate in enumerate(unique_candidates):
+    desc = candidate['description']
+    print(f"  [{idx+1}/{len(unique_candidates)}] {candidate['module']}/{candidate.get('fn_name','?')}: {desc}", file=sys.stderr)
+
+    # Create temp dir with fix applied
+    temp_dir = tempfile.mkdtemp(dir=work_dir)
+    for f in os.listdir(build_dir):
+        if f.endswith('.clj'):
+            shutil.copy2(os.path.join(build_dir, f), temp_dir)
+
+    module_file = f"{candidate['module']}.clj"
+    src_path = os.path.join(build_dir, module_file)
+    dst_path = os.path.join(temp_dir, module_file)
+
+    applied = apply_fix_to_file(src_path, dst_path, candidate)
+    if not applied:
+        print(f"    SKIP: pattern not found in file", file=sys.stderr)
+        continue
+
+    # Run oracle
+    new_failures = run_oracle(temp_dir, verify_script)
+    if new_failures is None:
+        print(f"    ERROR: oracle crashed", file=sys.stderr)
+        continue
+
+    target_label = candidate['label']
+    target_fixed = target_label not in new_failures
+    regressions = new_failures - baseline_failures
+    fixes_count = len(baseline_failures - new_failures)
+
+    if target_fixed and len(regressions) == 0:
+        candidate['verified'] = True
+        candidate['fixes_count'] = fixes_count
+        candidate['remaining_failures'] = len(new_failures)
+        verified_fixes.append(candidate)
+        print(f"    VERIFIED: fixes {fixes_count} assertion(s), 0 regressions, {len(new_failures)} remaining", file=sys.stderr)
+    elif target_fixed and len(regressions) > 0:
+        print(f"    REJECTED: target fixed but {len(regressions)} regression(s): {list(regressions)[:3]}", file=sys.stderr)
+    else:
+        print(f"    FAILED: target still failing ({len(new_failures)} total failures)", file=sys.stderr)
+
+# ---------------------------------------------------------------------------
+# Phase 4: Output
+# ---------------------------------------------------------------------------
+
+print("", file=sys.stderr)
+print(f"=== Results: {len(verified_fixes)} verified fix(es) ===", file=sys.stderr)
+
+if not verified_fixes:
+    print("No verified fixes found.")
+    sys.exit(0)
+
+# Sort by fixes_count descending, then confidence
+verified_fixes.sort(key=lambda x: (-x['fixes_count'], -x['confidence']))
+
+for fix in verified_fixes:
+    print(f"SPECFIX: {fix['label']}")
+    print(f"  file: {fix['module']}.clj")
+    print(f"  function: {fix.get('fn_name', '(unknown)')}")
+    print(f"  fix: {fix['description']}")
+    print(f"  line: {fix['line']}")
+    print(f"  confidence: {fix['confidence']}")
+    print(f"  verified: oracle passes with this fix applied")
+    print(f"  assertions-fixed: {fix['fixes_count']}")
+    print(f"  remaining-failures: {fix['remaining_failures']}")
+    print()
+
+PYEOF

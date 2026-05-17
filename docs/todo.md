@@ -29,28 +29,101 @@ names and types. No ML, no LLM — just pattern matching.
 - [x] Aggregation context detection (don't flag + inside for/reduce)
 - [x] Validated: 3 true positives, 1 false positive on E8 buggy vs golden
 
-### Phase 3: Oracle-guided speculative fix
+### Phase 3: Oracle-guided speculative fix ✓
 
 For each blame-traced bug, generate a candidate fix, run the oracle with
 it applied, and report confidence based on whether it passes.
 
-- [ ] Candidate generation from blame trace (arithmetic flip, accessor swap)
-- [ ] Sandboxed oracle run with candidate applied
-- [ ] Confidence scoring: blame evidence + name semantics + oracle pass = high
-- [ ] Output as ranked repair queue (same format as beagle-fix)
+- [x] Candidate generation from ratio analysis (operand swap, operator change, divisor fix)
+- [x] Sandboxed oracle run with candidate applied (copies build dir, applies fix, reruns full oracle)
+- [x] Regression detection: verified fix must not introduce new failures
+- [x] Output as ranked repair queue (SPECFIX: label, file, function, confidence, assertions-fixed)
+- [x] Validated: 2/5 candidates verified on E8 buggy (product-margin swap, zone-surcharge operator)
+- [ ] Deeper candidate generation: accessor swap, wrong-argument detection
+- [ ] Cross-evidence correlation: combine blame ratio + semantic rules for confidence boost
 
-## Someday
+## Next: Instrumented tracing (beagle-blame v2)
 
-Speculative; no commitment.
+Full computation trace — not just ratio hints, but "here's where the
+value first went wrong and exactly which sub-expression caused it."
 
-- **Reader normalization pass.** The reader currently emits `#%brackets`
-  tags that leak into the compiler. Add a post-read normalization step
-  that resolves bracket semantics (vector vs. grouping) in one place,
-  so downstream parse/check/emit never see `#%brackets` — just typed
-  AST nodes. Eliminates "delimiter astrology" from the compiler core.
-- **LSP / editor integration.** Type-aware completion, jump-to-def, etc.
-- **Typed REPL.** Connect to a live Clojure socket-repl, evaluate
-  beagle forms with full type checking before sending.
+- [ ] Instrumented emit mode: wrap defn bodies with value capture
+- [ ] Trace format: function → let-binding → sub-expression → value
+- [ ] Run oracle with tracing, on failure dump the call chain
+- [ ] Integrate with semantic rules: "this `+` at line 87 produced 4800,
+      name says 'discount' → should be `-`, would produce 3200 = expected"
+- [ ] Single-command workflow: `beagle-blame --trace .build/ verify.clj`
+
+## Phase 5: Closed-loop repair (the endgame)
+
+The compiler loop closes. Agent writes → evidence compiler produces a
+ranked repair queue → agent applies queue → one verification pass → done.
+
+- [ ] `beagle-repair` — unified tool combining all evidence sources:
+  - Type errors (hard, mechanical — auto-apply)
+  - Semantic suspicions (soft, name-based — suggest)
+  - Blame traces (empirical, ratio-based — suggest with confidence)
+  - Speculative fixes (verified — auto-apply if oracle passes)
+- [ ] Repair queue output: ordered by confidence, each entry is an
+      executable diff (file, line, old, new, confidence, evidence sources)
+- [ ] `--auto` mode: apply all fixes above threshold, recompile, reverify
+- [ ] Cross-evidence correlation: if type error + semantic rule + blame
+      trace all point at same line, boost confidence to 0.95+
+- [ ] Regression detection: after applying a fix, check that no previously
+      passing assertions now fail
+
+## Phase 6: Schema-driven property generation
+
+Use defrecord + defscalar type information to auto-generate property tests.
+No handwritten test code — the type system IS the test spec.
+
+- [ ] Record generators: from `(defrecord Order [...])`, generate random
+      valid Order instances respecting field types and scalar constraints
+- [ ] Property inference from return types:
+  - Amount → non-negative
+  - Boolean → idempotent on same input
+  - Vec → length correlates with input length
+  - Count → monotone with collection size
+- [ ] Shrinking: when a property fails, minimize the input to smallest
+      failing case
+- [ ] Integration: `beagle-proptest MODULE.rkt` generates and runs properties
+- [ ] Differential testing: run same inputs through old vs new code,
+      flag any output differences as potential regressions
+
+## Phase 7: Cross-module impact propagation
+
+When a function's behavior changes, automatically identify all downstream
+effects and predict which assertions will break.
+
+- [ ] Build full call graph from type-system query tools
+- [ ] Impact analysis: "you changed `order-total` → these 14 functions
+      transitively depend on it → these 8 assertions test those paths"
+- [ ] Predictive blame: before running oracle, predict which assertions
+      will fail based on which functions were modified
+- [ ] Cascade detection: "fixing this one bug will likely fix these 5
+      downstream failures too" (don't fix symptoms, fix roots)
+
+## Phase 8: Behavioral oracle synthesis
+
+Generate the oracle itself from the code + types. No handwritten
+assertions — the compiler derives what "correct" means.
+
+- [ ] Golden snapshot: compile golden code, run with reference inputs,
+      capture all function outputs as expected values
+- [ ] Assertion generation: for each exported function, generate
+      `(assert-eq "fn/input-hash" expected (fn args))` automatically
+- [ ] Differential oracle: compare two versions of code, generate
+      assertions for everything that changed
+- [ ] Mutation testing: automatically inject bugs, verify that the
+      generated oracle catches them (validate oracle completeness)
+
+## Someday (infrastructure)
+
+- **Reader normalization pass.** `#%brackets` tags → typed AST nodes.
+- **LSP / editor integration.** Type-aware completion, jump-to-def.
+- **Typed REPL.** Socket-repl with compile-time checking.
+- **CLJS target maturity.** Full ClojureScript emit parity.
+- **Distributed traces.** Multi-service blame across microservice boundaries.
 
 ## Done
 

@@ -124,6 +124,7 @@ parse → check → emit
 - `bin/beagle-check-all FILE-OR-DIR...` — batch type-check (10x vs sequential) + semantic suspicions
 - `bin/beagle-expand SOURCE.rkt` — print source after macro expansion
 - `bin/beagle-blame BUILD-DIR VERIFY-SCRIPT` — run oracle with blame analysis (ratio → likely bug type)
+- `bin/beagle-specfix BUILD-DIR VERIFY-SCRIPT` — oracle-guided speculative fix (generate candidates, verify against oracle, report fixes)
 - `bin/beagle-sig FN-NAME FILE-OR-DIR...` — print a function's typed signature
 - `bin/beagle-fields RECORD FILE-OR-DIR...` — print record fields, types, and accessors
 - `bin/beagle-callers FN-NAME FILE-OR-DIR...` — find all call sites of a function
