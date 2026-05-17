@@ -12,6 +12,8 @@
 #
 # Generated properties:
 #   - Record constructor round-trip (construct → access → equals)
+#   - Record generators (random valid instances from field types)
+#   - Property inference (return type → non-negative, deterministic, vec length)
 #   - Scalar non-negativity (Amount, Price, Count → >= 0)
 #   - Function return type constraints (returns Amount → non-negative)
 #   - Monotonicity (count functions → >= 0)
@@ -56,8 +58,14 @@ source_dir = sys.argv[1]
 beagle_bin = sys.argv[2]
 work_dir = sys.argv[3]
 
+# =========================================================================
 # Collect type information from all modules
+# =========================================================================
+
 modules = {}
+all_scalars = {}   # name -> base type, across all modules
+all_records = {}   # name -> {module, fields}, across all modules
+
 for fname in sorted(os.listdir(source_dir)):
     if not fname.endswith('.rkt'):
         continue
@@ -83,23 +91,25 @@ for fname in sorted(os.listdir(source_dir)):
         rec_name = m.group(1)
         fields_str = m.group(2)
         fields = []
-        for fm in re.finditer(r'([\w-]+):(\w+\??)', fields_str):
+        for fm in re.finditer(r'([\w-]+):([\w/?]+)', fields_str):
             fields.append({'name': fm.group(1), 'type': fm.group(2)})
         if fields:
             records.append({'name': rec_name, 'fields': fields})
+            all_records[rec_name] = {'module': module_name, 'fields': fields}
 
     # Parse functions
     for m in re.finditer(r'^\s+([\w?!<>*+\-/]+)\s+:\s+\[(.+)\]$', output, re.MULTILINE):
         fn_name = m.group(1)
         sig = m.group(2)
-        # Parse "Arg1 Arg2 -> RetType"
         parts = sig.rsplit(' -> ', 1)
         if len(parts) == 2:
             args_str = parts[0].strip()
             ret_type = parts[1].strip()
+            arg_types = [a for a in args_str.split() if a != '->']
             functions.append({
                 'name': fn_name,
                 'args': args_str,
+                'arg_types': arg_types,
                 'return_type': ret_type,
             })
 
@@ -107,7 +117,10 @@ for fname in sorted(os.listdir(source_dir)):
     with open(fpath) as f:
         src = f.read()
     for sm in re.finditer(r'\(defscalar\s+(\w+)\s+(\w+)\)', src):
-        scalars.append({'name': sm.group(1), 'base': sm.group(2)})
+        scalar_name = sm.group(1)
+        scalar_base = sm.group(2)
+        scalars.append({'name': scalar_name, 'base': scalar_base})
+        all_scalars[scalar_name] = scalar_base
 
     modules[module_name] = {
         'records': records,
@@ -115,105 +128,310 @@ for fname in sorted(os.listdir(source_dir)):
         'scalars': scalars,
     }
 
-# ---------------------------------------------------------------------------
-# Generate properties
-# ---------------------------------------------------------------------------
+# =========================================================================
+# Type resolution helpers
+# =========================================================================
 
-# Known scalar semantics
+def resolve_base_type(t):
+    """Unwrap scalar types to their base. e.g. Amount -> Long, Price -> Long."""
+    bare = t.split('/')[-1] if '/' in t else t
+    if bare in all_scalars:
+        return all_scalars[bare]
+    return bare
+
+def is_scalar(t):
+    bare = t.split('/')[-1] if '/' in t else t
+    return bare in all_scalars
+
+def is_record(t):
+    bare = t.split('/')[-1] if '/' in t else t
+    return bare in all_records
+
+# Known semantic categories
 NONNEG_SCALARS = {'Amount', 'Price', 'Count', 'Quantity', 'Weight', 'Cost'}
-ID_SCALARS = {'Id', 'ProductId', 'OrderId', 'CustomerId', 'SupplierId',
-              'CategoryId', 'EmployeeId', 'WarehouseId', 'InvoiceId',
-              'NotificationId', 'ShipmentId'}
+ID_SCALARS = set()
+for s in all_scalars:
+    if s.endswith('Id'):
+        ID_SCALARS.add(s)
 
-properties = []
+# Field names that should generate non-negative values
+NONNEG_FIELDS = frozenset([
+    'quantity', 'count', 'capacity', 'min-quantity', 'min-qty',
+    'max-uses', 'current-uses', 'discount-value', 'discount-pct',
+    'lead-time-days', 'uses', 'surcharge-pct', 'commission-pct',
+    'weight-kg', 'target', 'total-spend',
+])
+
+# =========================================================================
+# Record generators
+# =========================================================================
+
+def gen_expr_for_type(t, field_name='', depth=0):
+    """Return a Clojure expression that generates a random value of type t.
+
+    Key insight: beagle scalars (defscalar Amount Long) erase at compile time.
+    ->Amount and amount-value are identity at runtime.  So scalar-typed fields
+    just get a raw base-type value -- no wrapping constructor call.
+    """
+    if depth > 3:
+        return 'nil'
+    bare = t.split('/')[-1] if '/' in t else t
+    base = resolve_base_type(t)
+
+    # Scalar wrapping a base type -- emit raw value (scalar ctors are erased)
+    if bare in all_scalars:
+        return gen_expr_for_base(all_scalars[bare], bare, field_name)
+
+    # Record type -- constructor IS real at runtime (Clojure defrecord)
+    if bare in all_records:
+        rec_info = all_records[bare]
+        mod = rec_info['module']
+        field_exprs = []
+        for fld in rec_info['fields']:
+            field_exprs.append(gen_expr_for_type(fld['type'], fld['name'], depth + 1))
+        return f'({mod}/->{bare} {" ".join(field_exprs)})'
+
+    # Base types
+    return gen_expr_for_base(base, bare, field_name)
+
+
+def gen_expr_for_base(base, hint='', field_name=''):
+    """Return a Clojure expression for a random base type value."""
+    if base == 'Long':
+        # Use scalar name hint for range
+        if any(hint.endswith(s) for s in ['Id']):
+            return '(+ 1 (rand-int 10000))'
+        if hint in NONNEG_SCALARS or any(hint.startswith(s) for s in NONNEG_SCALARS):
+            return '(rand-int 10000)'
+        # Field name heuristics for realistic data
+        if field_name in NONNEG_FIELDS:
+            return '(rand-int 1000)'
+        return '(- (rand-int 20000) 10000)'
+    elif base == 'Double':
+        return '(* (rand) 100.0)'
+    elif base == 'String':
+        return '(rand-nth ["alpha" "bravo" "charlie" "delta" "echo" "foxtrot" "golf" "hotel"])'
+    elif base == 'Boolean':
+        return '(rand-nth [true false])'
+    elif base == 'Keyword':
+        return '(rand-nth [:a :b :c :d :e])'
+    elif base == 'Any':
+        return 'nil'
+    elif base.startswith('Vec') or base.startswith('(Vec'):
+        return '[]'
+    elif base.startswith('Map') or base.startswith('(Map'):
+        return '{}'
+    else:
+        return '(rand-int 10000)'
+
+
+def gen_fn_name(rec_name):
+    return f'gen-{rec_name}'
+
+
+# =========================================================================
+# Property inference from function signatures
+# =========================================================================
+
+def infer_properties(ns, fn_info):
+    """Infer testable properties from a function's signature and name."""
+    props = []
+    fn_name = fn_info['name']
+    ret = fn_info['return_type']
+    arg_types = fn_info.get('arg_types', [])
+    ret_bare = ret.split('/')[-1] if '/' in ret else ret
+
+    # --- Return type is non-negative scalar (Amount, Price, Count, etc.) ---
+    if ret_bare in NONNEG_SCALARS or (ret_bare in all_scalars
+            and resolve_base_type(ret_bare) == 'Long'):
+        for nns in NONNEG_SCALARS:
+            if ret_bare == nns or ret_bare.startswith(nns):
+                props.append({
+                    'kind': 'nonneg-return',
+                    'label': f'prop/{ns}/{fn_name}-returns-nonneg',
+                    'fn': fn_name,
+                    'ret_type': ret,
+                })
+                break
+
+    # --- Name-based: *-total, *-sum -> non-negative ---
+    if (fn_name.endswith('-total') or fn_name.endswith('-sum')
+            or fn_name.startswith('total-') or fn_name.startswith('sum-')):
+        if ret_bare == 'Long' or ret_bare in all_scalars:
+            props.append({
+                'kind': 'nonneg-return',
+                'label': f'prop/{ns}/{fn_name}-nonneg-total',
+                'fn': fn_name,
+                'ret_type': ret,
+            })
+
+    # --- Name-based: *-count -> non-negative integer ---
+    if fn_name.endswith('-count') or fn_name.startswith('count-'):
+        props.append({
+            'kind': 'nonneg-return',
+            'label': f'prop/{ns}/{fn_name}-nonneg-count',
+            'fn': fn_name,
+            'ret_type': ret,
+        })
+
+    # --- Return type Boolean -> deterministic (same input -> same output) ---
+    if ret_bare == 'Boolean':
+        props.append({
+            'kind': 'deterministic',
+            'label': f'prop/{ns}/{fn_name}-deterministic',
+            'fn': fn_name,
+        })
+
+    # --- Return type Vec -> length >= 0 ---
+    if ret_bare.startswith('Vec') or ret_bare == 'Any':
+        if (fn_name.startswith('filter') or fn_name.startswith('sort-')
+                or fn_name.endswith('-items') or fn_name.endswith('-list')):
+            props.append({
+                'kind': 'vec-nonneg-length',
+                'label': f'prop/{ns}/{fn_name}-vec-length',
+                'fn': fn_name,
+            })
+
+    return props
+
+
+# =========================================================================
+# Determine which functions can be tested with generators
+# =========================================================================
+
+def can_generate_args(arg_types):
+    """Check if we can generate all argument types."""
+    for t in arg_types:
+        bare = t.split('/')[-1] if '/' in t else t
+        base = resolve_base_type(t)
+        if bare in all_scalars or bare in all_records:
+            continue
+        if base in ('Long', 'Double', 'String', 'Boolean', 'Keyword'):
+            continue
+        # Any is tricky -- we can pass nil or [] but it may not be useful
+        return False
+    return True
+
+
+# =========================================================================
+# Generate properties
+# =========================================================================
+
+properties = []       # static round-trip assertions (existing behavior)
+generators = {}       # rec_name -> gen function code
+gen_properties = []   # randomized property tests
 
 for module_name, info in modules.items():
     ns = module_name
 
-    # --- Record constructor round-trip ---
+    # --- Record generators ---
     for rec in info['records']:
         rec_name = rec['name']
         fields = rec['fields']
-        ctor = f'->{ rec_name}'
-        # Beagle uses lowercase concatenation for accessor prefix (PeriodMetric -> periodmetric)
+        ctor = f'->{rec_name}'
+        gen_name = gen_fn_name(rec_name)
+
+        field_gen_exprs = []
+        for f in fields:
+            field_gen_exprs.append(gen_expr_for_type(f['type'], f['name']))
+
+        gen_code = (f'(defn {gen_name} []\n'
+                    f'  ({ns}/{ctor} {" ".join(field_gen_exprs)}))')
+        generators[rec_name] = {
+            'code': gen_code,
+            'name': gen_name,
+            'module': ns,
+        }
+
+    # --- Record constructor round-trip (existing, preserved) ---
+    for rec in info['records']:
+        rec_name = rec['name']
+        fields = rec['fields']
+        ctor = f'->{rec_name}'
         accessor_prefix = rec_name.lower()
 
-        # Generate sample values per field type
         sample_vals = []
         for f in fields:
             t = f['type']
-            if t in ('Long', 'Double') or any(s in t for s in ['Id', 'Price', 'Amount', 'Count']):
+            bare = t.split('/')[-1] if '/' in t else t
+            base = resolve_base_type(t)
+            if base in ('Long', 'Double') or bare in all_scalars:
                 sample_vals.append('1')
-            elif t == 'String':
+            elif base == 'String':
                 sample_vals.append('"test"')
-            elif t == 'Boolean':
+            elif base == 'Boolean':
                 sample_vals.append('true')
-            elif t == 'Keyword':
+            elif base == 'Keyword':
                 sample_vals.append(':test')
-            elif t.startswith('Vec') or t.startswith('(Vec'):
+            elif base.startswith('Vec') or base.startswith('(Vec'):
                 sample_vals.append('[]')
             else:
-                sample_vals.append('1')  # fallback for scalar wrappers
+                sample_vals.append('1')
 
         if len(sample_vals) == len(fields):
-            props_for_rec = []
-            # Round-trip: construct then access each field
             ctor_call = f'({ns}/{ctor} {" ".join(sample_vals)})'
             for i, f in enumerate(fields):
                 accessor = f'{ns}/{accessor_prefix}-{f["name"]}'
                 expected = sample_vals[i]
-                props_for_rec.append(
+                properties.append(
                     f'(assert-eq "prop/{ns}/{rec_name}/{f["name"]}-roundtrip" '
                     f'{expected} ({accessor} {ctor_call}))'
                 )
-            properties.extend(props_for_rec)
 
-    # --- Scalar non-negativity for function returns ---
-    for fn in info['functions']:
-        ret = fn['return_type']
-        fn_name = fn['name']
-        # Skip functions with complex args (we can't easily generate inputs)
-        if ' ' not in fn['args']:
-            # Single-arg functions — we might be able to test them
-            arg_type = fn['args'].strip()
-            if ret in NONNEG_SCALARS or any(ret.startswith(s) for s in NONNEG_SCALARS):
-                properties.append(
-                    f';; prop: {ns}/{fn_name} returns non-negative {ret}'
-                )
+    # --- Randomized round-trip: generate N instances, verify construction ---
+    for rec in info['records']:
+        rec_name = rec['name']
+        gen_name = gen_fn_name(rec_name)
+        gen_properties.append({
+            'kind': 'gen-roundtrip',
+            'label': f'prop/{ns}/{rec_name}/gen-roundtrip',
+            'gen_name': gen_name,
+            'rec_name': rec_name,
+            'module': ns,
+        })
 
-    # --- Filter/count monotonicity ---
+    # --- Property inference on functions ---
     for fn in info['functions']:
         fn_name = fn['name']
-        ret = fn['return_type']
-        if fn_name.startswith('count-') or fn_name.endswith('-count'):
-            properties.append(
-                f';; prop: {ns}/{fn_name} returns non-negative (count)'
-            )
-        if fn_name.startswith('filter') or fn_name.startswith('active-') or fn_name.startswith('inactive-'):
-            properties.append(
-                f';; prop: {ns}/{fn_name} result is subset of input'
-            )
+        arg_types = fn.get('arg_types', [])
 
-# ---------------------------------------------------------------------------
+        inferred = infer_properties(ns, fn)
+
+        for prop in inferred:
+            if len(arg_types) == 1 and can_generate_args(arg_types):
+                prop['arg_types'] = arg_types
+                prop['module'] = ns
+                gen_properties.append(prop)
+            elif len(arg_types) == 1:
+                prop['executable'] = False
+                gen_properties.append(prop)
+
+# =========================================================================
 # Output as runnable Clojure
-# ---------------------------------------------------------------------------
+# =========================================================================
+
+N_ITERATIONS = 20   # number of random instances per generative property
 
 output_lines = []
 output_lines.append(';; beagle-proptest: auto-generated property assertions')
 output_lines.append(f';; Generated from {len(modules)} module(s)')
-output_lines.append(f';; {len(properties)} properties')
+
+n_static = len(properties)
+n_gen = len([p for p in gen_properties if p.get('executable', True)])
+output_lines.append(
+    f';; {n_static} static properties, {n_gen} generative properties '
+    f'({N_ITERATIONS} iterations each)')
 output_lines.append('')
 
 # Namespace header
 ns_requires = []
 for mod in modules:
     ns_requires.append(f'[{mod}]')
-
 output_lines.append(f'(ns beagle.proptest')
 output_lines.append(f'  (:require {" ".join(ns_requires)}))')
 output_lines.append('')
 
-# Assert-eq helper
+# Test helpers
 output_lines.append('(def ^:dynamic *pass-count* (atom 0))')
 output_lines.append('(def ^:dynamic *fail-count* (atom 0))')
 output_lines.append('')
@@ -221,17 +439,138 @@ output_lines.append('(defn assert-eq [label expected actual]')
 output_lines.append('  (if (= expected actual)')
 output_lines.append('    (swap! *pass-count* inc)')
 output_lines.append('    (do (swap! *fail-count* inc)')
-output_lines.append('        (println (str "FAIL: " label "\\n  expected: " expected "\\n  actual:   " actual)))))')
+output_lines.append('        (println (str "FAIL: " label')
+output_lines.append('                      "\\n  expected: " expected')
+output_lines.append('                      "\\n  actual:   " actual)))))')
 output_lines.append('')
-output_lines.append(';; --- Properties ---')
+output_lines.append('(defn assert-true [label actual]')
+output_lines.append('  (if actual')
+output_lines.append('    (swap! *pass-count* inc)')
+output_lines.append('    (do (swap! *fail-count* inc)')
+output_lines.append('        (println (str "FAIL: " label "\\n  got: " actual)))))')
+output_lines.append('')
+output_lines.append('(defn assert-nonneg [label v]')
+output_lines.append('  (if (>= v 0)')
+output_lines.append('    (swap! *pass-count* inc)')
+output_lines.append('    (do (swap! *fail-count* inc)')
+output_lines.append('        (println (str "FAIL: " label')
+output_lines.append('                      "\\n  expected non-negative, got: " v)))))')
+output_lines.append('')
+output_lines.append(f'(def N {N_ITERATIONS})')
 output_lines.append('')
 
+# --- Record generators ---
+output_lines.append(';; === Record Generators ===')
+output_lines.append('')
+for rec_name, gen_info in sorted(generators.items()):
+    output_lines.append(gen_info['code'])
+    output_lines.append('')
+
+# --- Static properties (round-trip) ---
+output_lines.append(';; === Static Round-Trip Properties ===')
+output_lines.append('')
 for prop in properties:
     output_lines.append(prop)
-
 output_lines.append('')
-output_lines.append(';; --- Summary ---')
-output_lines.append('(println (format "\\n%d properties checked, %d failures" (+ @*pass-count* @*fail-count*) @*fail-count*))')
+
+# --- Generative properties ---
+output_lines.append(';; === Generative Properties ===')
+output_lines.append('')
+
+for prop in gen_properties:
+    kind = prop['kind']
+
+    if kind == 'gen-roundtrip':
+        gen_name = prop['gen_name']
+        label = prop['label']
+        output_lines.append(f';; {label}: construct random instances')
+        output_lines.append(f'(dotimes [_ N]')
+        output_lines.append(f'  (let [inst ({gen_name})]')
+        output_lines.append(f'    (assert-true "{label}/not-nil" (some? inst))))')
+        output_lines.append('')
+
+    elif kind == 'nonneg-return' and prop.get('executable', True):
+        fn_name = prop['fn']
+        label = prop['label']
+        module = prop.get('module', '')
+        arg_types = prop.get('arg_types', [])
+        if len(arg_types) == 1:
+            arg_t = arg_types[0]
+            bare = arg_t.split('/')[-1] if '/' in arg_t else arg_t
+            # Scalar return values are plain Longs at runtime (scalars erase)
+            if bare in all_records:
+                gen_name = gen_fn_name(bare)
+                output_lines.append(f';; {label}')
+                output_lines.append(f'(dotimes [_ N]')
+                output_lines.append(f'  (let [input ({gen_name})')
+                output_lines.append(f'        result ({module}/{fn_name} input)]')
+                output_lines.append(f'    (when (some? result)')
+                output_lines.append(f'      (assert-nonneg "{label}" result))))')
+                output_lines.append('')
+            elif bare in all_scalars:
+                gen_input = gen_expr_for_type(arg_t)
+                output_lines.append(f';; {label}')
+                output_lines.append(f'(dotimes [_ N]')
+                output_lines.append(f'  (let [input {gen_input}')
+                output_lines.append(f'        result ({module}/{fn_name} input)]')
+                output_lines.append(f'    (when (some? result)')
+                output_lines.append(f'      (assert-nonneg "{label}" result))))')
+                output_lines.append('')
+
+    elif kind == 'nonneg-return' and not prop.get('executable', True):
+        output_lines.append(f';; [skip] {prop["label"]}: cannot generate args')
+
+    elif kind == 'deterministic' and prop.get('executable', True):
+        fn_name = prop['fn']
+        label = prop['label']
+        module = prop.get('module', '')
+        arg_types = prop.get('arg_types', [])
+        if len(arg_types) == 1:
+            arg_t = arg_types[0]
+            bare = arg_t.split('/')[-1] if '/' in arg_t else arg_t
+            if bare in all_records:
+                gen_name = gen_fn_name(bare)
+                output_lines.append(f';; {label}')
+                output_lines.append(f'(dotimes [_ N]')
+                output_lines.append(f'  (let [input ({gen_name})')
+                output_lines.append(f'        r1 ({module}/{fn_name} input)')
+                output_lines.append(f'        r2 ({module}/{fn_name} input)]')
+                output_lines.append(f'    (assert-eq "{label}" r1 r2)))')
+                output_lines.append('')
+            elif bare in all_scalars:
+                gen_input = gen_expr_for_type(arg_t)
+                output_lines.append(f';; {label}')
+                output_lines.append(f'(dotimes [_ N]')
+                output_lines.append(f'  (let [input {gen_input}')
+                output_lines.append(f'        r1 ({module}/{fn_name} input)')
+                output_lines.append(f'        r2 ({module}/{fn_name} input)]')
+                output_lines.append(f'    (assert-eq "{label}" r1 r2)))')
+                output_lines.append('')
+
+    elif kind == 'vec-nonneg-length' and prop.get('executable', True):
+        fn_name = prop['fn']
+        label = prop['label']
+        module = prop.get('module', '')
+        arg_types = prop.get('arg_types', [])
+        if len(arg_types) == 1:
+            arg_t = arg_types[0]
+            bare = arg_t.split('/')[-1] if '/' in arg_t else arg_t
+            if bare in all_records:
+                gen_name = gen_fn_name(bare)
+                output_lines.append(f';; {label}')
+                output_lines.append(f'(dotimes [_ N]')
+                output_lines.append(f'  (let [input ({gen_name})')
+                output_lines.append(f'        result ({module}/{fn_name} input)]')
+                output_lines.append(f'    (when (some? result)')
+                output_lines.append(f'      (assert-nonneg "{label}" (count result)))))')
+                output_lines.append('')
+
+# --- Summary ---
+output_lines.append('')
+output_lines.append(';; === Summary ===')
+output_lines.append('(println (format "\\n%d properties checked, %d failures"')
+output_lines.append('                 (+ @*pass-count* @*fail-count*) @*fail-count*))')
+output_lines.append('(when (pos? @*fail-count*) (System/exit 1))')
 
 # Write output
 output_path = os.path.join(work_dir, 'proptest.clj')
@@ -241,7 +580,8 @@ with open(output_path, 'w') as f:
 # Also print to stdout
 print('\n'.join(output_lines))
 
-print(f"\n;; Wrote {len(properties)} properties to {output_path}", file=sys.stderr)
+print(f"\n;; Wrote {n_static} static + {n_gen} generative properties to {output_path}",
+      file=sys.stderr)
 PYEOF
 
 # ---------------------------------------------------------------------------

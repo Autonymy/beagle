@@ -652,3 +652,65 @@
 
 (check-fixture-err "defscalar prevents passing backing type where scalar expected"
   "defscalar-call-site.bgl")
+
+;; --- CLJS target tests ---
+
+(define (check-cljs-prog . forms)
+  (define prog (parse-program
+                (map (lambda (f) (datum->syntax #f f))
+                     (cons '(define-target cljs) forms))))
+  (type-check! prog))
+
+(define-syntax-rule (check-cljs-ok name form ...)
+  (test-case name (check-not-exn (lambda () (check-cljs-prog form ...)))))
+
+(define-syntax-rule (check-cljs-warns name rx form ...)
+  (test-case name
+    (let ([output (open-output-string)])
+      (parameterize ([current-error-port output])
+        (check-cljs-prog form ...))
+      (check-regexp-match rx (get-output-string output)))))
+
+(define-syntax-rule (check-cljs-silent name form ...)
+  (test-case name
+    (let ([output (open-output-string)])
+      (parameterize ([current-error-port output])
+        (check-cljs-prog form ...))
+      (check-equal? "" (get-output-string output)))))
+
+(check-cljs-ok "cljs: js/parseInt type-checks"
+  '(def x : Long (js/parseInt "42")))
+
+(check-cljs-ok "cljs: js/Math.sqrt type-checks"
+  '(def x : Double (js/Math.sqrt 16.0)))
+
+(check-cljs-ok "cljs: js/console.log type-checks"
+  '(defn log-it [(msg : String)] : Nil (js/console.log msg)))
+
+(check-cljs-ok "cljs: standard fns work in cljs"
+  '(def x : Long (inc 1)))
+
+(check-cljs-ok "cljs: js/parseFloat type-checks"
+  '(def x : Double (js/parseFloat "3.14")))
+
+(check-cljs-ok "cljs: js/isNaN type-checks"
+  '(def x : Boolean (js/isNaN 0)))
+
+(check-cljs-warns "cljs: slurp warns as JVM-only"
+  #rx"JVM-only"
+  '(def x (slurp "file.txt")))
+
+(check-cljs-warns "cljs: System/getProperty warns as JVM-only"
+  #rx"JVM-only"
+  '(def x (System/getProperty "user.home")))
+
+(check-cljs-warns "cljs: .trim warns as JVM-only"
+  #rx"JVM-only"
+  '(def x (.trim " hello ")))
+
+(check-cljs-warns "cljs: *command-line-args* warns as JVM-only"
+  #rx"JVM-only"
+  '(def x (first *command-line-args*)))
+
+(check-cljs-silent "cljs: universal fn produces no JVM-only warning"
+  '(def x : Long (inc 1)))

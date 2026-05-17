@@ -139,7 +139,7 @@
       [(for-form clauses body)
        ;; Inside a for comprehension = aggregation context
        (for ([b (in-list body)]) (go b ctx #t))]
-      [(fn-form _ _ body)
+      [(fn-form _ _ _ body)
        ;; Lambda passed to reduce/map = likely aggregation
        (for ([b (in-list body)]) (go b ctx #t))]
       [(vec-form items)

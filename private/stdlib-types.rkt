@@ -12,7 +12,7 @@
 ;; `map`, `filter`, `reduce` use `Any` for their parametric positions until
 ;; we have proper parametric function types.
 
-(require "types.rkt")
+(require "types.rkt" racket/set)
 
 (define (p x) (type-prim x))
 (define (tv x) (type-var x))
@@ -699,6 +699,74 @@
    'var?           (fn-of '(Any) 'Boolean)
    'volatile?      (fn-of '(Any) 'Boolean)
    'xml-seq        (fn-of '(Any) 'Any)
+
+   ;; JS interop (ClojureScript)
+   'js/parseInt       (fn-of '(Any) 'Long #:rest 'Any)
+   'js/parseFloat     (fn-of '(String) 'Double)
+   'js/isNaN          (fn-of '(Any) 'Boolean)
+   'js/isFinite       (fn-of '(Any) 'Boolean)
+   'js/encodeURI      (fn-of '(String) 'String)
+   'js/decodeURI      (fn-of '(String) 'String)
+   'js/encodeURIComponent (fn-of '(String) 'String)
+   'js/decodeURIComponent (fn-of '(String) 'String)
+   'js/Math.abs       (fn-of '(Any) 'Any)
+   'js/Math.floor     (fn-of '(Double) 'Double)
+   'js/Math.ceil      (fn-of '(Double) 'Double)
+   'js/Math.round     (fn-of '(Double) 'Long)
+   'js/Math.max       (fn-of '(Any Any) 'Any #:rest 'Any)
+   'js/Math.min       (fn-of '(Any Any) 'Any #:rest 'Any)
+   'js/Math.pow       (fn-of '(Double Double) 'Double)
+   'js/Math.sqrt      (fn-of '(Double) 'Double)
+   'js/Math.random    (fn-of '() 'Double)
+   'js/Math.log       (fn-of '(Double) 'Double)
+   'js/Math.sin       (fn-of '(Double) 'Double)
+   'js/Math.cos       (fn-of '(Double) 'Double)
+   'js/console.log    (fn-of '() 'Nil #:rest 'Any)
+   'js/console.warn   (fn-of '() 'Nil #:rest 'Any)
+   'js/console.error  (fn-of '() 'Nil #:rest 'Any)
+   'js/undefined      (p 'Nil)
+   'js/NaN            (p 'Double)
+   'js/Infinity       (p 'Double)
    ))
 
-(provide STDLIB-TYPES)
+(define CLJS-EXCLUDE
+  (set
+   ;; Java instance methods
+   '.getMessage '.getCause '.getClass '.hashCode '.equals '.compareTo
+   '.indexOf '.lastIndexOf '.charAt '.substring '.replace '.replaceAll
+   '.replaceFirst '.matches '.split '.isEmpty '.toCharArray '.getBytes
+   '.intern '.format '.size '.get '.put '.add '.remove '.clear
+   '.containsKey '.containsValue '.keySet '.values '.entrySet
+   '.iterator '.hasNext '.next
+   '.exists '.toString '.length '.trim '.startsWith '.endsWith
+   '.contains '.toLowerCase '.toUpperCase
+   '.getPath '.getName '.getParent '.getParentFile '.mkdirs '.mkdir
+   '.isDirectory '.isFile '.delete '.canRead '.canWrite '.lastModified
+   '.toPath '.close
+   ;; Java static methods
+   'System/getProperty 'System/getenv 'System/exit 'System/currentTimeMillis
+   'System/nanoTime
+   'Math/abs 'Math/floor 'Math/ceil 'Math/round 'Math/max 'Math/min
+   'Math/pow 'Math/sqrt 'Math/random 'Math/log 'Math/sin 'Math/cos
+   'Math/tan 'Math/PI 'Math/E
+   'Integer/parseInt 'Integer/valueOf 'Integer/MAX_VALUE 'Integer/MIN_VALUE
+   'Long/parseLong 'Long/valueOf 'Long/MAX_VALUE 'Long/MIN_VALUE
+   'Double/parseDouble 'Double/valueOf 'Double/NaN 'Double/POSITIVE_INFINITY
+   'Double/NEGATIVE_INFINITY 'Double/isNaN 'Double/isInfinite
+   'Float/parseFloat 'Float/valueOf
+   'Boolean/parseBoolean 'Boolean/valueOf
+   'String/format 'String/valueOf 'String/join
+   'Character/isDigit 'Character/isLetter 'Character/isWhitespace
+   'Class/forName
+   'Thread/sleep 'Thread/currentThread
+   'Runtime/getRuntime
+   'UUID/randomUUID 'UUID/fromString
+   ;; JVM dynamic vars
+   '*command-line-args*
+   ;; JVM-only core functions
+   'slurp 'spit 'bean 'class 'supers 'bases 'ancestors 'parents
+   'future 'future-call 'future-cancel 'future-cancelled? 'future-done? 'future?
+   'promise 'deliver 'realized?
+   'agent 'send 'send-off 'await 'shutdown-agents))
+
+(provide STDLIB-TYPES CLJS-EXCLUDE)

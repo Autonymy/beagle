@@ -19,6 +19,9 @@
 
 (define ANY (type-prim 'Any))
 
+;; Current compile target ('clj or 'cljs) — set during type-check!
+(define current-check-target (make-parameter 'clj))
+
 ;; Record field registry: record-type-name -> hash of keyword-sym -> type
 (define RECORD-FIELDS (make-hash))
 ;; Ordered field names for positional destructuring in match
@@ -123,7 +126,8 @@
     (hash-clear! RECORD-ORIGIN)
     (hash-clear! UNION-MEMBERS)
     (define env (build-initial-env prog))
-    (parameterize ([current-union-members UNION-MEMBERS])
+    (parameterize ([current-union-members UNION-MEMBERS]
+                   [current-check-target (program-target prog)])
       (for ([form (in-list (program-forms prog))])
         (check-form form env)))
     (check-scalar-provenance! prog)))
@@ -615,6 +619,17 @@
        (ormap (lambda (m) (and (type-prim? m) (eq? (type-prim-name m) 'Nil)))
               (type-union-alts t))))
 
+;; --- CLJS compatibility warnings ------------------------------------------
+
+(define (warn-cljs-exclude sym node)
+  (when (and (eq? (current-check-target) 'cljs)
+             (set-member? CLJS-EXCLUDE sym))
+    (define src (src-for node))
+    (fprintf (current-error-port)
+             "warning: ~a is JVM-only and unavailable in ClojureScript target~a\n"
+             sym
+             (if src (format " at ~a:~a" (or (src-loc-source src) "?") (src-loc-line src)) ""))))
+
 ;; --- inference -------------------------------------------------------------
 
 (define (infer-expr e env)
@@ -682,9 +697,11 @@
      (define ret (or (fn-form-return-type e) (last-expr-type (fn-form-body e) body-env)))
      (type-fn p-types #f ret)]
     [(dynamic-var? e)
+     (warn-cljs-exclude (dynamic-var-name e) e)
      (hash-ref env (dynamic-var-name e) ANY)]
     [(method-call? e)
      (define method-sym (method-call-method-name e))
+     (warn-cljs-exclude method-sym e)
      (define raw-type (hash-ref env method-sym ANY))
      (define all-args (cons (method-call-target e) (method-call-args e)))
      (define fn-type
@@ -701,6 +718,7 @@
         ANY])]
     [(static-call? e)
      (define sym (static-call-class+method e))
+     (warn-cljs-exclude sym e)
      (define raw-type (hash-ref env sym ANY))
      (define fn-type
        (if (type-poly? raw-type)
@@ -809,6 +827,7 @@
           (infer-expr (with-update-value u) env))
         ANY])]
     [(call-form? e)
+     (warn-cljs-exclude (call-form-fn e) e)
      (define raw-type (hash-ref env (call-form-fn e) ANY))
      (define fn-type
        (if (type-poly? raw-type)
@@ -1039,7 +1058,8 @@
 (define (type-check-with-locs! prog error-handler)
   (when (eq? (program-mode prog) 'strict)
     (define env (build-initial-env prog))
-    (parameterize ([current-check-src-table (program-src-table prog)])
+    (parameterize ([current-check-src-table (program-src-table prog)]
+                   [current-check-target (program-target prog)])
       (for ([form (in-list (program-forms prog))]
             [orig-stx (in-list (program-form-stxs prog))])
         (with-handlers ([exn:fail? (lambda (e) (error-handler e orig-stx))])

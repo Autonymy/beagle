@@ -190,6 +190,122 @@ def find_function_range(clean_lines, fn_name):
     return start, end
 
 # ---------------------------------------------------------------------------
+# Record accessor registry (parsed from compiled .clj files)
+# ---------------------------------------------------------------------------
+
+_record_accessor_cache = {}  # module -> {record_name: [accessors]}
+
+def build_accessor_registry(module):
+    """Parse a compiled .clj module, extract record->accessor mappings."""
+    if module in _record_accessor_cache:
+        return _record_accessor_cache[module]
+    path, raw_lines, clean_lines = read_module(module)
+    if path is None:
+        _record_accessor_cache[module] = {}
+        return {}
+    registry = {}
+    record_names = []
+    for cl in clean_lines:
+        m = re.match(r'\(defrecord\s+(\w+)\s+\[([^\]]*)\]\)', cl)
+        if m:
+            rec_name = m.group(1)
+            lower = rec_name[0].lower() + rec_name[1:]
+            lower_full = rec_name.lower()
+            record_names.append((rec_name, lower, lower_full))
+    for cl in clean_lines:
+        m = re.match(r'\(defn\s+([\w?!<>*+\-/]+)\s+\[r\]\s+\(:(\w[\w-]*)\s+r\)\)', cl)
+        if m:
+            accessor_name = m.group(1)
+            for rec_name, lower, lower_full in record_names:
+                if accessor_name.startswith(lower + '-') or accessor_name.startswith(lower_full + '-'):
+                    registry.setdefault(rec_name, []).append(accessor_name)
+                    break
+    _record_accessor_cache[module] = registry
+    return registry
+
+def build_accessor_registry_all():
+    """Build accessor registry for all modules in build_dir."""
+    for fname in os.listdir(build_dir):
+        if fname.endswith('.clj'):
+            build_accessor_registry(fname[:-4])
+
+def find_record_for_accessor(accessor_name):
+    """Given an accessor name, find its record and all sibling accessors."""
+    for module, registry in _record_accessor_cache.items():
+        for rec_name, accessors in registry.items():
+            if accessor_name in accessors:
+                return rec_name, accessors, module
+    return None, [], None
+
+# ---------------------------------------------------------------------------
+# Function parameter cache (for arg-swap detection)
+# ---------------------------------------------------------------------------
+
+_fn_params_cache = {}
+
+def build_fn_params(module, clean_lines):
+    """Extract parameter names for each defn in a module's compiled output."""
+    if module in _fn_params_cache:
+        return _fn_params_cache[module]
+    params_map = {}
+    for cl in clean_lines:
+        m = re.match(r'\(defn\s+([\w?!<>*+\-/]+)\s+\[([^\]]*)\]', cl)
+        if m:
+            fn_name = m.group(1)
+            params_str = m.group(2).strip()
+            params = params_str.split() if params_str else []
+            if len(params) > 1:
+                params_map[fn_name] = params
+    _fn_params_cache[module] = params_map
+    return params_map
+
+# ---------------------------------------------------------------------------
+# Balanced-paren argument extraction
+# ---------------------------------------------------------------------------
+
+def extract_call_args(line, call_start):
+    """Extract arguments from a function call starting at call_start."""
+    pos = call_start + 1
+    while pos < len(line) and not line[pos].isspace():
+        pos += 1
+    while pos < len(line) and line[pos].isspace():
+        pos += 1
+    args = []
+    while pos < len(line) and line[pos] != ')':
+        while pos < len(line) and line[pos].isspace():
+            pos += 1
+        if pos >= len(line) or line[pos] == ')':
+            break
+        if line[pos] == '(':
+            depth = 0
+            arg_start = pos
+            while pos < len(line):
+                if line[pos] == '(':
+                    depth += 1
+                elif line[pos] == ')':
+                    depth -= 1
+                    if depth == 0:
+                        pos += 1
+                        break
+                pos += 1
+            args.append(line[arg_start:pos])
+        elif line[pos] == '"':
+            arg_start = pos
+            pos += 1
+            while pos < len(line) and line[pos] != '"':
+                if line[pos] == '\\':
+                    pos += 1
+                pos += 1
+            pos += 1
+            args.append(line[arg_start:pos])
+        else:
+            arg_start = pos
+            while pos < len(line) and not line[pos].isspace() and line[pos] != ')':
+                pos += 1
+            args.append(line[arg_start:pos])
+    return args if args else None
+
+# ---------------------------------------------------------------------------
 # Candidate generation
 # ---------------------------------------------------------------------------
 
@@ -397,6 +513,122 @@ def generate_candidates(failure):
     # e.g., gold expects 15, gets 5; bronze expects 5, gets 15
     # This is hard to do per-failure, so we handle it via a cross-failure check below
 
+    # Strategy 8: accessor swap detection
+    # When a wrong value is produced, look for accessor calls (record-field var)
+    # in the function body and try swapping for other accessors on the same record.
+    # Uses the compiled-file accessor registry built from defrecord/defn patterns.
+    if ratio is not None or (actual is not None and expected is not None and actual != expected):
+        registry = build_accessor_registry(module)
+        for other_mod in PREFIX_MAP.values():
+            build_accessor_registry(other_mod)
+
+        NUMERIC_SUFFIXES = {'id', 'cost', 'rate', 'price', 'total', 'amount',
+                           'fee', 'quantity', 'count', 'pct', 'days', 'value',
+                           'min-quantity', 'subtotal', 'tax', 'discount',
+                           'weight', 'weight-kg', 'line-total', 'surcharge-pct',
+                           'per-kg-rate', 'base-rate', 'base-fee', 'lead-time-days',
+                           'hire-date', 'commission-pct', 'balance', 'revenue',
+                           'shipping-cost', 'created-at', 'delivered-at',
+                           'issued-at', 'due-at', 'processed-at', 'salary'}
+        STRING_SUFFIXES = {'name', 'sku', 'status', 'email', 'phone', 'city',
+                          'address', 'tracking-number', 'description', 'segment',
+                          'tier', 'type', 'zone-name', 'title'}
+        BOOL_SUFFIXES = {'active', 'active?'}
+
+        def accessor_suffix(acc):
+            parts = acc.split('-')
+            return '-'.join(parts[1:]) if len(parts) >= 2 else acc
+
+        def same_type_group(s1, s2):
+            s1n = s1 in NUMERIC_SUFFIXES or any(s1.endswith(s) for s in NUMERIC_SUFFIXES)
+            s2n = s2 in NUMERIC_SUFFIXES or any(s2.endswith(s) for s in NUMERIC_SUFFIXES)
+            s1s = s1 in STRING_SUFFIXES or any(s1.endswith(s) for s in STRING_SUFFIXES)
+            s2s = s2 in STRING_SUFFIXES or any(s2.endswith(s) for s in STRING_SUFFIXES)
+            if s1n and s2n: return True
+            if s1s and s2s: return True
+            if s1 in BOOL_SUFFIXES and s2 in BOOL_SUFFIXES: return True
+            return False
+
+        for i in range(start, end):
+            cl = clean_lines[i]
+            in_arith = bool(re.search(r'\([+\-*/><]=?\s', cl))
+            in_filter = bool(re.search(r'(filterv|filter|=|not=)', cl))
+            in_computation = in_arith or in_filter
+
+            for m in re.finditer(r'\(([\w-]+)\s+(\w+)\)', cl):
+                accessor = m.group(1)
+                arg = m.group(2)
+                rec_name, siblings, acc_module = find_record_for_accessor(accessor)
+                if rec_name is None or len(siblings) < 2:
+                    continue
+                old_suffix = accessor_suffix(accessor)
+                for alt in siblings:
+                    if alt == accessor:
+                        continue
+                    if f'({alt} ' in cl:
+                        continue
+                    alt_suffix = accessor_suffix(alt)
+                    if same_type_group(old_suffix, alt_suffix):
+                        conf = 0.75 if in_computation else 0.65
+                    else:
+                        if not in_computation:
+                            continue
+                        conf = 0.40
+                    candidates.append({
+                        'label': label,
+                        'module': module,
+                        'fn_name': fn_name,
+                        'line': i + 1,
+                        'line_idx': i,
+                        'search': f'({accessor} {arg})',
+                        'replace': f'({alt} {arg})',
+                        'description': f'accessor swap ({rec_name}): `({accessor} {arg})` -> `({alt} {arg})`',
+                        'confidence': conf,
+                        'type': 'accessor-swap',
+                    })
+
+    # Strategy 9: wrong-argument detection (argument permutation)
+    # When a function call has correct arity but wrong output, try swapping
+    # pairs of arguments.  Only for functions with 2-5 params.
+    if ratio is not None or (actual is not None and expected is not None and actual != expected):
+        fn_params = build_fn_params(module, clean_lines)
+        for i in range(start, end):
+            cl = clean_lines[i]
+            for called_fn_name, params in fn_params.items():
+                if called_fn_name == fn_name:
+                    continue
+                nparams = len(params)
+                if nparams < 2 or nparams > 5:
+                    continue
+                call_pattern = r'\(' + re.escape(called_fn_name) + r'\s+'
+                m_call = re.search(call_pattern, cl)
+                if not m_call:
+                    continue
+                call_args = extract_call_args(cl, m_call.start())
+                if call_args is None or len(call_args) != nparams:
+                    continue
+                for a_idx in range(len(call_args)):
+                    for b_idx in range(a_idx + 1, len(call_args)):
+                        if call_args[a_idx] == call_args[b_idx]:
+                            continue
+                        swapped = list(call_args)
+                        swapped[a_idx], swapped[b_idx] = swapped[b_idx], swapped[a_idx]
+                        orig_call = f'({called_fn_name} {" ".join(call_args)})'
+                        new_call = f'({called_fn_name} {" ".join(swapped)})'
+                        if orig_call in cl:
+                            candidates.append({
+                                'label': label,
+                                'module': module,
+                                'fn_name': fn_name,
+                                'line': i + 1,
+                                'line_idx': i,
+                                'search': orig_call,
+                                'replace': new_call,
+                                'description': f'arg swap in {called_fn_name}: swap arg {a_idx+1} <-> {b_idx+1}',
+                                'confidence': 0.65,
+                                'type': 'arg-swap',
+                            })
+
     return candidates
 
 # ---------------------------------------------------------------------------
@@ -525,6 +757,11 @@ def run_oracle(build_dir_path, verify_path):
 # ---------------------------------------------------------------------------
 
 print("=== Phase 2: Generating candidates ===", file=sys.stderr)
+
+build_accessor_registry_all()
+_n_recs = sum(len(reg) for reg in _record_accessor_cache.values())
+_n_accs = sum(len(a) for reg in _record_accessor_cache.values() for a in reg.values())
+print(f"  Accessor registry: {_n_recs} records, {_n_accs} accessors", file=sys.stderr)
 
 all_candidates = []
 for failure in failures:

@@ -120,6 +120,16 @@ source_dir = sys.argv[4]
 
 repairs = []
 
+def extract_module_from_path(path):
+    """Extract module name from a file path like '/path/to/catalog.rkt' -> 'catalog'."""
+    if not path or path == '?':
+        return None
+    base = os.path.basename(path)
+    for ext in ['.rkt', '.clj']:
+        if base.endswith(ext):
+            return base[:-len(ext)]
+    return None
+
 # --- Parse type errors with fix plans ---
 check_file = os.path.join(work_dir, 'check-output.json')
 if os.path.exists(check_file):
@@ -187,6 +197,10 @@ if os.path.exists(specfix_file):
         fix_line = fields.get('line', '?')
         assertions_fixed = int(fields.get('assertions-fixed', '1'))
 
+        # Extract module/function for cross-evidence correlation
+        specfix_module = module_file.replace('.clj', '') if module_file.endswith('.clj') else None
+        specfix_fn = fn_name if fn_name != '?' and fn_name != '(unknown)' else None
+
         repairs.append({
             'confidence': 0.95,
             'file': module_file,
@@ -198,30 +212,200 @@ if os.path.exists(specfix_file):
             'after': None,
             'evidence': ['specfix-oracle', f'fixes-{assertions_fixed}-assertions'],
             'auto_applicable': True,
+            '_module': specfix_module,
+            '_fn': specfix_fn,
         })
 
-# --- Parse blame hints ---
+# --- Parse blame hints (with module/function extraction from FAIL labels) ---
 blame_file = os.path.join(work_dir, 'blame-output.txt')
+blame_by_function = {}  # (module, fn_name) -> [hints]
+
+PREFIX_MAP = {
+    'cat/': 'catalog', 'cust/': 'customers', 'inv/': 'inventory',
+    'ord/': 'orders', 'rep/': 'reports', 'ship/': 'shipping',
+    'bill/': 'billing', 'proc/': 'procurement', 'promo/': 'promotions',
+    'emp/': 'employees', 'analytics/': 'analytics',
+    'notif/': 'notifications', 'audit/': 'audit',
+}
+
+def label_to_module_fn(label):
+    """Extract (module, fn_name) from a FAIL label like 'cat/product-margin Widget A'."""
+    module = None
+    fn_name = None
+    for prefix, mod in PREFIX_MAP.items():
+        if label.startswith(prefix):
+            module = mod
+            rest = label[len(prefix):]
+            fn_match = re.match(r'([\w?!<>*+\-/]+)', rest)
+            if fn_match:
+                fn_name = fn_match.group(1)
+            break
+    return module, fn_name
+
 if os.path.exists(blame_file):
+    current_label = None
     with open(blame_file) as f:
         for line in f:
+            fail_m = re.match(r'^FAIL:\s+(.+)', line.rstrip())
+            if fail_m:
+                current_label = fail_m.group(1)
+                continue
+
             m = re.match(r'\s*sniff:\s*\[([0-9.]+)\]\s+(.+)', line)
             if m:
                 conf = float(m.group(1))
                 hint = m.group(2)
-                # Only add if not already covered by specfix
+                module_name = '?'
+                fn_name = '?'
+                if current_label:
+                    mod, fn = label_to_module_fn(current_label)
+                    if mod:
+                        module_name = f'{mod}.clj'
+                    if fn:
+                        fn_name = fn
+                    if mod and fn:
+                        blame_by_function.setdefault((mod, fn), []).append({
+                            'confidence': conf, 'hint': hint,
+                        })
+
                 repairs.append({
-                    'confidence': conf * 0.8,  # discount raw blame confidence
-                    'file': '?',
+                    'confidence': conf * 0.8,
+                    'file': module_name,
                     'line': '?',
                     'category': 'blame-hint',
-                    'description': hint,
+                    'description': f'{current_label or "?"}: {hint}',
                     'fix_hint': hint,
                     'before': None,
                     'after': None,
                     'evidence': ['blame-ratio'],
                     'auto_applicable': False,
+                    '_module': module_name.replace('.clj', '') if module_name != '?' else None,
+                    '_fn': fn_name if fn_name != '?' else None,
                 })
+
+# --- Parse semantic suspicions from build output ---
+# Format: "  SUSPECT [0.7]: fn-name: `op` in `context` -- reason"
+# These appear in stderr from beagle-check-all, captured in build-output.txt
+# Also check the check-output.json file for the same pattern.
+semantic_by_function = {}  # (module, fn_name) -> [suspicions]
+
+# The semantic suspicion line comes AFTER a "beagle [semantic]: N suspicion(s) in path/to/module.rkt" line
+# which gives us the module name.
+for output_file_name in ['build-output.txt', 'check-output.json']:
+    output_file = os.path.join(work_dir, output_file_name)
+    if not os.path.exists(output_file):
+        continue
+    current_module = None
+    with open(output_file) as f:
+        for line in f:
+            line = line.rstrip()
+            # Track current module from context line
+            ctx_m = re.match(r'beagle \[semantic\]: \d+ suspicion\(s\) in (.+)', line)
+            if ctx_m:
+                path = ctx_m.group(1)
+                # Extract module name from path
+                base = os.path.basename(path)
+                current_module = base.replace('.rkt', '') if base.endswith('.rkt') else None
+                continue
+            # Parse SUSPECT line
+            susp_m = re.match(r'\s+SUSPECT \[([0-9.]+)\]: ([\w?!<>*+\-/]+): (.+)', line)
+            if susp_m:
+                conf = float(susp_m.group(1))
+                fn_name = susp_m.group(2)
+                reason = susp_m.group(3)
+                module_name = current_module or '?'
+                if module_name != '?':
+                    semantic_by_function.setdefault((module_name, fn_name), []).append({
+                        'confidence': conf, 'reason': reason,
+                    })
+                repairs.append({
+                    'confidence': conf * 0.75,
+                    'file': f'{module_name}.clj' if module_name != '?' else '?',
+                    'line': '?',
+                    'category': 'semantic-suspicion',
+                    'description': f'{fn_name}: {reason}',
+                    'fix_hint': reason,
+                    'before': None,
+                    'after': None,
+                    'evidence': ['semantic-rule'],
+                    'auto_applicable': False,
+                    '_module': module_name,
+                    '_fn': fn_name,
+                })
+
+# ---------------------------------------------------------------------------
+# Cross-evidence correlation
+# ---------------------------------------------------------------------------
+# When multiple independent evidence sources agree on the same (module, function),
+# the confidence that this is a real bug increases.
+#
+# Boost rules (applied to all repairs targeting the same function):
+#   blame + semantic           -> +0.15 (two independent soft sources)
+#   type-error + blame         -> +0.10
+#   type-error + semantic      -> +0.08
+#   specfix + blame            -> +0.03 (specfix already oracle-verified)
+#   specfix + semantic         -> +0.02
+#   triple (specfix+blame+sem) -> +0.03
+
+repair_by_fn = {}  # (module, fn_name) -> [repair indices]
+for idx, r in enumerate(repairs):
+    mod = r.get('_module')
+    fn = r.get('_fn')
+    if not mod or not fn:
+        if r['file'] != '?' and r['file'].endswith('.clj'):
+            mod = r['file'].replace('.clj', '')
+        if r.get('description'):
+            fn_m = re.match(r'([\w?!<>*+\-/]+)', r.get('description', ''))
+            if fn_m:
+                fn = fn_m.group(1)
+    if mod and fn:
+        repair_by_fn.setdefault((mod, fn), []).append(idx)
+
+correlated = {}
+for key, indices in repair_by_fn.items():
+    categories = set()
+    for idx in indices:
+        categories.add(repairs[idx]['category'])
+    if len(categories) >= 2:
+        correlated[key] = categories
+
+correlation_boosts = 0
+for (mod, fn), categories in correlated.items():
+    has_specfix = 'specfix-verified' in categories
+    has_blame = 'blame-hint' in categories
+    has_semantic = 'semantic-suspicion' in categories
+    has_type_error = any(c in categories for c in ('type-error', 'type-mismatch', 'arity'))
+
+    boost = 0.0
+    corr_note = None
+    if has_specfix and has_blame and has_semantic:
+        boost = 0.03
+        corr_note = 'triple-correlated (specfix+blame+semantic)'
+    elif has_blame and has_semantic and not has_specfix:
+        boost = 0.15
+        corr_note = 'correlated (blame+semantic)'
+    elif has_type_error and has_blame:
+        boost = 0.10
+        corr_note = 'correlated (type-error+blame)'
+    elif has_type_error and has_semantic:
+        boost = 0.08
+        corr_note = 'correlated (type-error+semantic)'
+    elif has_specfix and has_blame:
+        boost = 0.03
+        corr_note = 'correlated (specfix+blame)'
+    elif has_specfix and has_semantic:
+        boost = 0.02
+        corr_note = 'correlated (specfix+semantic)'
+
+    if boost > 0 and corr_note:
+        for idx in repair_by_fn.get((mod, fn), []):
+            repairs[idx]['confidence'] = min(0.98, repairs[idx]['confidence'] + boost)
+            if corr_note not in repairs[idx]['evidence']:
+                repairs[idx]['evidence'].append(corr_note)
+            correlation_boosts += 1
+
+if correlation_boosts > 0:
+    print(f"  Cross-evidence: {len(correlated)} function(s) correlated, {correlation_boosts} boost(s)", file=sys.stderr)
 
 # --- Deduplicate: if specfix and type-error point at same file:line, merge evidence ---
 by_location = {}
@@ -231,9 +415,7 @@ for r in repairs:
         by_location[key] = r
     else:
         existing = by_location[key]
-        # Merge evidence
         existing['evidence'] = list(set(existing['evidence'] + r['evidence']))
-        # Boost confidence if multiple sources agree
         if r['confidence'] > existing['confidence']:
             existing['confidence'] = min(0.98, r['confidence'] + 0.05)
             existing['description'] = r['description']
@@ -273,7 +455,6 @@ if auto_mode:
 
         for r in applicable:
             if r.get('before') and r.get('after') and r['before'] != 'null' and r['after'] != 'null':
-                # Apply to source file
                 target_file = r['file']
                 if os.path.exists(target_file):
                     with open(target_file) as f:
@@ -293,10 +474,14 @@ if auto_mode:
         print(f"\nNo fixes above threshold {threshold} to auto-apply.")
 
 # Summary
+corr_count = sum(1 for r in merged
+                 if any('correlated' in e for e in r.get('evidence', [])))
 print(f"\n{'─' * 60}")
 print(f"Summary: {len(merged)} repair items")
 print(f"  Auto-applicable: {auto_count}")
 print(f"  Suggestions: {len(merged) - auto_count}")
+if corr_count:
+    print(f"  Cross-evidence correlated: {corr_count}")
 if auto_mode and auto_count > 0:
     print(f"  Applied: {auto_count}")
     print(f"  Next: rebuild and reverify")

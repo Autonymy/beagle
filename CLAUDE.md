@@ -38,7 +38,7 @@ it as canonical when explaining the language.
 - Keyword field inference: `(:name person)` returns the field type when
   target is a known typed record
 - Macros: safe (gensym-hygienic) / unsafe with `&rest` and `(splice ...)`
-- Stdlib catalog: ~607 Clojure functions pre-typed (full typeable surface), key HOFs polymorphic
+- Stdlib catalog: ~607 Clojure functions + 26 JS interop entries pre-typed; CLJS-EXCLUDE set warns on JVM-only usage
 - Cross-file type import: `(require module)` / `(require module :as alias)`
   resolves source at compile time, imports typed defs/defns/externs/records/macros.
   `declare-extern` is only needed for Java interop and non-beagle namespaces.
@@ -59,7 +59,7 @@ it as canonical when explaining the language.
   with compile-time field existence and type checking
 - `defenum` form: `(defenum Name :a :b)` → `(def Name-values #{:a :b})`
 - Exhaustive match warnings: match on record types warns about missing cases
-- 331 tests passing
+- 349 tests passing
 - Empirical benchmarks: 40 tasks, 3 variants, head-to-head against raw Clojure,
   refactoring and bug-detection experiments — 5 real bugs caught
 - Type-system query tools: beagle-sig, beagle-fields, beagle-callers,
@@ -74,6 +74,12 @@ it as canonical when explaining the language.
 - Multi-arity `defn` with per-arity type checking and union-type call validation
 - Guard-pattern type narrowing: `(when (nil? x) (throw ...))` narrows `x` in subsequent forms
 - Union-to-union type compatibility fix (subset checking)
+- CLJS target: `(define-target cljs)` with JS interop types, JVM-only warnings,
+  catch `:default`, ns without `:import`; Heist app compiles through full pipeline
+- Repair compiler: accessor-swap detection (204 accessors, semantic type groups),
+  wrong-argument permutation, cross-evidence correlation (blame + semantic + specfix)
+- Property testing: record generators (scalar-erasure-aware), property inference
+  from return types (non-negative, deterministic, vec-length); 286 properties on E8
 
 ## Architecture
 
@@ -125,10 +131,10 @@ parse → check → emit
 - `bin/beagle-check-all FILE-OR-DIR...` — batch type-check (10x vs sequential) + semantic suspicions
 - `bin/beagle-expand SOURCE.rkt` — print source after macro expansion
 - `bin/beagle-blame BUILD-DIR VERIFY-SCRIPT` — run oracle with blame analysis (ratio → likely bug type)
-- `bin/beagle-specfix BUILD-DIR VERIFY-SCRIPT` — oracle-guided speculative fix (generate candidates, verify against oracle, report fixes)
+- `bin/beagle-specfix BUILD-DIR VERIFY-SCRIPT` — oracle-guided speculative fix (9 strategies incl. accessor swap, arg permutation)
 - `bin/beagle-trace BUILD-DIR VERIFY-SCRIPT [--focus FN]` — instrumented tracing (captures arithmetic ops, shows exact divergence per assertion)
-- `bin/beagle-repair SOURCE-DIR VERIFY-SCRIPT [--auto] [--threshold N]` — unified repair pipeline (type check + specfix + blame → ranked repair queue)
-- `bin/beagle-proptest SOURCE-DIR [--run] [--build-dir DIR]` — auto-generate property tests from type information (record round-trips, scalar constraints)
+- `bin/beagle-repair SOURCE-DIR VERIFY-SCRIPT [--auto] [--threshold N]` — unified repair pipeline with cross-evidence correlation
+- `bin/beagle-proptest SOURCE-DIR [--run] [--build-dir DIR]` — property tests: record generators, round-trips, return-type constraints, generative checks
 - `bin/beagle-cascade SOURCE-DIR VERIFY [--modified fn1,...] [--from-failures]` — call graph impact prediction and cascade root-cause analysis
 - `bin/beagle-oracle GOLDEN-DIR [--out FILE] [--diff MODIFIED-DIR]` — behavioral oracle synthesis (golden code IS the test spec)
 - `bin/beagle-daemon start|stop|status|query CMD` — persistent query server (45× faster than cold tools)
