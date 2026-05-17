@@ -1498,4 +1498,5 @@
 (provide type-check! type-check-with-locs!
          check-scalar-provenance!
          beagle-diagnostic beagle-diagnostic?
-         beagle-diagnostic-kind beagle-diagnostic-details)
+         beagle-diagnostic-kind beagle-diagnostic-details
+         check-form infer-expr build-initial-env)
