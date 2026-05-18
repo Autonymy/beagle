@@ -336,6 +336,11 @@
 (parse-err "defrecord rejects bare fields without types"
   `(defrecord Foo ,(br 'x 'y)))
 
+(parse-err/rx ":- annotation marker gives helpful diagnostic"
+  #rx"Beagle uses `:` for type annotations"
+  `(defn greet ,(br (list 'name ':- 'String)) ':- 'String
+     (str "hello " name)))
+
 ;; --- Java interop ------------------------------------------------------------
 
 (test-case "dot-method call parses as method-call"

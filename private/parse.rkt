@@ -620,6 +620,12 @@
    loc))
 
 (define (annotation-marker? sym)
+  (when (eq? sym ':-)
+    (error 'beagle
+           (string-append
+            "unexpected annotation marker `:-`. Beagle uses `:` for type annotations:\n"
+            "  [name : String]\n"
+            "  (defn f [x : Int] : Int ...)")))
   (eq? sym ':))
 
 (define (multi-arity-form? d)
