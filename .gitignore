@@ -16,3 +16,6 @@ runtime/src/test.clj
 runtime/src/heist/
 runtime/src/trading/
 pipeline/
+result
+runtime/src/kea/
+runtime/src/promotions.clj
