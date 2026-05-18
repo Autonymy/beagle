@@ -15,20 +15,19 @@ entirely on semantic bugs that require judgment.
 
 ## Evidence
 
-Fifteen experiments (E1–E15) across three language tracks (Beagle,
-Clojure, Python), head-to-head on the same tasks.
+15 experiments, 3 language tracks (Beagle, Clojure, Python), same tasks.
 
-**E4** (13 modules, 8570 LOC, 35 injected bugs): beagle 3/3
-correctness vs clojure 0/3. First reproducible divergence — but this
-is a static-typing result, not a beagle result: Python + mypy also
-achieves 3/3.
+| | Beagle | Clojure | Python + mypy |
+|---|---|---|---|
+| Correctness (E4, 35 bugs) | 3/3 | 0/3 | 3/3 |
+| Best wall time | 287s | 365s | 255s |
+| Per-bug time | 8.2s | 10.4s | 8.5s |
 
-**E13** (reactive daemon): 287s avg — variance collapsed from 142s
-range to 59s. Per-bug faster than Python + mypy (8.2s vs 8.5s). The
-best single-agent configuration. Within Clojure: 21% faster than the
-best clj-kondo configuration (365s).
+The correctness gap is a static-typing result, not a beagle-specific
+one. Beagle's advantage over Python is workflow: reactive daemon,
+structured repair queue, per-bug speed.
 
-Full methodology and results: [`experiments/report.md`](experiments/report.md)
+[Full methodology and results](experiments/report.md)
 
 ## A program
 
