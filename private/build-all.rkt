@@ -56,8 +56,7 @@
     (define ns (program-namespace prog))
     (define out-path
       (if out-dir
-          (build-path out-dir
-                      (path-replace-extension (file-name-from-path (string->path path)) ".clj"))
+          (build-path out-dir (ns->path ns))
           (string->path (ns->path ns))))
 
     (define out-dir-part (path-only out-path))
