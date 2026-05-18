@@ -96,10 +96,21 @@ Binds @racket[name] to the result of @racket[expr]. If truthy, evaluates
 @section[#:tag "when-some"]{when-some / if-some}
 
 @defform[(when-some [name expr] body ...)]{
-Like @tt{when-let} but tests for non-nil (not truthiness). @tt{false} passes.}
+Like @tt{when-let} but tests for non-nil (not truthiness). @tt{false} passes.
+
+@codeblock|{
+(when-some [val (get config :debug)]
+  (enable-debugging val))
+}|}
 
 @defform[(if-some [name expr] then else)]{
-Like @tt{if-let} but tests for non-nil.}
+Like @tt{if-let} but tests for non-nil.
+
+@codeblock|{
+(if-some [port (get config :port)]
+  (start-server port)
+  (start-server 8080))
+}|}
 
 @section[#:tag "case"]{case}
 
@@ -155,9 +166,26 @@ Exception handling. Multiple @tt{catch} clauses allowed. @tt{finally} is optiona
 @section[#:tag "do"]{do}
 
 @defform[(do body ...)]{
-Sequences expressions; returns the last value.}
+Sequences expressions; returns the last value. Used where a single expression
+is expected but multiple side effects are needed.
+
+@codeblock|{
+(do
+  (println "saving...")
+  (save-record! rec)
+  (println "done")
+  rec)
+}|}
 
 @section[#:tag "comment"]{comment}
 
 @defform[(comment forms ...)]{
-Ignores all forms and returns @tt{nil}. Used for development-time code.}
+Ignores all forms and returns @tt{nil}. Used for development-time scratch
+code and inline examples. The forms are not evaluated or type-checked.
+
+@codeblock|{
+(comment
+  (start-server 8080)
+  (run-tests)
+  (println "scratch area"))
+}|}

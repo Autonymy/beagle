@@ -2,6 +2,10 @@
 
 @title[#:tag "forms"]{Definitions}
 
+Top-level definitions bind names for use throughout a module. Type
+annotations are optional but recommended --- the checker infers types
+from right-hand-side expressions when annotations are absent.
+
 @section[#:tag "def"]{def}
 
 @defform[#:id def-untyped (def name value)]{

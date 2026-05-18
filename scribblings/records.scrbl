@@ -25,7 +25,14 @@ Generated functions:
         a known @tt{Employee}}
 ]
 
-Emits Clojure @tt{defrecord} plus generated accessor functions.}
+Compiles to Clojure @tt{defrecord} plus generated accessor functions:
+@codeblock|{
+;; Generated Clojure:
+(defrecord Employee [name rate])
+(defn ->Employee [name rate] (Employee. name rate))
+(defn employee-name [r] (:name r))
+(defn employee-rate [r] (:rate r))
+}|}
 
 @section[#:tag "with"]{with (record update)}
 
@@ -68,6 +75,7 @@ conditions.
 
 @defform[(defenum Name :value ...)]{
 Declares an enum value set. Compiles to @tt{(def Name-values #{:value1 ...})}.
+Useful for constraining keyword fields to a known set of values.
 
 @codeblock|{
 (defenum OrderStatus :placed :confirmed :paid :shipped :delivered :cancelled)

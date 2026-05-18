@@ -54,6 +54,10 @@ like @tt{nil?}, @tt{some?}, @tt{string?}, @tt{=}, @tt{not}.
   (if (nil? x) "unknown" x))   ; x is narrowed to String in the then branch
 }|
 
+@section{Polymorphic Types}
+
+@tt{(forall [A] [A -> A])} introduces type variables for generic functions.
+
 @section{Let Binding Inference}
 
 Let bindings infer types automatically from the right-hand side:
@@ -61,4 +65,20 @@ Let bindings infer types automatically from the right-hand side:
 @codeblock|{
 (let [x (get-product id)] ...)     ; x : Product (inferred)
 (let [{:keys [name]} product] ...) ; name : String (from record fields)
+}|
+
+Explicit annotations are only needed when narrowing:
+
+@codeblock|{
+(let [(area : Long) (* w h)] area)
+}|
+
+@section{Collection Type Inference}
+
+Collection literals infer element types from their contents:
+
+@codeblock|{
+[(->Product 1 "A") (->Product 2 "B")]  ; (Vec Product), not (Vec Any)
+{:a 1 :b 2}                             ; (Map Keyword Long)
+#{:x :y :z}                             ; (Set Keyword)
 }|

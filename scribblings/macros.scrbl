@@ -2,6 +2,10 @@
 
 @title[#:tag "macros"]{Macros}
 
+Beagle macros are template-based: they substitute parameters into a template
+form at expansion time. The @tt{safe}/@tt{unsafe} distinction controls whether
+the expanded code is re-validated by the type checker.
+
 @section[#:tag "define-macro"]{define-macro}
 
 @defform[(define-macro safe name (params) template)]{

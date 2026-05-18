@@ -2,6 +2,9 @@
 
 @title[#:tag "iteration"]{Iteration and Comprehensions}
 
+Beagle supports Clojure's full iteration toolkit: list comprehensions,
+side-effecting loops, counted iteration, and tail-recursive @tt{loop}/@tt{recur}.
+
 @section[#:tag "for"]{for}
 
 @defform[(for [name coll ... :when pred :let [name val ...]] body ...)]{

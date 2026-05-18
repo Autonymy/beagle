@@ -131,8 +131,8 @@ Keyword lookup with a default value.
 @section[#:tag "metadata"]{Metadata}
 
 @defform[#:id metadata (^ map target)]{
-@tt{^@"{":key value ...@"}"} attaches metadata to the following form.
-@tt{^:keyword} is sugar for @tt{^@"{":keyword true@"}"}.
+Attaches Clojure metadata to the following form. @tt{^:keyword} is sugar
+for @tt{^{:keyword true}}.
 
 @codeblock|{
 ^{:key (str prefix "-" idx)} [item-view item]
@@ -140,6 +140,8 @@ Keyword lookup with a default value.
 }|}
 
 @section[#:tag "quote"]{Quote}
+
+Standard Lisp quoting. Quoted forms are not evaluated.
 
 @codeblock|{
 '(a b c)    ; quoted list
@@ -149,8 +151,9 @@ Keyword lookup with a default value.
 @section[#:tag "unsafe"]{unsafe}
 
 @defform[(unsafe "raw-clojure-source")]{
-Emits the literal string verbatim. Works at top-level and in expression
-position. Typed as @tt{Any}.
+Emits the literal string verbatim into the Clojure output. Works at top-level
+and in expression position. Typed as @tt{Any}. Use sparingly --- this is
+the escape hatch for Clojure features beagle doesn't cover.
 
 @codeblock|{
 (unsafe "(defn helper [x] (some-clj-thing x))")

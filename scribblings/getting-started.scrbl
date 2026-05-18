@@ -66,3 +66,11 @@ is needed for cross-module beagle calls:
 
 For non-beagle namespaces (Clojure libraries), use @tt{declare-extern}
 for type-checked calls, or accept @tt{Any}-typed pass-through.
+
+@section{Viewing Documentation}
+
+After installation, view these docs locally:
+
+@verbatim|{
+  raco docs beagle
+}|

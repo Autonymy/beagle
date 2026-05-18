@@ -15,6 +15,16 @@ while emitting plain Clojure source for runtime.
 structured errors. One canonical idiom per concept. LLM authoring is a
 first-class concern.
 
+@bold{What the checker catches at compile time:}
+@itemlist[
+  @item{Type mismatches --- passing a @tt{Long} where a @tt{String} is expected}
+  @item{Arity errors --- wrong number of arguments to a function}
+  @item{Undefined references --- using a name that hasn't been defined}
+  @item{Record field errors --- accessing a field that doesn't exist on a record type}
+  @item{Cross-module contract violations --- imported function signatures enforced at call sites}
+  @item{Refinement violations --- literal values outside declared bounds (e.g., @tt{(->Percentage 150)} when max is 100)}
+]
+
 @table-of-contents[]
 
 @include-section["getting-started.scrbl"]

@@ -4,6 +4,8 @@
 
 @section{Unified CLI}
 
+The @tt{beagle} command wraps all common operations:
+
 @itemlist[
   @item{@tt{beagle check .} --- batch type-check all files}
   @item{@tt{beagle build . --out DIR} --- batch compile to Clojure}
@@ -16,6 +18,9 @@
 
 @section{Reactive Daemon}
 
+The daemon caches ASTs and watches files for changes, providing near-instant
+re-checking on every save:
+
 @itemlist[
   @item{@tt{beagle-daemon start --watch DIR} --- file watcher, re-checks on
         every save (~100ms)}
@@ -26,6 +31,9 @@
 
 @section{Query Tools}
 
+Query tools expose the type system as an API. Instead of reading source
+to understand a codebase, ask the type system directly:
+
 @itemlist[
   @item{@tt{beagle-sig FN FILE-OR-DIR} --- function's type signature}
   @item{@tt{beagle-fields RECORD FILE-OR-DIR} --- record fields + accessors}
@@ -35,6 +43,9 @@
 ]
 
 @section{Repair Toolchain}
+
+Automated bug-finding and fixing tools that use oracle-based behavioral
+comparison, tracing, and cross-evidence correlation:
 
 @itemlist[
   @item{@tt{beagle-repair SOURCE VERIFY [--auto] [--emit-patch]} --- unified
@@ -48,6 +59,9 @@
 ]
 
 @section{Other Tools}
+
+Individual tools for specific tasks, including batch compilation, syntax
+checking, mutation testing, and distributed tracing:
 
 @itemlist[
   @item{@tt{beagle-build SOURCE.rkt [OUT.clj]} --- single-file compile}
