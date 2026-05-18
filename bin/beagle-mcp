@@ -158,6 +158,17 @@ TOOLS = [
         },
     ),
     types.Tool(
+        name="beagle_check_enriched",
+        description="Type-check with enriched diagnostics: record field context, fix hints, and repair suggestions. Richer than plain check.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "File or directory to check"},
+            },
+            "required": ["path"],
+        },
+    ),
+    types.Tool(
         name="beagle_build",
         description="Compile a beagle source file to Clojure. Returns the generated Clojure source or compile errors.",
         inputSchema={
@@ -165,6 +176,17 @@ TOOLS = [
             "properties": {
                 "source": {"type": "string", "description": "Path to .rkt source file"},
                 "output": {"type": "string", "description": "Output .clj path (optional)"},
+            },
+            "required": ["source"],
+        },
+    ),
+    types.Tool(
+        name="beagle_expand",
+        description="Show beagle source after macro expansion. Useful for debugging macros — see what the macro actually expanded to.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "source": {"type": "string", "description": "Path to .rkt source file"},
             },
             "required": ["source"],
         },
@@ -228,11 +250,20 @@ def dispatch(name, arguments):
             return format_result(resp)
         return cli_fallback("check", [arguments["path"]])
 
+    elif name == "beagle_check_enriched":
+        resp = daemon_query(f"check-enriched {arguments['path']}")
+        if resp:
+            return format_result(resp)
+        return cli_fallback("check", [arguments["path"]])
+
     elif name == "beagle_build":
         args = [arguments["source"]]
         if arguments.get("output"):
             args.append(arguments["output"])
         return cli_fallback("build", args)
+
+    elif name == "beagle_expand":
+        return cli_fallback("expand", [arguments["source"]])
 
     else:
         return f"Unknown tool: {name}"

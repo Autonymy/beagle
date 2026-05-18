@@ -52,7 +52,8 @@ so any MCP-compatible agent gets type-aware code intelligence:
 }|
 
 Tools: @tt{beagle_sig}, @tt{beagle_fields}, @tt{beagle_callers},
-@tt{beagle_provides}, @tt{beagle_impact}, @tt{beagle_check}, @tt{beagle_build}.
+@tt{beagle_provides}, @tt{beagle_impact}, @tt{beagle_check},
+@tt{beagle_check_enriched}, @tt{beagle_build}, @tt{beagle_expand}.
 Delegates to a running daemon for speed; falls back to direct CLI invocation.
 
 Requires the @tt{mcp} Python package (@tt{pip install mcp}).

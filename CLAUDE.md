@@ -14,7 +14,7 @@ it as canonical when explaining the language.
 
 ## Status
 
-`#lang beagle` v0.6.0 — form completeness, Scribble docs:
+`#lang beagle` v0.7.0 — MCP server, Claude Code integration, Scribble docs:
 
 - Forms: `def`, `defn` (single + multi-arity), `fn`, `let`, `if`, `cond`,
   `when`, `when-not`, `when-let`, `if-let`, `if-not`, `when-some`, `if-some`,
@@ -181,7 +181,7 @@ parse → check → emit
 - `bin/beagle-dtrace cascade TRACE-DIR [--trace-id ID]` — root cause analysis across service boundaries
 - `bin/beagle-daemon start|stop|status|query CMD` — persistent query server (45× faster than cold tools)
 - `bin/beagle-daemon start --watch DIR` — start with file watcher; re-checks .rkt files on save, caches enriched results
-- `bin/beagle-mcp` — MCP server exposing type system as tools (sig, fields, callers, provides, impact, check, build); delegates to daemon when running
+- `bin/beagle-mcp` — MCP server exposing type system as tools (sig, fields, callers, provides, impact, check, check-enriched, build, expand); delegates to daemon when running
 - `bin/beagle-verify-enriched BUILD-DIR VERIFY` — run verify + auto-diagnose failures (trace, cascade, pattern analysis)
 - `bin/beagle-sig FN-NAME FILE-OR-DIR...` — print a function's typed signature (daemon-accelerated)
 - `bin/beagle-fields RECORD FILE-OR-DIR...` — print record fields, types, and accessors (daemon-accelerated)
