@@ -2,7 +2,7 @@
 
 A multi-target authoring IR. Racket frontend with custom `#lang`, macros
 (safe/unsafe boundaries), static type checking; emits Clojure, ClojureScript,
-JavaScript, or Nix source for runtime. `.bgl` is the primary file extension
+JavaScript, Nix, or SQL source for runtime. `.bgl` is the primary file extension
 (`.rkt` still accepted for backward compatibility).
 
 **LLM authoring is a first-class concern.** Rich types, explicit forms, low
@@ -17,10 +17,10 @@ it as canonical when explaining the language.
 
 `#lang beagle` v0.8.0 — 550 tests passing.
 
-- **Targets:** `beagle/clj` (default), `beagle/cljs`, `beagle/js`, `beagle/nix`, `beagle/py` (plumbed, no emitter)
+- **Targets:** `beagle/clj` (default), `beagle/cljs`, `beagle/js`, `beagle/nix`, `beagle/sql`, `beagle/py` (plumbed, no emitter)
 - **Forms:** ~50 forms — definitions, control flow, data structures, pattern matching, threading, interop. See `docs/cheatsheet.md` for the full catalog.
 - **Types:** 8 primitives (`String`, `Int`, `Float`, `Bool`, `Keyword`, `Symbol`, `Nil`, `Any`), parametric (`Vec`, `Map`, `Set`, `List`), union (`U`), nullable (`T?`), function types, `forall`, `(Promise T)`
-- **Stdlib:** ~700 entries total — portable (269), Clojure (352), CLJS (75), JS (38 native), Nix (120)
+- **Stdlib:** ~700 entries total — portable (269), Clojure (352), CLJS (75), JS (38 native), Nix (120), SQL (10)
 - **Type checking:** flow-sensitive narrowing, cross-module import, collection/destructuring inference, exhaustive match warnings, refinement predicates
 - **Diagnostics:** Rust-style errors with signatures, "did you mean?" suggestions, JSON mode
 - **Tooling:** LSP, typed REPL, MCP server, reactive daemon (~100ms re-check), repair compiler, property testing, distributed tracing
@@ -31,7 +31,7 @@ See `docs/cheatsheet.md` for the full language reference.
 ## Architecture
 
 ```
-parse → check → emit-dispatch → emit-{clj,js}
+parse → check → emit-dispatch → emit-{clj,js,sql}
 (all expand-time, inside our custom #%module-begin)
 ```
 
@@ -237,37 +237,6 @@ Host-language idioms whose cost > benefit for beagle's goals:
   LLM confusion than value
 - **`@deref`, `#'var-quote`** — Clojure-runtime concepts; use `unsafe`
 - **Exotic reader macros (`#=`, `#_`, `#?`)** — Clojure-reader-specific
-
-## Portability rule
-
-Beagle has two layers: portable core (Beagle-owned semantics) and
-target layers (host-language semantics).
-
-> Portable if Beagle owns the concept. Target-specific if the host owns it.
-
-**Decision procedure for new forms:**
-
-1. Who owns the concept? `defn`, `match`, `let` → Beagle. `inherit`, `await` → host.
-2. Can every target lower it honestly? If not, it's target-specific.
-3. Is it sugar for portable semantics? `when` → desugars to `if` → portable.
-   `inh` → emits Nix `inherit` → cannot desugar → target-specific.
-4. Would it be absurd in another target? Then it's target-specific.
-
-**Enforcement:**
-
-- Target-specific forms are gated in `check.rkt` via `TARGET-ONLY-FORMS` —
-  using them outside their target is a compile error, not a warning.
-- Target-specific stdlib is gated via `stdlib-for-target` / `target-excludes-for`
-  in `stdlib-types.rkt`.
-- Every stdlib function visible to a target must be one of: inline-emitted,
-  native call, runtime helper, or compile-time error. No silent fallbacks.
-
-**Current target-specific forms:**
-
-| target | forms |
-|--------|-------|
-| `beagle/js` | `await` |
-| `beagle/nix` | `inh`, `inh-from`, `with-do`, `rec-att`, `assert-do`, `get-or`, `has`, `spath`, `s`, `ms`, `p`, `fn-set`, `fn-set-rest`, `fn-set@`, `pipe-to`, `pipe-from`, `impl` |
 
 ## Setup (one-time)
 
