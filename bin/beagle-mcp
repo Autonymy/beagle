@@ -1,0 +1,243 @@
+#!/usr/bin/env python3
+"""MCP server exposing beagle's type system as tools.
+
+Connects to a running beagle-daemon for speed; falls back to direct
+CLI invocation. Standard MCP stdio transport.
+
+Usage (in Claude Code MCP config):
+    {"beagle": {"command": "beagle-mcp"}}
+
+Or standalone:
+    beagle mcp
+"""
+
+import json
+import os
+import socket
+import subprocess
+import sys
+
+try:
+    from mcp.server import Server
+    from mcp.server.stdio import stdio_server
+    import mcp.types as types
+except ImportError:
+    print("error: mcp package not installed — pip install mcp", file=sys.stderr)
+    sys.exit(1)
+
+PROJECT_DIR = os.environ.get(
+    "BEAGLE_PROJECT_DIR",
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+)
+BIN = os.path.join(PROJECT_DIR, "bin")
+
+
+def daemon_port():
+    port_file = os.environ.get(
+        "BEAGLE_DAEMON_PORTFILE",
+        os.path.join(os.environ.get("TMPDIR", "/tmp"), "beagle-daemon.port"),
+    )
+    try:
+        with open(port_file) as f:
+            return int(f.read().strip())
+    except (FileNotFoundError, ValueError):
+        return None
+
+
+def daemon_query(command):
+    port = daemon_port()
+    if port is None:
+        return None
+    try:
+        sock = socket.create_connection(("127.0.0.1", port), timeout=5)
+        sock.sendall((command + "\n").encode())
+        buf = b""
+        while b"\n" not in buf:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            buf += chunk
+        sock.close()
+        return json.loads(buf.decode().strip())
+    except (ConnectionRefusedError, OSError, json.JSONDecodeError):
+        return None
+
+
+def cli_fallback(tool, args):
+    cmd = os.path.join(BIN, f"beagle-{tool}")
+    if not os.path.exists(cmd):
+        cmd = os.path.join(BIN, "beagle")
+        args = [tool] + args
+    try:
+        result = subprocess.run(
+            [cmd] + args,
+            capture_output=True, text=True, timeout=30,
+        )
+        return result.stdout + result.stderr
+    except Exception as e:
+        return f"error: {e}"
+
+
+def format_result(resp):
+    if resp is None:
+        return None
+    if not resp.get("ok", False):
+        return resp.get("error", "unknown error")
+    return json.dumps(resp, indent=2)
+
+
+TOOLS = [
+    types.Tool(
+        name="beagle_sig",
+        description="Get a function's typed signature. Returns parameter types and return type.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Function name"},
+                "path": {"type": "string", "description": "File or directory to search"},
+            },
+            "required": ["name", "path"],
+        },
+    ),
+    types.Tool(
+        name="beagle_fields",
+        description="Get a record's typed fields and accessor functions.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "record": {"type": "string", "description": "Record type name"},
+                "path": {"type": "string", "description": "File or directory to search"},
+            },
+            "required": ["record", "path"],
+        },
+    ),
+    types.Tool(
+        name="beagle_callers",
+        description="Find all call sites of a function with argument counts.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Function name"},
+                "path": {"type": "string", "description": "File or directory to search"},
+            },
+            "required": ["name", "path"],
+        },
+    ),
+    types.Tool(
+        name="beagle_provides",
+        description="List all exports (records, functions with signatures) from a module.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "File to inspect"},
+            },
+            "required": ["path"],
+        },
+    ),
+    types.Tool(
+        name="beagle_impact",
+        description="Show a function's signature, where it's defined, and all callers — predict what breaks if the signature changes.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Function name"},
+                "path": {"type": "string", "description": "File or directory to search"},
+            },
+            "required": ["name", "path"],
+        },
+    ),
+    types.Tool(
+        name="beagle_check",
+        description="Type-check beagle source files. Returns structured diagnostics (type errors, arity errors, undefined refs).",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "File or directory to check"},
+            },
+            "required": ["path"],
+        },
+    ),
+    types.Tool(
+        name="beagle_build",
+        description="Compile a beagle source file to Clojure. Returns the generated Clojure source or compile errors.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "source": {"type": "string", "description": "Path to .rkt source file"},
+                "output": {"type": "string", "description": "Output .clj path (optional)"},
+            },
+            "required": ["source"],
+        },
+    ),
+]
+
+
+async def run():
+    server = Server("beagle")
+
+    @server.list_tools()
+    async def list_tools():
+        return TOOLS
+
+    @server.call_tool()
+    async def call_tool(name, arguments):
+        text = dispatch(name, arguments)
+        return types.CallToolResult(
+            content=[types.TextContent(type="text", text=text)]
+        )
+
+    async with stdio_server() as (read_stream, write_stream):
+        await server.run(read_stream, write_stream,
+                        server.create_initialization_options())
+
+
+def dispatch(name, arguments):
+    if name == "beagle_sig":
+        resp = daemon_query(f"sig {arguments['name']} {arguments['path']}")
+        if resp:
+            return format_result(resp)
+        return cli_fallback("sig", [arguments["name"], arguments["path"]])
+
+    elif name == "beagle_fields":
+        resp = daemon_query(f"fields {arguments['record']} {arguments['path']}")
+        if resp:
+            return format_result(resp)
+        return cli_fallback("fields", [arguments["record"], arguments["path"]])
+
+    elif name == "beagle_callers":
+        resp = daemon_query(f"callers {arguments['name']} {arguments['path']}")
+        if resp:
+            return format_result(resp)
+        return cli_fallback("callers", [arguments["name"], arguments["path"]])
+
+    elif name == "beagle_provides":
+        resp = daemon_query(f"provides {arguments['path']}")
+        if resp:
+            return format_result(resp)
+        return cli_fallback("provides", [arguments["path"]])
+
+    elif name == "beagle_impact":
+        resp = daemon_query(f"impact {arguments['name']} {arguments['path']}")
+        if resp:
+            return format_result(resp)
+        return cli_fallback("impact", [arguments["name"], arguments["path"]])
+
+    elif name == "beagle_check":
+        resp = daemon_query(f"check {arguments['path']}")
+        if resp:
+            return format_result(resp)
+        return cli_fallback("check", [arguments["path"]])
+
+    elif name == "beagle_build":
+        args = [arguments["source"]]
+        if arguments.get("output"):
+            args.append(arguments["output"])
+        return cli_fallback("build", args)
+
+    else:
+        return f"Unknown tool: {name}"
+
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(run())

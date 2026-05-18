@@ -67,6 +67,26 @@ is needed for cross-module beagle calls:
 For non-beagle namespaces (Clojure libraries), use @tt{declare-extern}
 for type-checked calls, or accept @tt{Any}-typed pass-through.
 
+@section{Claude Code Integration}
+
+For a one-command setup with Claude Code (hooks, daemon, context):
+
+@verbatim|{
+  beagle init --claude-code
+}|
+
+This creates:
+@itemlist[
+  @item{@tt{.claude/beagle-context.md} --- language reference for system context}
+  @item{@tt{.claude/hooks/beagle-check.sh} --- PostToolUse hook for instant type feedback}
+  @item{@tt{.claude/settings.json} --- hook wiring}
+  @item{@tt{CLAUDE.md} --- project instructions}
+]
+
+Then start the daemon: @tt{beagle-daemon start --watch .}
+
+Without @tt{--claude-code}, @tt{beagle init} only creates the context file.
+
 @section{Viewing Documentation}
 
 After installation, view these docs locally:

@@ -156,7 +156,7 @@ parse → check → emit
 
 ## Tools
 
-- `bin/beagle` — unified CLI: `beagle check`, `beagle build`, `beagle fix`, `beagle sig`, `beagle lsp`, `beagle repl`, `beagle init`
+- `bin/beagle` — unified CLI: `beagle check`, `beagle build`, `beagle fix`, `beagle sig`, `beagle lsp`, `beagle repl`, `beagle mcp`, `beagle init`
 - `bin/beagle-build SOURCE.rkt [OUT.clj]` — single-file compile
 - `bin/beagle-build-all FILE-OR-DIR... [--out DIR] [--warn]` — batch compile (9x vs sequential); `--warn` emits despite type errors
 - `bin/beagle-check SOURCE.rkt` — type-check without emitting Clojure
@@ -181,6 +181,7 @@ parse → check → emit
 - `bin/beagle-dtrace cascade TRACE-DIR [--trace-id ID]` — root cause analysis across service boundaries
 - `bin/beagle-daemon start|stop|status|query CMD` — persistent query server (45× faster than cold tools)
 - `bin/beagle-daemon start --watch DIR` — start with file watcher; re-checks .rkt files on save, caches enriched results
+- `bin/beagle-mcp` — MCP server exposing type system as tools (sig, fields, callers, provides, impact, check, build); delegates to daemon when running
 - `bin/beagle-verify-enriched BUILD-DIR VERIFY` — run verify + auto-diagnose failures (trace, cascade, pattern analysis)
 - `bin/beagle-sig FN-NAME FILE-OR-DIR...` — print a function's typed signature (daemon-accelerated)
 - `bin/beagle-fields RECORD FILE-OR-DIR...` — print record fields, types, and accessors (daemon-accelerated)

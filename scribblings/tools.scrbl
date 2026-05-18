@@ -42,6 +42,21 @@ to understand a codebase, ask the type system directly:
   @item{@tt{beagle-impact FN FILE-OR-DIR} --- callers + impact of signature change}
 ]
 
+@section{MCP Server}
+
+Exposes beagle's type system as tools over the Model Context Protocol,
+so any MCP-compatible agent gets type-aware code intelligence:
+
+@verbatim|{
+  beagle mcp
+}|
+
+Tools: @tt{beagle_sig}, @tt{beagle_fields}, @tt{beagle_callers},
+@tt{beagle_provides}, @tt{beagle_impact}, @tt{beagle_check}, @tt{beagle_build}.
+Delegates to a running daemon for speed; falls back to direct CLI invocation.
+
+Requires the @tt{mcp} Python package (@tt{pip install mcp}).
+
 @section{Repair Toolchain}
 
 Automated bug-finding and fixing tools that use oracle-based behavioral

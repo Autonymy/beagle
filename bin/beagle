@@ -20,7 +20,9 @@ Commands:
   expand <file.rkt>         Show source after macro expansion
   lsp                       Start LSP server (stdio)
   repl                      Start typed REPL
-  init                      Bootstrap a beagle project (.claude/ snippet)
+  mcp                       Start MCP server (stdio)
+  init [--claude-code]      Bootstrap a beagle project
+  init --claude-code        Full Claude Code setup (hooks, daemon, MCP, context)
 
 Options:
   --out DIR                 Output directory (for build)
@@ -72,15 +74,128 @@ case "$cmd" in
     repl)
         exec "$BIN/beagle-repl" "$@"
         ;;
+    mcp)
+        exec "$BIN/beagle-mcp" "$@"
+        ;;
     init)
-        target="${1:-.}"
+        claude_code=false
+        target="."
+        for arg in "$@"; do
+            case "$arg" in
+                --claude-code) claude_code=true ;;
+                *) target="$arg" ;;
+            esac
+        done
+
         mkdir -p "$target/.claude"
-        if [[ -f "$target/.claude/beagle-context.md" ]]; then
-            echo "beagle context already exists at $target/.claude/beagle-context.md" >&2
-            exit 1
+
+        # Always: copy consumer cheatsheet as context
+        if [[ ! -f "$target/.claude/beagle-context.md" ]]; then
+            cp "$BEAGLE_DIR/docs/cheatsheet-consumer.md" "$target/.claude/beagle-context.md"
+            echo "Created .claude/beagle-context.md" >&2
+        else
+            echo ".claude/beagle-context.md already exists, skipping" >&2
         fi
-        cp "$BEAGLE_DIR/docs/cheatsheet-consumer.md" "$target/.claude/beagle-context.md"
-        echo "Created $target/.claude/beagle-context.md — add to your CLAUDE.md instructions." >&2
+
+        if [[ "$claude_code" == true ]]; then
+            # Hook script
+            mkdir -p "$target/.claude/hooks"
+            cat > "$target/.claude/hooks/beagle-check.sh" <<'HOOK'
+#!/usr/bin/env bash
+# PostToolUse hook: type-check .rkt files after edit/write.
+# Queries running daemon for instant results; falls back to beagle check.
+set -euo pipefail
+INPUT=$(cat)
+FILE=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tool_input',{}).get('file_path',''))" 2>/dev/null || true)
+[[ "$FILE" == *.rkt ]] || exit 0
+
+PORT_FILE="${BEAGLE_DAEMON_PORTFILE:-${TMPDIR:-/tmp}/beagle-daemon.port}"
+if [[ -f "$PORT_FILE" ]]; then
+    PORT=$(cat "$PORT_FILE")
+    RESULT=$(echo "check $FILE" | nc -w 2 127.0.0.1 "$PORT" 2>/dev/null || true)
+    if [[ -n "$RESULT" ]]; then
+        OK=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('ok',False))" 2>/dev/null || echo "True")
+        if [[ "$OK" == "False" ]]; then
+            echo "--- beagle type errors ---" >&2
+            echo "$RESULT" | python3 -c "
+import sys,json
+data=json.load(sys.stdin)
+for e in data.get('errors',[]):
+    print(f\"  {e.get('file','?')}: {e.get('error','?')}\", file=sys.stderr)
+" 2>&1 >&2
+        fi
+        exit 0
+    fi
+fi
+
+# Fallback: direct check
+beagle check "$FILE" 2>&1 >&2 || true
+HOOK
+            chmod +x "$target/.claude/hooks/beagle-check.sh"
+            echo "Created .claude/hooks/beagle-check.sh" >&2
+
+            # Settings with hook
+            if [[ ! -f "$target/.claude/settings.json" ]]; then
+                cat > "$target/.claude/settings.json" <<SETTINGS
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$(cd "$target" && pwd)/.claude/hooks/beagle-check.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
+SETTINGS
+                echo "Created .claude/settings.json (PostToolUse hook)" >&2
+            else
+                echo ".claude/settings.json already exists — add the hook manually:" >&2
+                echo "  matcher: Edit|Write → .claude/hooks/beagle-check.sh" >&2
+            fi
+
+            # CLAUDE.md snippet
+            if [[ ! -f "$target/CLAUDE.md" ]]; then
+                cat > "$target/CLAUDE.md" <<'CLAUDE'
+# Project
+
+Uses [beagle](https://github.com/tompassarelli/beagle) — a typed authoring
+layer that compiles to Clojure. See `.claude/beagle-context.md` for the
+full language reference.
+
+## Workflow
+
+- `beagle check .` — type-check all files
+- `beagle build . --out .build/` — compile to Clojure
+- `beagle sig fn-name .` — query a function's type signature
+- `beagle fields Record .` — query record fields and accessors
+
+The daemon watches for file changes and provides instant type feedback
+after every edit via the PostToolUse hook.
+
+Start it with: `beagle-daemon start --watch .`
+CLAUDE
+                echo "Created CLAUDE.md" >&2
+            else
+                echo "CLAUDE.md already exists, skipping" >&2
+            fi
+
+            echo "" >&2
+            echo "Setup complete. Start the daemon:" >&2
+            echo "  beagle-daemon start --watch ." >&2
+            echo "" >&2
+            echo "MCP server (optional, for non-Claude-Code agents):" >&2
+            echo "  beagle mcp" >&2
+        else
+            echo "Add to your CLAUDE.md instructions." >&2
+            echo "For full Claude Code setup: beagle init --claude-code" >&2
+        fi
         ;;
     help|--help|-h)
         usage
