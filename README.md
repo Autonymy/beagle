@@ -45,7 +45,7 @@ Clojure also has useful training data. LLMs can bootstrap from existing Clojure 
 
 (defrecord StockLevel [(product-id : Int)
                        (quantity   : Int)
-                       (min-qty   : Int)])
+                       (min-qty    : Int)])
 
 (defn understocked? [(s : StockLevel)] : Bool
   (< (stocklevel-quantity s) (stocklevel-min-qty s)))

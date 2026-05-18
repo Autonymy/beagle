@@ -6,7 +6,7 @@
 #
 # If the output path is omitted, it is derived from the namespace declared
 # in the source via (ns ...) and dropped under runtime/src/.
-# Extension is determined by target: .clj (default), .cljs, .js, .py.
+# Extension is determined by target: .clj (default), .cljs, .js, .py, .nix.
 
 set -euo pipefail
 
@@ -33,6 +33,9 @@ elif grep -qE '^\(define-target[[:space:]]+js\)' "$src" 2>/dev/null || \
 elif grep -qE '^\(define-target[[:space:]]+py\)' "$src" 2>/dev/null || \
      grep -qE '^#lang beagle/py' "$src" 2>/dev/null; then
     ext="py"
+elif grep -qE '^\(define-target[[:space:]]+nix\)' "$src" 2>/dev/null || \
+     grep -qE '^#lang beagle/nix' "$src" 2>/dev/null; then
+    ext="nix"
 fi
 
 if [[ $# -eq 2 ]]; then

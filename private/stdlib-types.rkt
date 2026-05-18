@@ -10,7 +10,8 @@
          "stdlib-portable.rkt"
          "stdlib-clj.rkt"
          "stdlib-cljs.rkt"
-         "stdlib-js.rkt")
+         "stdlib-js.rkt"
+         "stdlib-nix.rkt")
 
 (define (merge-hashes . hs)
   (for*/fold ([out (hash)]) ([h (in-list hs)]
@@ -23,10 +24,14 @@
 (define stdlib-js-combined
   (merge-hashes STDLIB-PORTABLE STDLIB-JS))
 
+(define stdlib-nix-combined
+  (merge-hashes STDLIB-PORTABLE STDLIB-NIX))
+
 (define (stdlib-for-target target)
   (case target
     [(clj cljs) stdlib-clj-combined]
     [(js)       stdlib-js-combined]
+    [(nix)      stdlib-nix-combined]
     [(py)       STDLIB-PORTABLE]
     [else (error 'stdlib-for-target "unknown target: ~a" target)]))
 
@@ -43,4 +48,5 @@
 (provide STDLIB-TYPES CLJS-EXCLUDE
          stdlib-for-target target-excludes-for
          STDLIB-PORTABLE STDLIB-CLJ STDLIB-CLJS CLJ-EXCLUDE
-         STDLIB-JS JS-NO-EMIT)
+         STDLIB-JS JS-NO-EMIT
+         STDLIB-NIX)

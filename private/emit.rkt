@@ -6,7 +6,8 @@
 (require "parse.rkt"
          "emit-dispatch.rkt"
          "emit-clj.rkt"
-         "emit-js.rkt")
+         "emit-js.rkt"
+         "emit-nix.rkt")
 
 (define (emit-program prog)
   (define backend (resolve-backend (program-target prog)))

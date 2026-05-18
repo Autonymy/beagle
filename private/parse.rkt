@@ -302,6 +302,7 @@
 
 (define (lang-line->target lang-line)
   (cond
+    [(regexp-match? #rx"beagle/nix" lang-line) 'nix]
     [(regexp-match? #rx"beagle/js"  lang-line) 'js]
     [(regexp-match? #rx"beagle/py"  lang-line) 'py]
     [(regexp-match? #rx"beagle/cljs" lang-line) 'cljs]
@@ -456,8 +457,8 @@
 
       [(list 'define-target (? symbol? t))
        (when target-set? (error 'beagle "duplicate define-target"))
-       (unless (memq t '(clj cljs js py))
-         (error 'beagle "unknown target: ~a (expected clj, cljs, js, or py)" t))
+       (unless (memq t '(clj cljs js nix py))
+         (error 'beagle "unknown target: ~a (expected clj, cljs, js, nix, or py)" t))
        (set! target t)
        (set! target-set? #t)]
 
