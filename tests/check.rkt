@@ -835,20 +835,96 @@
 ;; async/await + Promise type
 ;; =============================================================================
 
-(check-ok "await on (Promise T) type-checks"
+;; Helpers for JS-target tests (await requires beagle/js)
+(define (check-js-prog . forms)
+  (define prog (parse-program
+                (map (lambda (f) (datum->syntax #f f))
+                     (cons '(define-target js) forms))))
+  (type-check! prog))
+
+(define-syntax-rule (check-js-ok name form ...)
+  (test-case name (check-not-exn (lambda () (check-js-prog form ...)))))
+
+(define-syntax-rule (check-js-err name form ...)
+  (test-case name (check-exn exn:fail? (lambda () (check-js-prog form ...)))))
+
+(define-syntax-rule (check-js-err/rx name rx form ...)
+  (test-case name (check-exn rx (lambda () (check-js-prog form ...)))))
+
+;; Helpers for Nix-target tests
+(define (check-nix-prog . forms)
+  (define prog (parse-program
+                (map (lambda (f) (datum->syntax #f f))
+                     (cons '(define-target nix) forms))))
+  (type-check! prog))
+
+(define-syntax-rule (check-nix-ok name form ...)
+  (test-case name (check-not-exn (lambda () (check-nix-prog form ...)))))
+
+(define-syntax-rule (check-nix-err/rx name rx form ...)
+  (test-case name (check-exn rx (lambda () (check-nix-prog form ...)))))
+
+(check-js-ok "await on (Promise T) type-checks"
   `(declare-extern fetch-data ,(br 'String '-> '(Promise String)))
   '(defn f [(url : String)] : (Promise String) (await (fetch-data url))))
 
-(check-ok "Promise return with unwrapped body type accepted"
+(check-js-ok "Promise return with unwrapped body type accepted"
   `(declare-extern load ,(br '-> '(Promise Int)))
   '(defn f [] : (Promise Int) (await (load))))
 
-(check-ok "nested await in let type-checks"
+(check-js-ok "nested await in let type-checks"
   `(declare-extern fetch-name ,(br 'Int '-> '(Promise String)))
   '(defn f [(id : Int)] : (Promise String)
     (let [name (await (fetch-name id))]
       (str "Hello " name))))
 
-(check-err "Promise return type mismatch caught"
+(check-js-err "Promise return type mismatch caught"
   `(declare-extern load ,(br '-> '(Promise Int)))
   '(defn f [] : (Promise String) (await (load))))
+
+;; =============================================================================
+;; Target-form gating — cross-target rejection
+;; =============================================================================
+
+;; await rejected outside beagle/js
+(check-err/rx "await rejected in beagle/clj"
+  #rx"await is only supported in beagle/js"
+  `(declare-extern fetch-data ,(br 'String '-> '(Promise String)))
+  '(defn f [(url : String)] : (Promise String) (await (fetch-data url))))
+
+(check-nix-err/rx "await rejected in beagle/nix"
+  #rx"await is only supported in beagle/js"
+  `(declare-extern fetch-data ,(br 'String '-> '(Promise String)))
+  '(defn f [(url : String)] : (Promise String) (await (fetch-data url))))
+
+;; Nix forms rejected outside beagle/nix
+(check-err/rx "inh rejected in beagle/clj"
+  #rx"inh is only supported in beagle/nix"
+  '(def x : Any (inh a b)))
+
+(check-js-err/rx "inh rejected in beagle/js"
+  #rx"inh is only supported in beagle/nix"
+  '(def x : Any (inh a b)))
+
+(check-err/rx "fn-set rejected in beagle/clj"
+  #rx"fn-set is only supported in beagle/nix"
+  '(def x : Any (fn-set [{a 1}] a)))
+
+(check-js-err/rx "pipe-to rejected in beagle/js"
+  #rx"pipe-to/pipe-from is only supported in beagle/nix"
+  '(def x : Any (pipe-to 1 inc)))
+
+(check-err/rx "with-do rejected in beagle/clj"
+  #rx"with-do is only supported in beagle/nix"
+  '(def x : Any (with-do lib body)))
+
+(check-js-err/rx "s (interpolated string) rejected in beagle/js"
+  #rx"s is only supported in beagle/nix"
+  '(def x : Any (s "hello " name)))
+
+;; Verify Nix forms pass on beagle/nix
+(check-nix-ok "inh accepted in beagle/nix"
+  '(def x : Any (inh a b)))
+
+(check-nix-ok "s accepted in beagle/nix"
+  '(def x : Any (s "hello " name)))

@@ -328,6 +328,37 @@ Host-language idioms whose cost > benefit for beagle's goals:
 - **`@deref`, `#'var-quote`** — Clojure-runtime concepts; use `unsafe`
 - **Exotic reader macros (`#=`, `#_`, `#?`)** — Clojure-reader-specific
 
+## Portability rule
+
+Beagle has two layers: portable core (Beagle-owned semantics) and
+target layers (host-language semantics).
+
+> Portable if Beagle owns the concept. Target-specific if the host owns it.
+
+**Decision procedure for new forms:**
+
+1. Who owns the concept? `defn`, `match`, `let` → Beagle. `inherit`, `await` → host.
+2. Can every target lower it honestly? If not, it's target-specific.
+3. Is it sugar for portable semantics? `when` → desugars to `if` → portable.
+   `inh` → emits Nix `inherit` → cannot desugar → target-specific.
+4. Would it be absurd in another target? Then it's target-specific.
+
+**Enforcement:**
+
+- Target-specific forms are gated in `check.rkt` via `TARGET-ONLY-FORMS` —
+  using them outside their target is a compile error, not a warning.
+- Target-specific stdlib is gated via `stdlib-for-target` / `target-excludes-for`
+  in `stdlib-types.rkt`.
+- Every stdlib function visible to a target must be one of: inline-emitted,
+  native call, runtime helper, or compile-time error. No silent fallbacks.
+
+**Current target-specific forms:**
+
+| target | forms |
+|--------|-------|
+| `beagle/js` | `await` |
+| `beagle/nix` | `inh`, `inh-from`, `with-do`, `rec-att`, `assert-do`, `get-or`, `has`, `spath`, `s`, `ms`, `p`, `fn-set`, `fn-set-rest`, `fn-set@`, `pipe-to`, `pipe-from`, `impl` |
+
 ## Setup (one-time)
 
 ```

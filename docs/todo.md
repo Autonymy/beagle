@@ -82,6 +82,12 @@ All forms are target-specific (`nix-*` AST nodes, invalid outside `beagle/nix`).
 - [x] `pipe-to` / `pipe-from` — pipe operators
 - [x] `impl` — logical implication
 
+**Phase 4 — Target-form gating:**
+- [x] `TARGET-ONLY-FORMS` registry in `check.rkt` — compile error for target-specific forms outside their target
+- [x] `check-target-form` validation in `infer-expr` — gates all 15 nix forms + `await`
+- [x] Fix `emit-nix.rkt` silent `await` handling (was emitting inner expr, now errors)
+- [x] Cross-target rejection tests (10 tests: await on clj/nix, nix forms on clj/js)
+
 Win condition: every NixOS module expressible in Nisp is expressible
 in `beagle/nix` without `unsafe`. Emitted Nix evaluates correctly.
 

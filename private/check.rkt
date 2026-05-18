@@ -39,6 +39,62 @@
 ;; Current compile target ('clj, 'cljs, 'js, or 'py) — set during type-check!
 (define current-check-target (make-parameter 'clj))
 
+;; --- target-form gating -----------------------------------------------------
+;; Target-specific AST forms must only appear in their target.
+;; Maps predicate → required target symbol.
+(define TARGET-ONLY-FORMS
+  (hash
+   await-form?              'js
+   nix-inherit?             'nix
+   nix-inherit-from?        'nix
+   nix-with?                'nix
+   nix-rec-attrs?           'nix
+   nix-assert?              'nix
+   nix-get-or?              'nix
+   nix-has-attr?            'nix
+   nix-search-path?         'nix
+   nix-interpolated-string? 'nix
+   nix-multiline-string?    'nix
+   nix-path?                'nix
+   nix-fn-set?              'nix
+   nix-pipe?                'nix
+   nix-impl?                'nix))
+
+;; Map predicate → display name for error messages.
+(define TARGET-FORM-NAMES
+  (hash
+   await-form?              "await"
+   nix-inherit?             "inh"
+   nix-inherit-from?        "inh-from"
+   nix-with?                "with-do"
+   nix-rec-attrs?           "rec-att"
+   nix-assert?              "assert-do"
+   nix-get-or?              "get-or"
+   nix-has-attr?            "has"
+   nix-search-path?         "spath"
+   nix-interpolated-string? "s"
+   nix-multiline-string?    "ms"
+   nix-path?                "p"
+   nix-fn-set?              "fn-set"
+   nix-pipe?                "pipe-to/pipe-from"
+   nix-impl?                "impl"))
+
+;; Check if expression `e` is a target-specific form used outside its target.
+;; Raises a compile error if so.
+(define (check-target-form e)
+  (for ([(pred required-target) (in-hash TARGET-ONLY-FORMS)])
+    (when (pred e)
+      (define current (current-check-target))
+      (unless (eq? current required-target)
+        (define name (hash-ref TARGET-FORM-NAMES pred "unknown"))
+        (raise-diag 'target-form
+                    (format "~a is only supported in beagle/~a (current target: ~a)"
+                            name required-target current)
+                    (hasheq 'form name
+                            'required-target (symbol->string required-target)
+                            'current-target (symbol->string current))
+                    #:src (src-for e))))))
+
 ;; Record field registry: record-type-name -> hash of keyword-sym -> type
 (define RECORD-FIELDS (make-hash))
 ;; Ordered field names for positional destructuring in match
@@ -718,6 +774,7 @@
 ;; --- inference -------------------------------------------------------------
 
 (define (infer-expr e env)
+  (check-target-form e)
   (cond
     [(or (string? e) (boolean? e) (exact-integer? e) (real? e))
      (or (infer-literal-type e) ANY)]
