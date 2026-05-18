@@ -109,7 +109,7 @@ INPUT=$(cat)
 FILE=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tool_input',{}).get('file_path',''))" 2>/dev/null || true)
 [[ "$FILE" == *.rkt ]] || exit 0
 
-PORT_FILE="${BEAGLE_DAEMON_PORTFILE:-${TMPDIR:-/tmp}/beagle-daemon.port}"
+PORT_FILE="${BEAGLE_DAEMON_PORTFILE:-/var/tmp/beagle-daemon.port}"
 if [[ -f "$PORT_FILE" ]]; then
     PORT=$(cat "$PORT_FILE")
     RESULT=$(echo "check $FILE" | nc -w 2 127.0.0.1 "$PORT" 2>/dev/null || true)
