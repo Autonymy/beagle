@@ -219,6 +219,38 @@
     [(with-meta metadata expr)
      (check-shadow metadata scope ctx)
      (check-shadow expr scope ctx)]
+    [(when-let-form name expr body)
+     (check-shadow expr scope ctx)
+     (define inner (scope-copy scope))
+     (hash-set! inner name #t)
+     (for ([e (in-list body)]) (check-shadow e inner ctx))]
+    [(if-let-form name expr then-body else-body)
+     (check-shadow expr scope ctx)
+     (define inner (scope-copy scope))
+     (hash-set! inner name #t)
+     (check-shadow then-body inner ctx)
+     (when else-body (check-shadow else-body scope ctx))]
+    [(when-some-form name expr body)
+     (check-shadow expr scope ctx)
+     (define inner (scope-copy scope))
+     (hash-set! inner name #t)
+     (for ([e (in-list body)]) (check-shadow e inner ctx))]
+    [(if-some-form name expr then-body else-body)
+     (check-shadow expr scope ctx)
+     (define inner (scope-copy scope))
+     (hash-set! inner name #t)
+     (check-shadow then-body inner ctx)
+     (check-shadow else-body scope ctx)]
+    [(with-open-form bindings body)
+     (define inner (scope-copy scope))
+     (for ([b (in-list bindings)])
+       (when (symbol? (let-binding-name b))
+         (hash-set! inner (let-binding-name b) #t))
+       (check-shadow (let-binding-value b) inner ctx))
+     (for ([e (in-list body)]) (check-shadow e inner ctx))]
+    [(doto-form target forms)
+     (check-shadow target scope ctx)
+     (for ([f (in-list forms)]) (check-shadow f scope ctx))]
     [(unsafe-expr inner) (check-shadow inner scope ctx)]
     [(try-form body catches finally-body)
      (for ([e (in-list body)]) (check-shadow e scope ctx))
@@ -348,6 +380,26 @@
     [(with-meta metadata expr)
      (collect-symbols metadata used)
      (collect-symbols expr used)]
+    [(when-let-form name expr body)
+     (collect-symbols expr used)
+     (for ([e (in-list body)]) (collect-symbols e used))]
+    [(if-let-form name expr then-body else-body)
+     (collect-symbols expr used)
+     (collect-symbols then-body used)
+     (when else-body (collect-symbols else-body used))]
+    [(when-some-form name expr body)
+     (collect-symbols expr used)
+     (for ([e (in-list body)]) (collect-symbols e used))]
+    [(if-some-form name expr then-body else-body)
+     (collect-symbols expr used)
+     (collect-symbols then-body used)
+     (collect-symbols else-body used)]
+    [(with-open-form bindings body)
+     (for ([b (in-list bindings)]) (collect-symbols (let-binding-value b) used))
+     (for ([e (in-list body)]) (collect-symbols e used))]
+    [(doto-form target forms)
+     (collect-symbols target used)
+     (for ([f (in-list forms)]) (collect-symbols f used))]
     [(unsafe-expr inner) (collect-symbols inner used)]
     [(try-form body catches finally-body)
      (for ([e (in-list body)]) (collect-symbols e used))

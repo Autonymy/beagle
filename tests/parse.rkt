@@ -773,3 +773,57 @@
   (check-equal? (length (vec-form-items val)) 2)
   (check-true (with-meta? (car (vec-form-items val))))
   (check-true (with-meta? (cadr (vec-form-items val)))))
+
+;; --- conditional let forms ---------------------------------------------------
+
+(test-case "when-let parses"
+  (define f (car (parse-one '(when-let [x (get m :key)] (println x)))))
+  (check-true (when-let-form? f))
+  (check-eq? (when-let-form-name f) 'x))
+
+(test-case "if-let parses with else"
+  (define f (car (parse-one '(if-let [v (get m :key)] (str v) "nope"))))
+  (check-true (if-let-form? f))
+  (check-eq? (if-let-form-name f) 'v)
+  (check-not-false (if-let-form-else-body f)))
+
+(test-case "if-let parses without else"
+  (define f (car (parse-one '(if-let [v (get m :key)] (str v)))))
+  (check-true (if-let-form? f))
+  (check-false (if-let-form-else-body f)))
+
+(test-case "when-some parses"
+  (define f (car (parse-one '(when-some [v x] (println v)))))
+  (check-true (when-some-form? f)))
+
+(test-case "if-some parses"
+  (define f (car (parse-one '(if-some [v x] (str v) "nil"))))
+  (check-true (if-some-form? f)))
+
+;; --- with-open ---------------------------------------------------------------
+
+(test-case "with-open parses"
+  (define f (car (parse-one '(with-open [r (reader "f")] (slurp r)))))
+  (check-true (with-open-form? f))
+  (check-equal? (length (with-open-form-bindings f)) 1))
+
+;; --- doto --------------------------------------------------------------------
+
+(test-case "doto parses"
+  (define f (car (parse-one '(doto (HashMap.) (.put "a" 1)))))
+  (check-true (doto-form? f))
+  (check-equal? (length (doto-form-forms f)) 1))
+
+;; --- as-> expands at parse time ----------------------------------------------
+
+(test-case "as-> expands to nested lets"
+  (define f (car (parse-one '(as-> 1 x (+ x 1) (str x)))))
+  (check-true (let-form? f)))
+
+;; --- for :let clause ---------------------------------------------------------
+
+(test-case "for with :let parses"
+  (define f (car (parse-one `(for ,(br 'x '(range 5) ':let (br 's '(str x))) s))))
+  (check-true (for-form? f))
+  (check-equal? (length (for-form-clauses f)) 2)
+  (check-true (for-let? (cadr (for-form-clauses f)))))

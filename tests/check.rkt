@@ -782,3 +782,20 @@
 
 (check-err "metadata does not suppress type error in inner expr"
   `(def x : String (#%meta (,MT :stretch 1) ,(br 1 2 3))))
+
+;; --- conditional let type checking -------------------------------------------
+
+(check-ok "when-let type checks binding"
+  '(defn f [(x : Long?)] : Nil (when-let [v x] (println v))))
+
+(check-ok "if-let type checks both branches"
+  '(defn f [(m : Any)] : String (if-let [v (get m :k)] (str v) "no")))
+
+(check-ok "with-open type checks"
+  '(defn f [(p : String)] : Any (with-open [r (slurp p)] r)))
+
+(check-ok "doto type checks target"
+  '(def x : Any (doto (atom 1) (reset! 2))))
+
+(check-ok "for with :let type checks"
+  `(def x : (Vec String) (for ,(br 'i '(range 3) ':let (br 's '(str i))) s)))

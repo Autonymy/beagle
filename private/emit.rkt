@@ -257,6 +257,41 @@
      (format "(when ~a\n  ~a)"
              (emit-expr (when-form-cond-expr e))
              (emit-body (when-form-body e) "  "))]
+    [(when-let-form? e)
+     (format "(when-let [~a ~a]\n  ~a)"
+             (when-let-form-name e)
+             (emit-expr (when-let-form-expr e))
+             (emit-body (when-let-form-body e) "  "))]
+    [(if-let-form? e)
+     (if (if-let-form-else-body e)
+       (format "(if-let [~a ~a]\n  ~a\n  ~a)"
+               (if-let-form-name e)
+               (emit-expr (if-let-form-expr e))
+               (emit-expr (if-let-form-then-body e))
+               (emit-expr (if-let-form-else-body e)))
+       (format "(if-let [~a ~a]\n  ~a)"
+               (if-let-form-name e)
+               (emit-expr (if-let-form-expr e))
+               (emit-expr (if-let-form-then-body e))))]
+    [(when-some-form? e)
+     (format "(when-some [~a ~a]\n  ~a)"
+             (when-some-form-name e)
+             (emit-expr (when-some-form-expr e))
+             (emit-body (when-some-form-body e) "  "))]
+    [(if-some-form? e)
+     (format "(if-some [~a ~a]\n  ~a\n  ~a)"
+             (if-some-form-name e)
+             (emit-expr (if-some-form-expr e))
+             (emit-expr (if-some-form-then-body e))
+             (emit-expr (if-some-form-else-body e)))]
+    [(with-open-form? e)
+     (format "(with-open [~a]\n  ~a)"
+             (emit-let-bindings (with-open-form-bindings e))
+             (emit-body (with-open-form-body e) "  "))]
+    [(doto-form? e)
+     (format "(doto ~a\n  ~a)"
+             (emit-expr (doto-form-target e))
+             (string-join (map emit-expr (doto-form-forms e)) "\n  "))]
     [(do-form? e)
      (format "(do\n  ~a)"
              (emit-body (do-form-body e) "  "))]
@@ -559,7 +594,9 @@
             [else (symbol->string (for-binding-name c))]))
         (format "~a ~a" name-str (emit-expr (for-binding-expr c)))]
        [(for-when? c)
-        (format ":when ~a" (emit-expr (for-when-test c)))]))
+        (format ":when ~a" (emit-expr (for-when-test c)))]
+       [(for-let? c)
+        (format ":let [~a]" (emit-let-bindings (for-let-bindings c)))]))
    "\n   "))
 
 (define (emit-body exprs indent)

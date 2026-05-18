@@ -187,6 +187,13 @@
 (struct pat-var      (name)                                  #:transparent)
 
 (struct with-meta   (metadata expr)                          #:transparent)
+(struct when-let-form  (name expr body)                      #:transparent)
+(struct if-let-form    (name expr then-body else-body)       #:transparent)
+(struct when-some-form (name expr body)                      #:transparent)
+(struct if-some-form   (name expr then-body else-body)       #:transparent)
+(struct with-open-form (bindings body)                       #:transparent)
+(struct doto-form      (target forms)                        #:transparent)
+(struct for-let        (bindings)                            #:transparent)
 
 (struct param       (name type)                             #:transparent)
 (struct map-destructure (keys as-name)                      #:transparent)
@@ -661,6 +668,18 @@
            init steps))
   body)
 
+(define (expand-as-thread init name steps)
+  (foldl (lambda (step acc)
+           `(let [,name ,acc] ,step))
+         init steps))
+
+(define (parse-cond-let-binding b)
+  (define d (->datum b))
+  (define items (unwrap-items d "conditional let binding"))
+  (unless (and (= (length items) 2) (symbol? (car items)))
+    (error 'beagle "conditional let binding must be [name expr], got: ~v" items))
+  (values (car items) (parse-expr (cadr items))))
+
 (define (parse-list-form d subs)
   (match d
     [(list 'unsafe-expr inner)
@@ -750,6 +769,37 @@
     [(list 'when c body ...)
      (when-form (parse-expr (or (stx-ref subs 1) c))
                 (parse-body (or (stx-tail subs 2) body)))]
+
+    [(list 'when-let bindings-form body ...)
+     (define-values (name expr) (parse-cond-let-binding (or (stx-ref subs 1) bindings-form)))
+     (when-let-form name expr (parse-body (or (stx-tail subs 2) body)))]
+    [(list 'if-let bindings-form then else)
+     (define-values (name expr) (parse-cond-let-binding (or (stx-ref subs 1) bindings-form)))
+     (if-let-form name expr
+                  (parse-expr (or (stx-ref subs 2) then))
+                  (parse-expr (or (stx-ref subs 3) else)))]
+    [(list 'if-let bindings-form then)
+     (define-values (name expr) (parse-cond-let-binding (or (stx-ref subs 1) bindings-form)))
+     (if-let-form name expr
+                  (parse-expr (or (stx-ref subs 2) then))
+                  #f)]
+    [(list 'when-some bindings-form body ...)
+     (define-values (name expr) (parse-cond-let-binding (or (stx-ref subs 1) bindings-form)))
+     (when-some-form name expr (parse-body (or (stx-tail subs 2) body)))]
+    [(list 'if-some bindings-form then else)
+     (define-values (name expr) (parse-cond-let-binding (or (stx-ref subs 1) bindings-form)))
+     (if-some-form name expr
+                   (parse-expr (or (stx-ref subs 2) then))
+                   (parse-expr (or (stx-ref subs 3) else)))]
+
+    [(list 'with-open bindings-form body ...)
+     (with-open-form (parse-let-bindings (or (stx-ref subs 1) bindings-form))
+                     (parse-body (or (stx-tail subs 2) body)))]
+
+    [(list 'doto target forms ...)
+     (doto-form (parse-expr (or (stx-ref subs 1) target))
+                (map parse-expr (or (stx-tail subs 2) forms)))]
+
     [(list 'do body ...)
      (do-form (parse-body (or (stx-tail subs 1) body)))]
 
@@ -814,6 +864,8 @@
      (parse-expr (expand-some-thread 'some-> init steps))]
     [(list 'some->> init steps ...)
      (parse-expr (expand-some-thread 'some->> init steps))]
+    [(list 'as-> init name steps ...)
+     (parse-expr (expand-as-thread init name steps))]
 
     [(list (? symbol? f) args ...)
      (call-form f (map parse-expr (or (stx-tail subs 1) args)))]
@@ -1220,6 +1272,12 @@
              (and stxs (>= (length stxs) 2) (cddr stxs))
              (cons (for-when (parse-expr (or val-stx (cadr rest)))) acc))]
       [(and (>= (length rest) 2)
+            (eq? (car rest) ':let))
+       (define let-stx (and stxs (>= (length stxs) 2) (cadr stxs)))
+       (loop (cddr rest)
+             (and stxs (>= (length stxs) 2) (cddr stxs))
+             (cons (for-let (parse-let-bindings (or let-stx (cadr rest)))) acc))]
+      [(and (>= (length rest) 2)
             (bracketed? (car rest)))
        (define destr (parse-seq-destructure (car rest)))
        (define val-stx (and stxs (>= (length stxs) 2) (cadr stxs)))
@@ -1313,6 +1371,13 @@
  (struct-out defscalar-form)
  (struct-out scalar-predicate)
  (struct-out with-meta)
+ (struct-out when-let-form)
+ (struct-out if-let-form)
+ (struct-out when-some-form)
+ (struct-out if-some-form)
+ (struct-out with-open-form)
+ (struct-out doto-form)
+ (struct-out for-let)
  parse-program
  DEFAULT-MODE
  DEFAULT-TARGET

@@ -559,3 +559,25 @@
                                      `(#%meta (,MT :stretch 2) ,(br 'b))))))
   (check-true (matches? #rx"\\^\\{:stretch 1\\}" out))
   (check-true (matches? #rx"\\^\\{:stretch 2\\}" out)))
+
+;; --- conditional let emission ------------------------------------------------
+
+(test-case "when-let emits"
+  (define out (compile '(defn f [(x : Any)] : Nil (when-let [v x] (println v)))))
+  (check-true (matches? #rx"\\(when-let \\[v x\\]" out)))
+
+(test-case "if-let emits"
+  (define out (compile '(defn f [(m : Any)] : String (if-let [v (get m :k)] (str v) "no"))))
+  (check-true (matches? #rx"\\(if-let \\[v \\(get m :k\\)\\]" out)))
+
+(test-case "with-open emits"
+  (define out (compile '(defn f [(p : String)] : Any (with-open [r (slurp p)] r))))
+  (check-true (matches? #rx"\\(with-open \\[r" out)))
+
+(test-case "doto emits"
+  (define out (compile '(def x : Any (doto (atom 1) (reset! 2)))))
+  (check-true (matches? #rx"\\(doto" out)))
+
+(test-case "for with :let emits"
+  (define out (compile `(def x : (Vec String) (for ,(br 'i '(range 3) ':let (br 's '(str i))) s))))
+  (check-true (matches? #rx":let \\[s" out)))

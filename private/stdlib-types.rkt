@@ -344,6 +344,20 @@
    'clojure.walk/prewalk-replace  (fn-of '(Any Any) 'Any)
    'clojure.walk/stringify-keys   (fn-of '(Any) 'Any)
    'clojure.walk/keywordize-keys  (fn-of '(Any) 'Any)
+   ;; --- clojure.java.io ----------------------------------------------------
+   'clojure.java.io/file          (fn-of '(String) 'Any #:rest 'String)
+   'clojure.java.io/reader        (fn-of '(Any) 'Any)
+   'clojure.java.io/writer        (fn-of '(Any) 'Any)
+   'clojure.java.io/input-stream  (fn-of '(Any) 'Any)
+   'clojure.java.io/output-stream (fn-of '(Any) 'Any)
+   'clojure.java.io/resource      (fn-of '(String) 'Any)
+   'clojure.java.io/copy          (fn-of '(Any Any) 'Any)
+   'clojure.java.io/delete-file   (fn-of '(Any) 'Boolean #:rest 'Any)
+   'clojure.java.io/make-parents  (fn-of '(Any) 'Boolean)
+   ;; --- clojure.pprint ------------------------------------------------------
+   'clojure.pprint/pprint       (fn-of '(Any) 'Nil #:rest 'Any)
+   'clojure.pprint/cl-format    (fn-of '(Any String) 'Any #:rest 'Any)
+   'clojure.pprint/print-table  (fn-of '(Any) 'Nil #:rest 'Any)
    ;; --- clojure.edn -------------------------------------------------------
    'clojure.edn/read-string (fn-of '(String) 'Any)
    ;; --- regex / matching ---------------------------------------------------

@@ -736,6 +736,43 @@
            (type-app 'Set (list first-t))
            (type-app 'Set (list ANY)))))]
     [(with-meta? e) (infer-expr (with-meta-expr e) env)]
+    [(when-let-form? e)
+     (define val-type (infer-expr (when-let-form-expr e) env))
+     (define body-env (mut-copy env))
+     (hash-set! body-env (when-let-form-name e) val-type)
+     (last-expr-type (when-let-form-body e) body-env)
+     NIL]
+    [(if-let-form? e)
+     (define val-type (infer-expr (if-let-form-expr e) env))
+     (define then-env (mut-copy env))
+     (hash-set! then-env (if-let-form-name e) val-type)
+     (define then-type (infer-expr (if-let-form-then-body e) then-env))
+     (define else-type (if (if-let-form-else-body e)
+                         (infer-expr (if-let-form-else-body e) env)
+                         NIL))
+     (merge-types then-type else-type)]
+    [(when-some-form? e)
+     (define val-type (infer-expr (when-some-form-expr e) env))
+     (define body-env (mut-copy env))
+     (hash-set! body-env (when-some-form-name e) val-type)
+     (last-expr-type (when-some-form-body e) body-env)
+     NIL]
+    [(if-some-form? e)
+     (define val-type (infer-expr (if-some-form-expr e) env))
+     (define then-env (mut-copy env))
+     (hash-set! then-env (if-some-form-name e) val-type)
+     (define then-type (infer-expr (if-some-form-then-body e) then-env))
+     (define else-type (infer-expr (if-some-form-else-body e) env))
+     (merge-types then-type else-type)]
+    [(with-open-form? e)
+     (define body-env (mut-copy env))
+     (for ([b (in-list (with-open-form-bindings e))])
+       (define t (infer-expr (let-binding-value b) body-env))
+       (when (symbol? (let-binding-name b))
+         (hash-set! body-env (let-binding-name b) t)))
+     (last-expr-type (with-open-form-body e) body-env)]
+    [(doto-form? e)
+     (infer-expr (doto-form-target e) env)]
     [(unsafe-expr? e) ANY]
     [(unsafe-clj? e) ANY]
     [(if-form? e)
@@ -779,7 +816,12 @@
               (car (type-app-args coll-type))
               ANY))
           (hash-set! body-env (for-binding-name c) elem-type)]
-         [(for-when? c) (infer-expr (for-when-test c) body-env)]))
+         [(for-when? c) (infer-expr (for-when-test c) body-env)]
+         [(for-let? c)
+          (for ([b (in-list (for-let-bindings c))])
+            (define t (infer-expr (let-binding-value b) body-env))
+            (when (symbol? (let-binding-name b))
+              (hash-set! body-env (let-binding-name b) t)))]))
      (define body-type (last-expr-type (for-form-body e) body-env))
      (if (any-type? body-type)
        (type-app 'Vec (list ANY))
@@ -847,7 +889,12 @@
               (car (type-app-args coll-type))
               ANY))
           (hash-set! body-env (for-binding-name c) elem-type)]
-         [(for-when? c) (infer-expr (for-when-test c) body-env)]))
+         [(for-when? c) (infer-expr (for-when-test c) body-env)]
+         [(for-let? c)
+          (for ([b (in-list (for-let-bindings c))])
+            (define t (infer-expr (let-binding-value b) body-env))
+            (when (symbol? (let-binding-name b))
+              (hash-set! body-env (let-binding-name b) t)))]))
      (last-expr-type (doseq-form-body e) body-env)
      ANY]
     [(match-form? e)
