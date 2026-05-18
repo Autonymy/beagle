@@ -38,6 +38,22 @@ Example:
 (def x 42)
 ```
 
+### `defonce`
+
+```racket
+(defonce NAME VALUE)
+(defonce NAME : Type VALUE)
+```
+
+Like `def` but only binds the name if it is not already defined. Emits
+Clojure's `defonce`. Common for top-level state that should survive
+namespace reloads.
+
+Example:
+```racket
+(defonce db-conn : Any (create-connection config))
+```
+
 ### `defn`
 
 ```racket
@@ -183,6 +199,94 @@ Example:
   x)
 ```
 
+### `when-not`
+
+```racket
+(when-not COND BODY...)
+```
+
+Evaluates body when condition is falsy. Expands to `(when (not cond) body...)`.
+
+Example:
+```racket
+(when-not (empty? items)
+  (process items))
+```
+
+### `if-not`
+
+```racket
+(if-not COND THEN [ELSE])
+```
+
+Inverted conditional. Expands to `(if (not cond) then else)`.
+
+Example:
+```racket
+(if-not (authorized? user) "denied" "allowed")
+```
+
+### `when-let`
+
+```racket
+(when-let [NAME EXPR] BODY...)
+```
+
+Binds `NAME` to the result of `EXPR`; if truthy, evaluates body in scope
+with the binding. Returns `Nil` if falsy.
+
+Example:
+```racket
+(when-let [user (find-user id)]
+  (println (user-name user))
+  user)
+```
+
+### `if-let`
+
+```racket
+(if-let [NAME EXPR] THEN-BODY ELSE-BODY)
+```
+
+Binds `NAME` to the result of `EXPR`. If truthy, evaluates `THEN-BODY`
+with the binding in scope. Otherwise evaluates `ELSE-BODY` (without the binding).
+
+Example:
+```racket
+(if-let [user (find-user id)]
+  (user-name user)
+  "anonymous")
+```
+
+### `when-some`
+
+```racket
+(when-some [NAME EXPR] BODY...)
+```
+
+Like `when-let` but tests for non-nil (not truthiness). `false` passes.
+
+Example:
+```racket
+(when-some [val (get config :timeout)]
+  (set-timeout! val))
+```
+
+### `if-some`
+
+```racket
+(if-some [NAME EXPR] THEN-BODY ELSE-BODY)
+```
+
+Like `if-let` but tests for non-nil. `false` passes.
+
+Example:
+```racket
+(if-some [val (get config :debug)]
+  (str "debug=" val)
+  "no debug config")
+```
+
 ### `do`
 
 ```racket
@@ -243,14 +347,25 @@ Tail-recursive loop. Bindings work like `let`; `recur` jumps back to
 ### `for`
 
 ```racket
-(for [NAME COLL ... :when PRED] BODY...)
+(for [NAME COLL ... :when PRED :let [NAME VAL ...]] BODY...)
 ```
 
 List comprehension. Binds each name to successive values from its
-collection. Optional `:when` clauses filter. Example:
+collection. Optional `:when` clauses filter, `:let` clauses bind
+intermediate values. Destructuring works in bindings.
+
+Example:
 ```racket
 (for [x (range 5) y (range x) :when (even? y)]
   [x y])
+
+;; with :let clause
+(for [item items :let [price (item-price item) tax (* price 0.1)]]
+  (+ price tax))
+
+;; with destructuring
+(for [[eid name email] contacts]
+  (->Contact eid name email))
 ```
 
 ## Records
@@ -440,6 +555,90 @@ Example:
     (println "done")))
 ```
 
+### `with-open`
+
+```racket
+(with-open [NAME EXPR ...] BODY...)
+```
+
+Binds resources, evaluates body, then closes all bindings. Emits
+Clojure's `with-open`. Each binding's value must implement `java.io.Closeable`.
+
+Example:
+```racket
+(with-open [rdr (clojure.java.io/reader "data.csv")]
+  (doall (line-seq rdr)))
+```
+
+### `doto`
+
+```racket
+(doto TARGET FORMS...)
+```
+
+Evaluates `TARGET`, threads it as the first argument through each form,
+returns the original target. Used for Java mutation chains.
+
+Example:
+```racket
+(doto (java.util.HashMap.)
+  (.put "a" 1)
+  (.put "b" 2))
+```
+
+### `dotimes`
+
+```racket
+(dotimes [NAME COUNT] BODY...)
+```
+
+Counted iteration. Binds `NAME` to 0, 1, ..., COUNT-1 and evaluates body
+for each. Returns nil.
+
+Example:
+```racket
+(dotimes [i 10]
+  (println (str "iteration " i)))
+```
+
+### `condp`
+
+```racket
+(condp PRED TEST VALUE1 RESULT1 VALUE2 RESULT2 ... [DEFAULT])
+```
+
+Predicate-based dispatch. Tests `(PRED VALUE TEST)` for each clause.
+An odd trailing form is the default.
+
+Example:
+```racket
+(condp = color
+  :red   "stop"
+  :green "go"
+  "unknown")
+
+(condp > n
+  10 "small"
+  100 "medium"
+  "large")
+```
+
+### `comment`
+
+```racket
+(comment FORMS...)
+```
+
+Ignores all forms and returns nil. Used for development-time code that
+should not execute.
+
+Example:
+```racket
+(comment
+  (def debug-state (atom {}))
+  (println "this is not evaluated"))
+```
+
 ### `doseq`
 
 ```racket
@@ -447,7 +646,7 @@ Example:
 ```
 
 Side-effecting iteration. Same binding syntax as `for` (multiple bindings,
-`:when` clauses). Returns nil.
+`:when` and `:let` clauses). Returns nil.
 
 Example:
 ```racket
@@ -549,17 +748,48 @@ Example:
 ### Threading macros
 
 ```racket
-(-> VALUE FORMS...)
-(->> VALUE FORMS...)
+(-> VALUE FORMS...)                         ; thread-first
+(->> VALUE FORMS...)                        ; thread-last
+(cond-> VALUE TEST FORM TEST FORM ...)      ; conditional thread-first
+(cond->> VALUE TEST FORM TEST FORM ...)     ; conditional thread-last
+(some-> VALUE FORMS...)                     ; nil-safe thread-first
+(some->> VALUE FORMS...)                    ; nil-safe thread-last
+(as-> VALUE NAME FORMS...)                  ; named thread
 ```
 
-Pass-through to Clojure — emitted verbatim. Thread-first inserts the value
-as the first argument of each form; thread-last inserts as the last.
+`->` and `->>` emit verbatim. `cond->`, `cond->>`, `some->`, `some->>`,
+and `as->` expand at parse time into `let`/`if`/`when-some` chains.
 
 Example:
 ```racket
 (-> person :name (str/upper-case))
 (->> items (filter even?) (map inc) (reduce +))
+
+(cond-> order
+  paid?     (assoc :status :paid)
+  shipped?  (assoc :status :shipped))
+
+(some-> user :address :city)
+
+(as-> data $ (map inc $) (filter even? $) (reduce + $))
+```
+
+## Metadata
+
+### `^{...}` (metadata reader syntax)
+
+```racket
+^{:key value ...} TARGET
+^:keyword TARGET
+```
+
+Attaches metadata to the following form. `^:keyword` is sugar for
+`^{:keyword true}`. Emits Clojure's metadata syntax verbatim.
+
+Example:
+```racket
+^{:key (str prefix "-" idx)} [item-view item]
+^:private (def internal-state (atom {}))
 ```
 
 ## Data

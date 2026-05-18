@@ -799,3 +799,34 @@
 
 (check-ok "for with :let type checks"
   `(def x : (Vec String) (for ,(br 'i '(range 3) ':let (br 's '(str i))) s)))
+
+;; --- when-not, if-not ---
+
+(check-ok "when-not type checks"
+  '(defn f [(xs : (Vec Long))] (when-not (empty? xs) (first xs))))
+
+(check-ok "if-not type checks"
+  '(defn f [(x : Boolean)] : String (if-not x "yes" "no")))
+
+;; --- comment ---
+
+(check-ok "comment type checks (returns nil)"
+  '(def x (comment (+ 1 2 3))))
+
+;; --- dotimes ---
+
+(check-ok "dotimes type checks, binding is Long"
+  `(defn f [] (dotimes ,(br 'i 5) (println i))))
+
+;; --- condp ---
+
+(check-ok "condp type checks with default"
+  '(defn f [(x : Keyword)] : String (condp = x :a "alpha" :b "beta" "other")))
+
+;; --- defonce ---
+
+(check-ok "defonce type checks"
+  '(defonce db : Any (atom nil)))
+
+(check-err "defonce type mismatch"
+  '(defonce db : String 42))

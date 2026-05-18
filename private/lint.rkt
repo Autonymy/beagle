@@ -22,6 +22,7 @@
 (define (lint-form f)
   (cond
     [(def-form? f) (lint-def f)]
+    [(defonce-form? f) (lint-defonce f)]
     [(defn-form? f) (lint-defn f)]
     [(defn-multi? f) (lint-defn-multi f)]
     [(unsafe-clj? f) (lint-unsafe-clj f)]
@@ -36,6 +37,11 @@
   (unless (def-form-type f)
     (warn "untyped def ~a (consider adding `: Type`)"
           (def-form-name f))))
+
+(define (lint-defonce f)
+  (unless (defonce-form-type f)
+    (warn "untyped defonce ~a (consider adding `: Type`)"
+          (defonce-form-name f))))
 
 (define (lint-defn f)
   (define name (defn-form-name f))
@@ -106,6 +112,8 @@
            (check-shadow e scope (defn-multi-name form))))]
       [(def-form? form)
        (check-shadow (def-form-value form) (make-hasheq) #f)]
+      [(defonce-form? form)
+       (check-shadow (defonce-form-value form) (make-hasheq) #f)]
       [(defmethod-form? form)
        (define scope (make-hasheq))
        (for ([p (in-list (defmethod-form-params form))])
@@ -216,6 +224,22 @@
      (for ([i (in-list items)]) (check-shadow i scope ctx))]
     [(def-form _ _ value)
      (check-shadow value scope ctx)]
+    [(defonce-form _ _ value)
+     (check-shadow value scope ctx)]
+    [(dotimes-form name count-expr body)
+     (check-shadow count-expr scope ctx)
+     (define inner (scope-copy scope))
+     (when (hash-has-key? scope name)
+       (warn-shadow "dotimes binding" name ctx))
+     (hash-set! inner name #t)
+     (for ([e (in-list body)]) (check-shadow e inner ctx))]
+    [(condp-form pred-fn test-expr clauses default)
+     (check-shadow pred-fn scope ctx)
+     (check-shadow test-expr scope ctx)
+     (for ([c (in-list clauses)])
+       (check-shadow (car c) scope ctx)
+       (check-shadow (cdr c) scope ctx))
+     (when default (check-shadow default scope ctx))]
     [(with-meta metadata expr)
      (check-shadow metadata scope ctx)
      (check-shadow expr scope ctx)]
@@ -337,6 +361,7 @@
   (match form
     [(? symbol?) (hash-set! used form #t)]
     [(def-form _ _ value) (collect-symbols value used)]
+    [(defonce-form _ _ value) (collect-symbols value used)]
     [(defn-form _ _ _ _ body)
      (for ([e (in-list body)]) (collect-symbols e used))]
     [(fn-form _ _ _ body)
@@ -400,6 +425,16 @@
     [(doto-form target forms)
      (collect-symbols target used)
      (for ([f (in-list forms)]) (collect-symbols f used))]
+    [(dotimes-form _ count-expr body)
+     (collect-symbols count-expr used)
+     (for ([e (in-list body)]) (collect-symbols e used))]
+    [(condp-form pred-fn test-expr clauses default)
+     (collect-symbols pred-fn used)
+     (collect-symbols test-expr used)
+     (for ([c (in-list clauses)])
+       (collect-symbols (car c) used)
+       (collect-symbols (cdr c) used))
+     (when default (collect-symbols default used))]
     [(unsafe-expr inner) (collect-symbols inner used)]
     [(try-form body catches finally-body)
      (for ([e (in-list body)]) (collect-symbols e used))

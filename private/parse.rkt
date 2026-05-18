@@ -194,6 +194,9 @@
 (struct with-open-form (bindings body)                       #:transparent)
 (struct doto-form      (target forms)                        #:transparent)
 (struct for-let        (bindings)                            #:transparent)
+(struct dotimes-form   (name count-expr body)                #:transparent)
+(struct condp-form     (pred-fn test-expr clauses default)   #:transparent)
+(struct defonce-form   (name type value)                     #:transparent)
 
 (struct param       (name type)                             #:transparent)
 (struct map-destructure (keys as-name)                      #:transparent)
@@ -378,6 +381,8 @@
          (hash-set! imp-scalar-fns (qualify-name prefix ctor) #t)
          (hash-set! imp-scalar-fns (qualify-name prefix accessor) #t))]
       [(list 'def (? symbol? name) ': type-expr _)
+       (reg! name (parse-type type-expr))]
+      [(list 'defonce (? symbol? name) ': type-expr _)
        (reg! name (parse-type type-expr))]
       [(list 'defn (? symbol? name) params-form ': ret-type body ...)
        (define-values (parsed rest-p) (parse-params params-form))
@@ -680,6 +685,21 @@
     (error 'beagle "conditional let binding must be [name expr], got: ~v" items))
   (values (car items) (parse-expr (cadr items))))
 
+(define (parse-condp-form pred-stx test-stx clause-stxs)
+  (define pred-expr (parse-expr pred-stx))
+  (define test-expr (parse-expr test-stx))
+  (define clauses-raw (map ->datum clause-stxs))
+  (define-values (pairs default)
+    (let loop ([cs clauses-raw] [acc '()])
+      (cond
+        [(null? cs) (values (reverse acc) #f)]
+        [(null? (cdr cs)) (values (reverse acc) (parse-expr (car cs)))]
+        [else (loop (cddr cs)
+                    (cons (cons (parse-expr (car cs))
+                                (parse-expr (cadr cs)))
+                          acc))])))
+  (condp-form pred-expr test-expr pairs default))
+
 (define (parse-list-form d subs)
   (match d
     [(list 'unsafe-expr inner)
@@ -693,6 +713,12 @@
      (def-form name (parse-type type-expr) (parse-expr (or (stx-ref subs 4) value)))]
     [(list 'def (? symbol? name) value)
      (def-form name #f (parse-expr (or (stx-ref subs 2) value)))]
+
+    [(list 'defonce (? symbol? name) marker type-expr value)
+     #:when (annotation-marker? marker)
+     (defonce-form name (parse-type type-expr) (parse-expr (or (stx-ref subs 4) value)))]
+    [(list 'defonce (? symbol? name) value)
+     (defonce-form name #f (parse-expr (or (stx-ref subs 2) value)))]
 
     [(list 'defn (? symbol? name) first-clause rest-clauses ...)
      #:when (multi-arity-form? first-clause)
@@ -769,6 +795,17 @@
     [(list 'when c body ...)
      (when-form (parse-expr (or (stx-ref subs 1) c))
                 (parse-body (or (stx-tail subs 2) body)))]
+    [(list 'when-not c body ...)
+     (when-form (call-form 'not (list (parse-expr (or (stx-ref subs 1) c))))
+                (parse-body (or (stx-tail subs 2) body)))]
+    [(list 'if-not c t e)
+     (if-form (call-form 'not (list (parse-expr (or (stx-ref subs 1) c))))
+              (parse-expr (or (stx-ref subs 2) t))
+              (parse-expr (or (stx-ref subs 3) e)))]
+    [(list 'if-not c t)
+     (if-form (call-form 'not (list (parse-expr (or (stx-ref subs 1) c))))
+              (parse-expr (or (stx-ref subs 2) t))
+              #f)]
 
     [(list 'when-let bindings-form body ...)
      (define-values (name expr) (parse-cond-let-binding (or (stx-ref subs 1) bindings-form)))
@@ -800,11 +837,19 @@
      (doto-form (parse-expr (or (stx-ref subs 1) target))
                 (map parse-expr (or (stx-tail subs 2) forms)))]
 
+    [(list 'comment _ ...)
+     'nil]
+
     [(list 'do body ...)
      (do-form (parse-body (or (stx-tail subs 1) body)))]
 
     [(list 'cond clauses ...)
      (cond-form (parse-cond-clauses (or (stx-tail subs 1) clauses)))]
+
+    [(list 'condp pred-fn test-expr clauses ...)
+     (parse-condp-form (or (stx-ref subs 1) pred-fn)
+                       (or (stx-ref subs 2) test-expr)
+                       (or (stx-tail subs 3) clauses))]
 
     [(list 'try rest ...)
      (parse-try-form (or (stx-tail subs 1) rest))]
@@ -812,6 +857,15 @@
     [(list 'doseq bindings-form body ...)
      (doseq-form (parse-for-clauses (or (stx-ref subs 1) bindings-form))
                  (parse-body (or (stx-tail subs 2) body)))]
+
+    [(list 'dotimes bindings-form body ...)
+     (define bd (->datum (or (stx-ref subs 1) bindings-form)))
+     (define items (unwrap-items bd "dotimes binding"))
+     (unless (= (length items) 2)
+       (error 'beagle "dotimes binding must be [name count], got: ~v" items))
+     (dotimes-form (car items)
+                   (parse-expr (cadr items))
+                   (parse-body (or (stx-tail subs 2) body)))]
 
     [(list 'with target-expr updates ...)
      (parse-with-form (or (stx-ref subs 1) target-expr)
@@ -1378,6 +1432,9 @@
  (struct-out with-open-form)
  (struct-out doto-form)
  (struct-out for-let)
+ (struct-out dotimes-form)
+ (struct-out condp-form)
+ (struct-out defonce-form)
  parse-program
  DEFAULT-MODE
  DEFAULT-TARGET

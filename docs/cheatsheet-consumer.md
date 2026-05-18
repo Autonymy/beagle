@@ -23,6 +23,7 @@ macros. You do NOT need `declare-extern` for cross-module beagle calls.
 ```racket
 (def NAME VALUE)
 (def NAME : Type VALUE)
+(defonce NAME VALUE)                   ; only binds if not already defined
 
 (defn NAME [PARAMS] BODY ...)
 (defn NAME [PARAMS] : ReturnType BODY ...)
@@ -53,18 +54,33 @@ Generates:
 (cond [test1 body1] [test2 body2] [true fallback])
 (cond test1 body1 test2 body2 :else fallback)  ; flat (Clojure-style)
 (when cond body...)
+(when-not cond body...)               ; inverted when
+(when-let [name expr] body...)        ; bind + truthy test
+(if-let [name expr] then else)        ; bind + truthy branch
+(when-some [name expr] body...)       ; bind + non-nil test
+(if-some [name expr] then else)       ; bind + non-nil branch
+(if-not cond then else)               ; inverted if
 (do body1 body2 ... bodyN)
 (let [name1 value1 name2 value2 ...] body...)
 (loop [name1 init1 ...] body...)
 (recur arg1 arg2 ...)
-(for [x coll :when pred] body...)      ; returns (Vec BodyType)
+(for [x coll :when pred :let [y (f x)]] body...)  ; returns (Vec BodyType)
 (doseq [x coll] body...)              ; side-effecting, returns nil
+(dotimes [i n] body...)               ; counted iteration
+(condp pred test v1 r1 default)       ; predicate dispatch
+(comment forms...)                    ; returns nil
 (fn [PARAMS] body...)
 (try body... (catch ExType e handler...) (finally cleanup...))
 (case test val1 result1 val2 result2 default)
 (match expr [pattern body...] ...)
 (-> x (f) (g))                        ; thread-first
 (->> x (f) (g))                       ; thread-last
+(cond-> x test (f) test (g))          ; conditional thread
+(some-> x (f) (g))                    ; nil-safe thread
+(as-> x $ (f $) (g $ 1))             ; named thread
+(with-open [r (io/reader f)] body...) ; resource management
+(doto target (.method args) ...)      ; Java mutation chain
+^{:key val} form                      ; metadata
 (:key map)                            ; keyword lookup
 [item1 item2 ...]                     ; vector literal
 {k1 v1 k2 v2}                        ; map literal

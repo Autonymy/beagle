@@ -827,3 +827,64 @@
   (check-true (for-form? f))
   (check-equal? (length (for-form-clauses f)) 2)
   (check-true (for-let? (cadr (for-form-clauses f)))))
+
+;; --- when-not, if-not (parse-time expansion) ---
+
+(test-case "when-not parses to when + not"
+  (define f (car (parse-one '(when-not (empty? xs) (first xs)))))
+  (check-true (when-form? f))
+  (check-true (call-form? (when-form-cond-expr f)))
+  (check-equal? (call-form-fn (when-form-cond-expr f)) 'not))
+
+(test-case "if-not parses to if + not"
+  (define f (car (parse-one '(if-not done? "pending" "done"))))
+  (check-true (if-form? f))
+  (check-true (call-form? (if-form-cond-expr f)))
+  (check-equal? (call-form-fn (if-form-cond-expr f)) 'not))
+
+(test-case "if-not without else"
+  (define f (car (parse-one '(if-not done? "pending"))))
+  (check-true (if-form? f))
+  (check-false (if-form-else-expr f)))
+
+;; --- comment ---
+
+(test-case "comment parses to nil"
+  (define f (car (parse-one '(comment (def x 1) (defn foo [] 42)))))
+  (check-equal? f 'nil))
+
+;; --- dotimes ---
+
+(test-case "dotimes parses"
+  (define f (car (parse-one `(dotimes ,(br 'i 10) (println i)))))
+  (check-true (dotimes-form? f))
+  (check-equal? (dotimes-form-name f) 'i)
+  (check-equal? (length (dotimes-form-body f)) 1))
+
+;; --- condp ---
+
+(test-case "condp parses with default"
+  (define f (car (parse-one '(condp = x :a "alpha" :b "beta" "other"))))
+  (check-true (condp-form? f))
+  (check-equal? (length (condp-form-clauses f)) 2)
+  (check-not-false (condp-form-default f)))
+
+(test-case "condp parses without default"
+  (define f (car (parse-one '(condp = x :a "alpha" :b "beta"))))
+  (check-true (condp-form? f))
+  (check-equal? (length (condp-form-clauses f)) 2)
+  (check-false (condp-form-default f)))
+
+;; --- defonce ---
+
+(test-case "defonce parses untyped"
+  (define f (car (parse-one '(defonce db (atom nil)))))
+  (check-true (defonce-form? f))
+  (check-equal? (defonce-form-name f) 'db)
+  (check-false (defonce-form-type f)))
+
+(test-case "defonce parses typed"
+  (define f (car (parse-one '(defonce db : Any (atom nil)))))
+  (check-true (defonce-form? f))
+  (check-equal? (defonce-form-name f) 'db)
+  (check-not-false (defonce-form-type f)))

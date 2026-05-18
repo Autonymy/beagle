@@ -155,6 +155,11 @@
              (def-form-name f)
              (emit-expr (def-form-value f)))]
 
+    [(defonce-form? f)
+     (format "(defonce ~a ~a)"
+             (defonce-form-name f)
+             (emit-expr (defonce-form-value f)))]
+
     [(defn-form? f)
      (format "(defn ~a [~a]\n  ~a)"
              (defn-form-name f)
@@ -352,6 +357,26 @@
      (format "(doseq [~a]\n  ~a)"
              (emit-for-clauses (doseq-form-clauses e))
              (emit-body (doseq-form-body e) "  "))]
+    [(dotimes-form? e)
+     (format "(dotimes [~a ~a]\n  ~a)"
+             (dotimes-form-name e)
+             (emit-expr (dotimes-form-count-expr e))
+             (emit-body (dotimes-form-body e) "  "))]
+    [(condp-form? e)
+     (define clause-strs
+       (for/list ([c (condp-form-clauses e)])
+         (format "~a ~a" (emit-expr (car c)) (emit-expr (cdr c)))))
+     (define body (string-join clause-strs "\n  "))
+     (if (condp-form-default e)
+       (format "(condp ~a ~a\n  ~a\n  ~a)"
+               (emit-expr (condp-form-pred-fn e))
+               (emit-expr (condp-form-test-expr e))
+               body
+               (emit-expr (condp-form-default e)))
+       (format "(condp ~a ~a\n  ~a)"
+               (emit-expr (condp-form-pred-fn e))
+               (emit-expr (condp-form-test-expr e))
+               body))]
     [(case-form? e)
      (define clause-strs (for/list ([c (case-form-clauses e)])
        (format "~a ~a" (emit-expr (case-clause-value c)) (emit-expr (case-clause-body c)))))

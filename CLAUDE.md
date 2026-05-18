@@ -14,15 +14,18 @@ it as canonical when explaining the language.
 
 ## Status
 
-`#lang beagle` v0.5.0 — consumer-ready, packaged, doc infrastructure:
+`#lang beagle` v0.6.0 — form completeness, Scribble docs:
 
 - Forms: `def`, `defn` (single + multi-arity), `fn`, `let`, `if`, `cond`,
-  `when`, `do`, `match`, `loop`, `recur`, `for` (with `:when`), `doseq`,
-  `try`/`catch`/`finally`, `case`, `defrecord`, `with` (typed record update),
-  `defenum`, `defunion`, `defprotocol`, `defmulti`/`defmethod`, `deftype`, `extend-type`,
-  constructor calls (`ClassName.`), keyword-as-function (`(:key map)`), call,
-  vector literal, map literal (`{}`), set literal (`#{}`), quote, threading
-  (`->`, `->>`, `cond->`, `cond->>`, `some->`, `some->>`)
+  `when`, `when-not`, `when-let`, `if-let`, `if-not`, `when-some`, `if-some`,
+  `do`, `match`, `loop`, `recur`, `for` (with `:when`, `:let`, destructuring),
+  `doseq`, `dotimes`, `try`/`catch`/`finally`, `case`, `condp`, `comment`,
+  `defrecord`, `with` (typed record update), `defenum`, `defonce`, `defunion`,
+  `defprotocol`, `defmulti`/`defmethod`, `deftype`, `extend-type`,
+  `with-open`, `doto`, constructor calls (`ClassName.`), keyword-as-function
+  (`(:key map)`), call, vector literal, map literal (`{}`), set literal (`#{}`),
+  quote, metadata (`^{:key val}`), threading
+  (`->`, `->>`, `cond->`, `cond->>`, `some->`, `some->>`, `as->`)
 - Meta: `ns`, `define-mode`, `require`, `declare-extern`, `define-macro`,
   `import`, `unsafe` (top-level AND in expression position)
 - Param syntax: **wrapped only** — `(name : Type)`. Plus `{:keys [a b c]}`
@@ -38,7 +41,7 @@ it as canonical when explaining the language.
 - Keyword field inference: `(:name person)` returns the field type when
   target is a known typed record
 - Macros: safe (gensym-hygienic) / unsafe with `&rest` and `(splice ...)`
-- Stdlib catalog: ~666 Clojure functions + 26 JS interop entries pre-typed; CLJS-EXCLUDE set warns on JVM-only usage
+- Stdlib catalog: ~678 Clojure functions + 26 JS interop entries pre-typed; CLJS-EXCLUDE set warns on JVM-only usage
 - Cross-file type import: `(require module)` / `(require module :as alias)`
   resolves source at compile time, imports typed defs/defns/externs/records/macros.
   `declare-extern` is only needed for Java interop and non-beagle namespaces.
@@ -72,7 +75,7 @@ it as canonical when explaining the language.
 - Typed REPL: persistent type env, `:type EXPR`, `:sig NAME`, `:env`, compile + emit
 - Differential testing: `beagle-proptest --diff` compares function outputs between
   golden and modified builds, flags behavioral regressions (6143 calls on E8)
-- 400 tests passing
+- 466 tests passing
 - 15 experiments across 3 language tracks (Beagle, Clojure, Python):
   best Beagle config 287s avg with reactive daemon (E13), variance
   collapsed to 59s range; per-bug faster than Python+mypy (8.2s vs 8.5s);
@@ -118,7 +121,7 @@ parse → check → emit
   `#"..."` (regex) via `MAP-TAG`/`SET-TAG`/`#%regex`.
 - `private/types.rkt` — type AST, parser, compatibility checker.
   `MAP-TAG`/`SET-TAG` are well-known symbols (`#%map`/`#%set`), not gensyms.
-- `private/stdlib-types.rkt` — pre-typed Clojure stdlib catalog (~666 functions).
+- `private/stdlib-types.rkt` — pre-typed Clojure stdlib catalog (~678 functions).
 - `private/macros.rkt` — macro registry, naive substitution, depth-capped
   recursive expansion, safe/unsafe boundary.
 - `private/parse.rkt` — source → AST. Two passes: meta-form collection
@@ -296,11 +299,12 @@ it gets a devlog entry. Routine feature additions do not.
 
 ## Reference
 
+- `scribblings/beagle.scrbl` — Racket-native Scribble docs (build with `raco scribble --html scribblings/beagle.scrbl`).
 - `docs/prompts/consumers/` — agent system prompts (full + distilled).
 - `docs/prompts/contributors/src.md` — canonical contributor reference (feeds CLAUDE.md + AGENTS.md).
 - `docs/devlog/README.md` — development journal (discoveries + experiments).
 - `experiments/README.md` — benchmark framework for design decisions.
-- `docs/forms.md` — canonical form catalog.
+- `docs/forms.md` — canonical form catalog (markdown; Scribble is the canonical source).
 - `docs/cheatsheet.md` — single-page LLM grounding reference (developer).
 - `docs/cheatsheet-consumer.md` — 154-line consumer reference (for `beagle init`).
 - `docs/todo.md` — roadmap and completed work.

@@ -107,7 +107,7 @@ polymorphic (`forall`), user records, nominal scalars
 **Cross-module:** `(require module :as alias)` imports types, records,
 constructors, accessors, macros — all validated at call sites
 
-**Stdlib:** ~666 Clojure functions pre-typed, key HOFs polymorphic
+**Stdlib:** ~678 Clojure functions pre-typed, key HOFs polymorphic
 
 **Diagnostics:** Rust-style errors with source lines, signatures,
 "did you mean?" suggestions; JSON mode for programmatic consumption
@@ -172,7 +172,7 @@ Requires [Racket](https://racket-lang.org/) and
 
 ```
 raco pkg install --link --auto /path/to/beagle
-raco test tests/   # 400 tests
+raco test tests/   # 466 tests
 ```
 
 ## Prompts

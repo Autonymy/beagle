@@ -158,6 +158,7 @@
   (for ([form (in-list (program-forms prog))])
     (match form
       [(def-form name (? type? t) _) (hash-set! env name t)]
+      [(defonce-form name (? type? t) _) (hash-set! env name t)]
       [(defn-form name params rest-p (? type? ret) _)
        (define rtype (and rest-p (param-or-destr-type rest-p)))
        (hash-set! env name
@@ -258,6 +259,17 @@
        (unless (type-compatible? inferred expected-type)
          (raise-diag 'def-type
                      (format "def ~a: expected ~a, got ~a"
+                             name (type->string expected-type) (type->string inferred))
+                     (hasheq 'name (symbol->string name)
+                             'expected (type->string expected-type)
+                             'actual (type->string inferred))
+                     #:src (src-for value))))]
+    [(defonce-form name expected-type value)
+     (define inferred (infer-expr value env))
+     (when expected-type
+       (unless (type-compatible? inferred expected-type)
+         (raise-diag 'def-type
+                     (format "defonce ~a: expected ~a, got ~a"
                              name (type->string expected-type) (type->string inferred))
                      (hasheq 'name (symbol->string name)
                              'expected (type->string expected-type)
@@ -773,6 +785,22 @@
      (last-expr-type (with-open-form-body e) body-env)]
     [(doto-form? e)
      (infer-expr (doto-form-target e) env)]
+    [(dotimes-form? e)
+     (infer-expr (dotimes-form-count-expr e) env)
+     (define body-env (mut-copy env))
+     (hash-set! body-env (dotimes-form-name e) (type-prim 'Long))
+     (last-expr-type (dotimes-form-body e) body-env)
+     NIL]
+    [(condp-form? e)
+     (infer-expr (condp-form-pred-fn e) env)
+     (infer-expr (condp-form-test-expr e) env)
+     (define clause-types
+       (for/list ([c (in-list (condp-form-clauses e))])
+         (infer-expr (car c) env)
+         (infer-expr (cdr c) env)))
+     (if (condp-form-default e)
+       (apply merge-types (infer-expr (condp-form-default e) env) clause-types)
+       (if (null? clause-types) ANY (apply merge-types clause-types)))]
     [(unsafe-expr? e) ANY]
     [(unsafe-clj? e) ANY]
     [(if-form? e)

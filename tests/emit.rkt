@@ -581,3 +581,39 @@
 (test-case "for with :let emits"
   (define out (compile `(def x : (Vec String) (for ,(br 'i '(range 3) ':let (br 's '(str i))) s))))
   (check-true (matches? #rx":let \\[s" out)))
+
+;; --- when-not, if-not ---
+
+(test-case "when-not emits when with not"
+  (define out (compile '(defn f [] (when-not true 42))))
+  (check-true (matches? #rx"\\(when \\(not" out)))
+
+(test-case "if-not emits if with not"
+  (define out (compile '(defn f [] (if-not true "a" "b"))))
+  (check-true (matches? #rx"\\(if \\(not" out)))
+
+;; --- comment ---
+
+(test-case "comment emits nil"
+  (define out (compile '(def x (comment (+ 1 2)))))
+  (check-true (matches? #rx"nil" out)))
+
+;; --- dotimes ---
+
+(test-case "dotimes emits"
+  (define out (compile `(defn f [] (dotimes ,(br 'i 5) (println i)))))
+  (check-true (matches? #rx"\\(dotimes \\[i 5\\]" out)))
+
+;; --- condp ---
+
+(test-case "condp emits with default"
+  (define out (compile '(defn f [(x : Keyword)] : String (condp = x :a "alpha" :b "beta" "other"))))
+  (check-true (matches? #rx"\\(condp = x" out))
+  (check-true (matches? #rx":a \"alpha\"" out))
+  (check-true (matches? #rx"\"other\"" out)))
+
+;; --- defonce ---
+
+(test-case "defonce emits"
+  (define out (compile '(defonce db (atom nil))))
+  (check-true (matches? #rx"\\(defonce db" out)))

@@ -26,6 +26,7 @@ and accessor (`amount-value`) with full type checking.
 ```racket
 (def NAME VALUE)
 (def NAME : Type VALUE)             ; typed
+(defonce NAME VALUE)                ; only binds if not already defined
 
 (defn NAME [PARAMS] BODY ...)
 (defn NAME [PARAMS] : ReturnType BODY ...)
@@ -123,19 +124,31 @@ Declares an enum value set. Compiles to `(def OrderStatus-values #{:placed ...})
 (cond [test1 body1] [test2 body2] [true fallback])
 (cond test1 body1 test2 body2 :else fallback)  ; bare form (Clojure-style)
 (when cond body...)
+(when-not cond body...)             ; inverted when
+(when-let [name expr] body...)      ; bind + truthy test
+(if-let [name expr] then else)      ; bind + truthy branch
+(when-some [name expr] body...)     ; bind + non-nil test
+(if-some [name expr] then else)     ; bind + non-nil branch
+(if-not cond then else)             ; inverted if
 (do body1 body2 ... bodyN)          ; returns last
 (let [name1 value1 name2 value2 ...] body...)
 (loop [name1 init1 name2 init2 ...] body...)
 (recur arg1 arg2 ...)               ; tail-recurse back to loop
-(for [x coll1 y coll2 :when pred] body...)  ; list comprehension
+(for [x coll :when pred :let [y (f x)]] body...)  ; list comprehension
+(dotimes [i n] body...)             ; counted iteration (i = 0..n-1)
+(condp pred test v1 r1 v2 r2 default)  ; predicate dispatch
+(comment forms...)                  ; returns nil, forms not evaluated
 (fn [PARAMS] body...)
 (fn [PARAMS] : ReturnType body...)
 (try body... (catch ExType e handler...) (finally cleanup...))
 (doseq [x coll ...] body...)       ; side-effecting iteration
 (case test val1 result1 val2 result2 default)
+(with-open [name expr] body...)     ; resource management (auto-close)
+(doto target (.method args) ...)    ; Java mutation chain
 (ClassName. args...)                ; Java constructor
 (:key map)                          ; keyword-as-function (map lookup)
 (:key map default)                  ; keyword lookup with default
+^{:key val} form                    ; metadata
 'datum                              ; quote
 [item1 item2 ...]                   ; vector literal
 {k1 v1 k2 v2}                      ; map literal
@@ -194,6 +207,11 @@ calls against all arities — wrong arity reports available options.
 
 (-> x (f) (g))                      ; thread-first
 (->> x (f) (g))                     ; thread-last
+(cond-> x test1 (f) test2 (g))     ; conditional thread-first
+(cond->> x test1 (f) test2 (g))    ; conditional thread-last
+(some-> x (f) (g))                  ; nil-safe thread-first
+(some->> x (f) (g))                 ; nil-safe thread-last
+(as-> x $ (f $) (g $ 1))           ; named thread
 ```
 
 ## Parameter syntax — wrapped, bare, or destructured
@@ -274,7 +292,7 @@ Nullable (sugar for `(U T Nil)`):
 - `(splice rest-name)` in template: inlines the list at that position
 - `safe` macros use gensym-hygienic substitution; `unsafe` macros use naive substitution
 
-## Pre-typed stdlib (~666 functions)
+## Pre-typed stdlib (~678 functions)
 
 **Math** (variadic Any): `+`, `-`, `*`, `/`, `mod`, `quot`, `rem`, `inc`,
 `dec`, `min`, `max`, `abs`
