@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Propagate mechanical facts from the codebase into documentation.
+# Run after any change that affects test count, stdlib size, experiment
+# count, or version. Safe to run repeatedly (idempotent).
+
+BEAGLE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$BEAGLE_DIR"
+
+DRY_RUN=false
+VERBOSE=false
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY_RUN=true ;;
+    --verbose) VERBOSE=true ;;
+    --help|-h)
+      echo "Usage: beagle-docs-sync [--dry-run] [--verbose]"
+      echo "Propagate codebase facts (test count, stdlib size, etc.) into docs."
+      exit 0 ;;
+  esac
+done
+
+CHANGES=0
+
+update_in_file() {
+  local file="$1" old_pat="$2" new_text="$3" label="$4"
+  if [ ! -f "$file" ]; then return; fi
+  if grep -qE "$old_pat" "$file" 2>/dev/null; then
+    local current
+    current=$(grep -oE "$old_pat" "$file" | head -1)
+    if [ "$current" != "$new_text" ]; then
+      if $DRY_RUN; then
+        echo "  WOULD: $file: $label: $current -> $new_text"
+      else
+        sed -i "s|${current}|${new_text}|g" "$file"
+        echo "  UPDATE: $file: $label: $current -> $new_text"
+      fi
+      CHANGES=$((CHANGES + 1))
+    elif $VERBOSE; then
+      echo "  OK: $file: $label ($current)"
+    fi
+  elif $VERBOSE; then
+    echo "  SKIP: $file: pattern not found for $label"
+  fi
+}
+
+# --- Collect facts -----------------------------------------------------------
+
+echo "Collecting facts..."
+
+# Test count: check-* assertions across test files
+TEST_COUNT=$(grep -rch "check-equal?\|check-true\|check-false\|check-exn\|check-not-exn" tests/*.rkt 2>/dev/null \
+  | awk '{s+=$1} END {print s}')
+echo "  tests: $TEST_COUNT"
+
+# Stdlib function count
+STDLIB_COUNT=$(python3 -c "
+import re
+with open('private/stdlib-types.rkt') as f:
+    content = f.read()
+start = content.find('(define STDLIB-TYPES')
+section = content[start:]
+keys = re.findall(r\"^   '([a-zA-Z./*<>=!?+-][a-zA-Z0-9./*<>=!?+-]*)\", section, re.MULTILINE)
+print(len(keys))
+" 2>/dev/null || echo "0")
+echo "  stdlib: $STDLIB_COUNT"
+
+# Devlog count
+DEVLOG_COUNT=$(ls docs/devlog/[0-9]*.md 2>/dev/null | wc -l)
+echo "  devlog entries: $DEVLOG_COUNT"
+
+# --- Update files ------------------------------------------------------------
+
+echo ""
+echo "Propagating..."
+
+# Test count: "N tests" pattern
+for f in CLAUDE.md AGENTS.md README.md docs/todo.md; do
+  update_in_file "$f" "[0-9]+ tests" "$TEST_COUNT tests" "test count"
+  update_in_file "$f" "[0-9]+-test" "$TEST_COUNT-test" "test count (hyphenated)"
+done
+
+# Stdlib count: "~N Clojure functions" and "(~N functions)"
+for f in CLAUDE.md README.md docs/cheatsheet.md; do
+  update_in_file "$f" "~[0-9]+ Clojure functions" "~$STDLIB_COUNT Clojure functions" "stdlib count"
+  update_in_file "$f" "~[0-9]+ functions\)" "~$STDLIB_COUNT functions)" "stdlib count (parens)"
+done
+
+# Devlog count
+update_in_file "README.md" "[0-9]+ entries" "$DEVLOG_COUNT entries" "devlog count"
+
+# Stdlib count in AGENTS.md file map
+update_in_file "AGENTS.md" "~[0-9]+ pre-typed" "~$STDLIB_COUNT pre-typed" "stdlib count"
+
+echo ""
+if [ $CHANGES -eq 0 ]; then
+  echo "All docs up to date."
+else
+  if $DRY_RUN; then
+    echo "$CHANGES update(s) would be applied. Run without --dry-run to apply."
+  else
+    echo "$CHANGES update(s) applied."
+  fi
+fi

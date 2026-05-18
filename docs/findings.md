@@ -1,7 +1,9 @@
-# beagle — empirical findings
+# beagle — empirical findings (E1–E8)
 
-A running log of what the benchmark has actually surfaced. Updates as new
-runs come in.
+Early experiment findings from E1–E8. For comprehensive results including
+E9–E15, see [`experiments/report.md`](../experiments/report.md).
+
+A running log of what the benchmark surfaced in the first 48 hours.
 
 ## Run 2026-05-15 — first benchmark sample
 

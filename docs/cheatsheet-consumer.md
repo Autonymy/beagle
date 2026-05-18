@@ -51,6 +51,7 @@ Generates:
 ```racket
 (if cond then else)
 (cond [test1 body1] [test2 body2] [true fallback])
+(cond test1 body1 test2 body2 :else fallback)  ; flat (Clojure-style)
 (when cond body...)
 (do body1 body2 ... bodyN)
 (let [name1 value1 name2 value2 ...] body...)
@@ -145,10 +146,11 @@ Only annotate when narrowing: `(let [(x : Product) (find-product id)] ...)`.
 ## Build & check
 
 ```bash
-beagle check .                         # type-check all files
+beagle-daemon start --watch .          # reactive: re-checks on every file save
+beagle fix --apply .                   # auto-fix mechanical type errors
+beagle check .                         # type-check all files (manual; daemon does this automatically)
 beagle build . --out .build/           # compile to Clojure
-beagle fix --dry-run .                 # preview auto-fixes
-beagle fix --apply .                   # apply auto-fixes
 beagle sig fn-name .                   # query function signature
 beagle fields RecordName .             # query record fields
+beagle-verify-enriched .build/ VERIFY  # verify + auto-diagnose failures
 ```

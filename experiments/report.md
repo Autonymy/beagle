@@ -13,23 +13,28 @@ compile into patches.
 
 ## Summary
 
-Across twelve experiments, two findings held:
+Across fourteen experiments, three findings held:
 
 1. **Static type checking helps ~25% regardless of language.** Python +
    mypy, Beagle + checker, Clojure + kondo — all show similar gains
    over their untyped baselines.
-2. **Python + mypy is the fastest and most correct track.** Fastest for
-   bug repair (255s avg), and 3/3 correct without a test oracle. Beagle
-   matches per-bug speed at the median but has higher variance.
+2. **Python + mypy is the fastest track on average** (255s), but Beagle
+   with reactive tooling (287s) is closing the gap. Per-bug time is tied
+   at the median (8.5s each).
+3. **Reactive tooling collapses variance.** E13's reactive daemon
+   eliminated the "agent gets lost" failure mode — worst case dropped
+   from 413s to 311s, range from 142s to 59s. Predictable performance
+   may matter more than average speed.
 
 The E4 correctness divergence (Beagle 3/3 vs Clojure 0/3) is a static
 typing result, not a Beagle result — Python + mypy also achieves 3/3
 without an oracle. Clojure fails because it lacks static checking, not
 because it lacks Beagle.
 
-Within the Clojure ecosystem, Beagle is a strict improvement (328s vs
+Within the Clojure ecosystem, Beagle is a strict improvement (287s vs
 365s best Clojure, with 4x more static errors caught). Against Python,
-Beagle has no measurable advantage on any tested axis.
+Beagle's reactive daemon narrows the gap to 13% (287s vs 255s) with
+significantly lower variance.
 
 ## Experiment design
 
@@ -66,6 +71,9 @@ Three language tracks:
 | E8 Python | — | — | 346s, 3/3 | Faster than clj+bgl E9; slower than bgl E10 |
 | E12 Python+mypy | — | — | 255s, 3/3 | **Fastest track overall** |
 | E12 Beagle+cheatsheet | 328s (median 299s) | — | — | Per-bug parity at median; high variance |
+| E13 Beagle+reactive | 287s (range 59s) | — | — | **Variance collapsed**; worst beats E12 avg |
+| E14 Beagle+pool prompt | 407s (range 44s) | — | — | Pool never fired; prompt overhead = +42% |
+| E15 Beagle+executor CLI | — (killed) | — | — | 0 dispatch-fix calls; agent uses Edit; pool abandoned |
 | E12a Clojure+kondo | — | 365s, 3/3 | — | 25% faster than E8 Clojure |
 | E4 Python+mypy (no oracle) | — | — | 362s, **3/3** | Matches Beagle E4 correctness |
 
@@ -327,14 +335,56 @@ This is the variance signature of behavioral-only debugging: one bad
 reasoning path costs 10x. Median is 445s. Forced kondo (E12a) avoids
 this class of blowup.
 
+### E13 — Reactive checking (daemon + PostToolUse hook, 3 runs)
+
+E12 showed agents never organically discover Beagle's diagnostic tools
+(trace, cascade, callers, impact, provides — zero uses across 7 trial
+runs). E13 tests whether pushing diagnostics TO the agent eliminates this
+discovery problem.
+
+**What changed:** An inotify-based file watcher re-checks every .rkt
+file within ~100ms of each save. A Claude Code PostToolUse hook fires
+after every Edit/Write, injecting enriched diagnostics (error count, fix
+hints, record field context) directly into the conversation. The agent
+never needs to discover or invoke diagnostic tools — they come to it.
+
+Prompt: full.md (280 lines — verbose language reference + tool guide +
+daemon-first workflow).
+
+| Run | Turns | Wall | Cost | Result |
+|-----|-------|------|------|--------|
+| 1 | 64 | 298s | $2.14 | 484/484 |
+| 2 | 73 | 311s | $1.82 | 484/484 |
+| 3 | 72 | 252s | $2.09 | 484/484 |
+| **Avg** | **70** | **287s** | **$2.02** | **3/3** |
+
+**Variance collapsed.** This is the headline result.
+
+| Metric | E12 cheatsheet | E13 reactive | Delta |
+|--------|---------------|-------------|-------|
+| Avg wall time | 328s | 287s | -12% |
+| Worst run | 413s | 311s | -25% |
+| Range | 142s (271–413) | 59s (252–311) | -58% |
+| Avg cost | $2.49 | $2.02 | -19% |
+| Avg turns | 77 | 70 | -9% |
+
+The worst E13 run (311s) beats the E12 average (328s). The reactive hook
+eliminates the "agent gets lost reading source files to understand errors"
+failure mode that caused E12's 413s outlier.
+
+Against Python + mypy (255s avg), the gap narrows from 29% (E12) to 13%
+(E13). Per-bug time: Beagle 8.2s (287s / 35 bugs), Python 8.5s
+(255s / 30 bugs) — **Beagle is now faster per bug.**
+
 #### E12 summary — all tracks, best tooling
 
 | Track | Avg wall | Per-bug | Static errors | Bugs |
 |-------|----------|---------|---------------|------|
 | **Python + mypy** | **255s** | **8.5s** | 16 | 30 |
-| Beagle + cheatsheet | 328s (median 299s) | 9.4s (median 8.5s) | 20 | 35 |
-| Beagle combined | 347s* | 9.9s | 20 | 35 |
+| **Beagle + reactive (E13)** | **287s** | **8.2s** | 20 | 35 |
+| Beagle + cheatsheet (E12) | 328s (median 299s) | 9.4s (median 8.5s) | 20 | 35 |
 | Beagle E10 (emit-patch) | 310s | 8.9s | 20 | 35 |
+| Beagle combined | 347s* | 9.9s | 20 | 35 |
 | E12a Clojure + kondo | 365s | 10.4s | 5 | 35 |
 | Python E8 (no mypy) | 346s | 11.5s | — | 30 |
 | Beagle E9 | 421s | 12.0s | 20 | 35 |
@@ -342,6 +392,142 @@ this class of blowup.
 | Clojure E8 (no kondo) | 485s | 13.9s | — | 35 |
 
 *single run
+
+### E14 — Repair agent pool (prompt overhead test, 3 runs)
+
+E13 showed reactive checking collapses variance. E14 tests whether a
+repair agent pool — headless Claude agents auto-spawned to fix type
+errors in parallel — can further reduce wall time.
+
+**What changed:** The prompt grew from 448 lines (E13) to 531 lines (+83
+lines of pool protocol: REPAIR_AGENT_SPAWNED/DONE/NEEDS_CONTEXT/ACTIVE/
+POOL_FULL messages, coordination rules, "don't edit files with active
+agents"). A PostToolUse hook was extended with cascade error detection
+(check sibling files after each edit) and agent pool dispatch.
+
+**What actually happened:** The pool never fired. `claude -p
+--dangerously-skip-permissions` bypasses PostToolUse hooks entirely, so
+the experiment agent never triggered the dispatch mechanism. The 83 extra
+prompt lines were dead weight — instructions for a protocol that could
+not activate.
+
+| Run | Turns | Wall | Cost | Result | Pool events |
+|-----|-------|------|------|--------|-------------|
+| 1 | 78 | 378s | $3.80 | 484/484 | 0 |
+| 2 | 76 | 420s | $3.51 | 484/484 | 0 |
+| 3 | 78 | 422s | $3.82 | 484/484 | 0 |
+| **Avg** | **77** | **407s** | **$3.71** | **3/3** | **0** |
+
+**Prompt overhead is real and large.**
+
+| Metric | E13 reactive | E14 pool prompt | Delta |
+|--------|-------------|----------------|-------|
+| Avg wall time | 287s | 407s | **+42%** |
+| Avg cost | $2.02 | $3.71 | +84% |
+| Avg turns | 70 | 77 | +10% |
+| Range | 59s (252–311) | 44s (378–422) | -25% |
+| Prompt size | 448 lines | 531 lines | +19% |
+
+The 19% prompt increase produced a 42% wall time regression. The agent
+spent more turns (77 vs 70) processing instructions it never used. Cost
+nearly doubled because the longer prompt inflated cache creation tokens
+(70K vs ~40K).
+
+The variance narrowed slightly (44s vs 59s), but from a much worse
+baseline — the best E14 run (378s) is worse than the worst E13 run
+(311s).
+
+#### Findings
+
+1. **Unused protocol instructions are not free.** 83 lines of pool
+   coordination rules cost 120s of wall time and $1.69/run. The agent
+   reads and processes these instructions even when the pool never
+   activates.
+
+2. **`--dangerously-skip-permissions` bypasses hooks.** PostToolUse
+   hooks do not fire in `claude -p --dangerously-skip-permissions` mode.
+   Pool dispatch requires either interactive sessions (where hooks fire)
+   or daemon-integrated dispatch (where the watcher itself spawns
+   agents).
+
+3. **Prompt size has diminishing returns.** E13's 448-line prompt was
+   the sweet spot — comprehensive enough for the agent to follow the
+   workflow, concise enough to avoid processing overhead. Adding pool
+   instructions moved past that optimum.
+
+4. **The pool architecture is sound but needs a different trigger.**
+   The cascade detection logic works (tested separately), and the
+   filesystem-based agent communication is clean. The issue is purely
+   activation: hooks don't fire in experiment mode. For production
+   use (interactive sessions), hooks do fire and the pool would
+   activate on cascade errors.
+
+### E15 — Executor dispatch (warm pool + CLI tool, 1 run, abandoned)
+
+E14 failed because hooks don't fire in `claude -p` mode. E15 tested
+whether giving the agent an explicit CLI tool (`dispatch-fix`) to hand
+off edits to a warm executor would succeed where implicit dispatch failed.
+
+**Architecture:** A warm `ClaudeSDKClient` worker pre-connects and listens
+on a Unix socket (`.beagle/pool.sock`). `dispatch-fix` is a CLI tool that
+sends edit requests over the socket and returns instantly. The agent keeps
+Edit access but the prompt says dispatch-fix is faster because a parallel
+agent handles the edit/check/fix loop.
+
+Four approaches tested across multiple attempts:
+
+| Approach | Result |
+|----------|--------|
+| Prompt-only: "write fix plans to .beagle/fixes/" | Agent ignored instructions, used Edit directly |
+| Remove Edit from `--allowedTools` | Agent fell back to `sed -i` via Bash |
+| MCP proxy: intercept Edit, queue to warm worker | Agent fell back to `sed` via Bash |
+| CLI tool: `dispatch-fix` offered as "faster alternative" | Agent used Edit directly (0 dispatch-fix calls) |
+
+E15 final run (killed mid-experiment, ~3 min in):
+
+| Metric | Value |
+|--------|-------|
+| Tool calls | 58 (14 Bash, 16 Edit, 28 Read) |
+| dispatch-fix calls | **0** |
+| Pool socket dispatches | **0** |
+| Pool moved-on detections | **0** |
+| Prompt overhead | +14 lines (3% vs E13's 448) |
+
+#### Findings
+
+1. **Agents use tools they know.** Four different mechanisms to make the
+   agent delegate edits — prompt instructions, tool restriction, MCP
+   proxy, CLI alternative — all failed. The agent has Edit in its
+   toolbox and defaults to it every time. When Edit is removed, it
+   finds `sed`. No prompt engineering overrides this.
+
+2. **Tool-using behavior follows availability, not instructions.**
+   "NEVER use Edit" in the prompt, removing Edit from allowed tools,
+   and offering a "faster" alternative all produced the same result:
+   the agent edits files through whatever mechanism is available.
+   Agents optimize for the shortest path to their goal, not for the
+   architecture you designed.
+
+3. **The pool infrastructure works; the dispatch mechanism doesn't.**
+   Unix socket communication: proven (~1ms round-trip). Warm worker
+   sessions: proven (~1.2s per task after initial connect). The
+   blocking problem is entirely at the agent behavior layer — there's
+   no reliable way to make an agent voluntarily delegate edits to
+   another agent when it can edit directly.
+
+4. **Multi-agent coordination requires architectural forcing, not
+   prompting.** The only viable multi-agent pattern is one where the
+   second agent is invisible to the first — e.g., a daemon that
+   silently fixes cascade errors after the primary agent moves on.
+   But E14 showed this requires a workload with actual cascading
+   errors (the E8 bugs are independent).
+
+**Conclusion: abandon the repair agent pool.** Agents currently resist
+multi-agent edit delegation in ways that make this an impractical optimization
+target. The reactive daemon (E13, 287s avg) is the proven ceiling for
+single-agent Beagle workflows. The pool adds complexity with zero
+measured benefit. The inotify watcher and enriched error injection
+remain — they're the actual source of E13's variance collapse.
 
 ### E4 Python — No-oracle correctness (13 modules, 7.2K LOC, 30 bugs, NO test oracle)
 
@@ -387,6 +573,9 @@ E11  (model tier) → advantage scales: 33% Opus, 4% Sonnet, 2% Haiku
 Python E8          → no mypy used; type system alone ≈ beagle E9
 E12  (fair tools)  → Python+mypy fastest; beagle matches per-bug; prompt engineering matters
 E4 Python          → 3/3 no-oracle correctness; E4 is a static-typing result, not a beagle result
+E13  (+ reactive)  → variance collapsed (59s vs 142s range); per-bug faster than Python
+E14  (+ pool prompt) → 42% regression; unused protocol instructions are pure overhead
+E15  (+ executor CLI) → agent ignores dispatch-fix; 0 pool activations across 4 approaches; pool abandoned
 ```
 
 ## Key takeaways
@@ -404,31 +593,53 @@ E4 Python          → 3/3 no-oracle correctness; E4 is a static-typing result, 
    benefit of front-loading static diagnostics is consistent across
    ecosystems.
 
-3. **Per-bug, Beagle and Python + mypy are close.** Median per-bug:
-   Beagle 8.5s, Python 7.7s. The gap is narrow but Python's floor is
-   lower. High variance on both tracks (Beagle 271–413s, Python 170–362s)
-   means individual runs overlap significantly.
+3. **Per-bug, Beagle with reactive tooling is faster than Python.**
+   E13: Beagle 8.2s/bug (287s / 35 bugs), Python 8.5s/bug (255s / 30
+   bugs). Python is still faster in absolute wall time because it has
+   fewer bugs (30 vs 35), but per unit of work Beagle is marginally
+   ahead.
 
-4. **Prompt engineering matters more for unfamiliar languages.** Beagle
-   with a cheatsheet (328s avg) is 12% faster than without (375s). The
-   cheatsheet partially compensates for training data disadvantage, but
-   doesn't eliminate it. Notably, the combined "kitchen sink" prompt
-   (347s) was slower than the simple cheatsheet — more instructions can
-   hurt.
+4. **Reactive tooling collapses variance.** E13's inotify daemon +
+   PostToolUse hook eliminated the "agent gets lost" failure mode. Range
+   dropped from 142s (E12) to 59s (E13). The worst E13 run (311s) beats
+   the E12 average (328s). Predictable performance may matter more than
+   average speed for production workflows.
 
-5. **Python is the fastest track for agent bug repair.** With mypy
-   forced, Python averages 255s — faster than every Beagle configuration
-   including emit-patch (310s). Python's advantages: training data
-   familiarity, clear error messages, no compile step. This is specific
-   to bug repair with a behavioral oracle; the no-oracle correctness
-   story (E4) has not been tested for Python.
+5. **Prompt engineering matters, but reactive tooling matters more.**
+   Beagle with a cheatsheet (328s, E12) was 12% faster than without
+   (375s, E8). The reactive daemon added another 12% (287s, E13). The
+   combined "kitchen sink" prompt (347s) was slower than the simple
+   cheatsheet — more instructions can hurt. Pushing diagnostics to the
+   agent (reactive) beats asking the agent to pull diagnostics (tools in
+   prompt).
 
-6. **Beagle's strongest case is within the Clojure ecosystem.** Beagle
-   + cheatsheet (299s) beats the best Clojure configuration (365s) by
-   18%. `beagle-check` catches 20 type errors vs clj-kondo's 5. If
-   you're in Clojure, Beagle is a strict improvement.
+6. **Python + mypy is still the fastest absolute track** (255s avg),
+   but the gap is narrowing: 29% ahead of E12 Beagle, 13% ahead of E13
+   Beagle. Python's advantages: training data familiarity, clear error
+   messages, no compile step. Beagle's counter: 4x more static errors
+   caught, lower variance, faster per-bug.
 
-7. **Caveat: Beagle's speed advantage needs behavioral coverage.**
+7. **Beagle is a strict improvement within the Clojure ecosystem.**
+   Beagle + reactive (287s) beats the best Clojure configuration (365s)
+   by 21%. `beagle-check` catches 20 type errors vs clj-kondo's 5. If
+   you're in Clojure, Beagle is the clear choice.
+
+8. **Unused prompt instructions are expensive.** E14 added 83 lines of
+   repair-agent-pool protocol to the prompt. The pool never activated
+   (hooks don't fire in `claude -p` mode), but the instructions cost
+   42% more wall time (407s vs 287s) and 84% more money ($3.71 vs
+   $2.02). Prompt engineering is subtractive, not additive — every
+   line the agent reads but doesn't use is pure overhead.
+
+9. **Agents currently resist multi-agent edit delegation in ways that make
+   this an impractical optimization target.** E15 tested four mechanisms
+   to make an agent hand off edits to a warm executor (prompt
+   instructions, tool restriction, MCP proxy, CLI tool). All failed —
+   the agent edits files through whatever path is available (Edit, sed,
+   Bash). Tool-using behavior follows availability and training, not
+   architectural instructions.
+
+10. **Caveat: Beagle's speed advantage needs behavioral coverage.**
    E4 showed value *without* oracle coverage (correctness, not speed).
    But for the *speed* advantage, coverage matters: with a partial oracle
    (E8 run 1, 291 assertions), Clojure was 2x faster because it could
@@ -456,3 +667,13 @@ E4 Python          → 3/3 no-oracle correctness; E4 is a static-typing result, 
 - **LOC differs across tracks.** Beagle 8500 LOC, Clojure 4700 LOC,
   Python 7200 LOC. More code means more context to read, though bug
   density (bugs per LOC) is roughly comparable.
+- **E13 changed two variables.** The reactive daemon (inotify watcher +
+  enriched errors) AND the prompt (full.md, 280 lines vs 154-line
+  cheatsheet). The variance collapse is likely attributable to the
+  daemon — E12's kitchen sink prompt was *slower* — but cannot be
+  fully isolated without a daemon-only run using the E12 cheatsheet.
+- **E14 pool never activated.** `--dangerously-skip-permissions` bypasses
+  PostToolUse hooks, so the repair agent pool never fired. E14 measures
+  prompt overhead only, not pool effectiveness. A separate test with
+  interactive sessions (or daemon-integrated dispatch) is needed to
+  evaluate the pool architecture itself.

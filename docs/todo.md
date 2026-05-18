@@ -241,41 +241,30 @@ Developer tools stay as `bin/beagle-*` (repair, proptest, muttest, dtrace, etc.)
 ### Release
 
 - [x] Update version in CLAUDE.md status line (v0.3 → v0.4.0)
-- [ ] Devlog entry: v0.4.0
-- [ ] Tag v0.4.0
+- [x] Devlog entry: v0.4.0 (devlog 014)
+- [x] Tag v0.4.0 (at 58b7412)
 
-## Now: Close the Python gap (E12 follow-up)
+## v0.5.0: Consumer readiness + packaging
 
-E12 showed Python+mypy (255s) beats Beagle+cheatsheet (299s) on bug
-repair. Per-bug time is tied (8.5s each) — the absolute gap is mostly
-the 5 extra bugs. Goal: combine optimizations and test whether Beagle
-can match or beat Python with its full toolchain.
+- [x] Documentation distillation: `docs/prompts/` with consumer/contributor split
+- [x] README update: prompts section, current experiment results, accurate reference links
+- [x] Nix flake: `nix build`, `nix run`, devShell via direnv
+- [x] `beagle init` audit: scaffolded project generates correct consumer cheatsheet
+- [x] Stale doc cleanup: stdlib 607→666, test count 370→399, `bin/beagle-docs-sync` for ongoing propagation
+- [x] Verify daemon watcher on macOS: `filesystem-change-evt` is Racket stdlib (kqueue on macOS, inotify on Linux) — no code changes needed
+- [x] Devlog entry: v0.5.0 (devlog 017)
+- [x] Tag v0.5.0
 
-### 1. Cheatsheet + emit-patch combined run ✓
-- [x] Single run: distilled cheatsheet + emit-patch + daemon + syntax checker
-- [x] Result: 347s — slower than cheatsheet-only (328s avg). Kitchen sink hurts.
+## Open items
 
-### 2. Paren safety tool (`beagle-syntax`) ✓
-- [x] Lightweight balanced-paren/bracket validator (150ms for 13 files)
-- [x] Reports "line N: unmatched paren" — catches E4-style corruption
-- [x] `bin/beagle-syntax` — Racket script, no dependencies
+- [ ] E13 confound isolation: full prompt vs cheatsheet, daemon vs no daemon
 
-### 3. Cheatsheet-distilled (Clojure-delta framing) ✓
-- [x] `docs/cheatsheet-distilled.md` — 75 lines, "you know Clojure, here's what's different"
-- [x] Includes error-to-fix recipes, query tool reference
-- [x] Used in combined run prompt
+## Abandoned: Repair agent pool (E14–E15)
 
-### 4. Error-to-fix recipe appendix ✓
-- [x] Baked into cheatsheet-distilled: E002 → wrong accessor, E001 → missing arg, "did you mean" → use it
-
-### 5. Validate cheatsheet result (n=1 → n=3) ✓
-- [x] 3 runs: 299s, 413s, 271s. Avg 328s, median 299s.
-- [x] Confirms improvement over E8 (375s) but high variance remains
-
-### 6. Daemon warm-start ✓
-- [x] Tested in combined prompt (step 0: start daemon)
-- [x] Combined prompt slower overall — daemon value absorbed by prompt complexity
-- [ ] Query tools go from 450ms → 10ms; compounds over 70+ turns
+Agents currently resist multi-agent edit delegation in ways that make this
+an impractical optimization target. Four approaches tested (prompt
+instructions, tool restriction, MCP proxy, CLI dispatch tool), zero
+activations across 7 runs. See devlog 016 and experiments/report.md.
 
 ## Someday: Experiments
 
@@ -284,6 +273,12 @@ can match or beat Python with its full toolchain.
 
 ## Done
 
+- E12: Python gap analysis — cheatsheet (328s), distilled, combined (347s), syntax tool, kondo track (365s)
+- E13: Reactive checking — 287s avg, variance collapsed (59s range), per-bug faster than Python
+- E14: Pool prompt overhead test — 407s avg, pool never fired, 42% regression from unused instructions
+- E15: Executor dispatch — 4 approaches (prompt, tool restriction, MCP, CLI), 0 activations, pool abandoned
+- beagle-syntax: paren/bracket validator (<200ms)
+- cheatsheet-distilled: 75-line Clojure-delta reference
 - All core forms (def, defn, fn, let, if, cond, when, do, call, vector, quote)
 - try/catch/finally, doseq, case, constructor calls (ClassName.)
 - defprotocol, defmulti/defmethod
@@ -297,9 +292,9 @@ can match or beat Python with its full toolchain.
 - Types: primitives, function types (incl. variadic), parametric, union, polymorphic (forall), Any
 - Macros: safe (gensym-hygienic) / unsafe with &rest and splice
 - Custom reader preserving `[]`/`()`, intercepting `{}`/`#{}`
-- Stdlib extern catalog (~607 functions), bin/gen-stdlib-types auto-generator
+- Stdlib extern catalog (~666 functions), bin/gen-stdlib-types auto-generator
 - bin/beagle-build, bin/beagle-build-all, bin/beagle-expand
-- 370-test suite
+- 399-test suite
 - experiments/ benchmark framework (40 tasks × 3 variants, gen-prompts + score + verify-behavior)
 - Head-to-head benchmark (8 programs, beagle vs raw Clojure, 16/16 pass)
 - Refactoring experiment (overhead-pct cascade, 2/2 pass)

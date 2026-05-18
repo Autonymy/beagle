@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+"""Send a fix request to the warm repair pool via Unix socket.
+
+Returns instantly — the warm worker applies the edit in the background.
+Use this instead of editing files directly when you want to keep diagnosing.
+
+Usage:
+    dispatch-fix FILE LINE OLD NEW
+    dispatch-fix --file FILE --fixes '[{"line":42,"old":"x","new":"y"}]'
+    dispatch-fix --status
+"""
+
+import json
+import os
+import socket
+import sys
+
+SOCK_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    ".beagle", "pool.sock"
+)
+
+
+def send(msg):
+    if not os.path.exists(SOCK_PATH):
+        print("error: pool not running (no socket)", file=sys.stderr)
+        sys.exit(1)
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(5.0)
+    try:
+        sock.connect(SOCK_PATH)
+        sock.sendall(json.dumps(msg).encode() + b"\n")
+        sock.shutdown(socket.SHUT_WR)
+        data = b""
+        while True:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            data += chunk
+        return json.loads(data.decode())
+    finally:
+        sock.close()
+
+
+def main():
+    if len(sys.argv) == 2 and sys.argv[1] == "--status":
+        resp = send({"cmd": "status"})
+        print(json.dumps(resp, indent=2))
+        return
+
+    if len(sys.argv) == 5 and sys.argv[1] == "--file":
+        resp = send({
+            "cmd": "fix",
+            "file": sys.argv[2],
+            "fixes": json.loads(sys.argv[4]) if sys.argv[3] == "--fixes" else []
+        })
+        print(resp.get("msg", "queued"))
+        return
+
+    if len(sys.argv) == 5:
+        file_path, line, old, new = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+        resp = send({
+            "cmd": "fix",
+            "file": os.path.abspath(file_path),
+            "fixes": [{"line": int(line), "old": old, "new": new}]
+        })
+        print(resp.get("msg", "queued"))
+        return
+
+    print("usage: dispatch-fix FILE LINE OLD NEW", file=sys.stderr)
+    print("       dispatch-fix --file FILE --fixes JSON", file=sys.stderr)
+    print("       dispatch-fix --status", file=sys.stderr)
+    sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

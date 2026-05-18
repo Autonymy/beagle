@@ -3,7 +3,7 @@
 Entries record discoveries, direction changes, and experimental results.
 Each entry is a snapshot of understanding at the time it was written.
 
-All beagle development took place over ~48 hours (2026-05-15 to 2026-05-17).
+All beagle development took place over ~72 hours (2026-05-15 to 2026-05-18).
 Entries are numbered chronologically. Experiments cited by ID (E1–E8+).
 
 ## Entries
@@ -24,3 +24,6 @@ Entries are numbered chronologically. Experiments cited by ID (E1–E8+).
 | 012 | 2026-05-17 PM | [Daemon + Babashka: collapsing the wall-time gap](012-daemon-bb.md) |
 | 013 | 2026-05-17 PM | [E9: repair toolchain — 29% faster, 36% fewer tokens](013-e9-repair-toolchain.md) |
 | 014 | 2026-05-17 PM | [v0.4.0: consumer hardening, type inference floor, unified CLI](014-v040-consumer-hardening.md) |
+| 015 | 2026-05-18 | [Reactive checking: inotify daemon + PostToolUse hook](015-reactive-checking.md) |
+| 016 | 2026-05-18 | [Repair agent pool: forked error resolution](016-repair-agent-pool.md) |
+| 017 | 2026-05-18 | [v0.5.0: packaging, doc infrastructure, release hygiene](017-v050-packaging.md) |

@@ -349,4 +349,4 @@
 
   (exit (if (zero? total-errors) 0 1)))
 
-(provide run-check-all)
+(provide run-check-all generate-fix-plan)

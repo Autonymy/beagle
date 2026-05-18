@@ -274,7 +274,7 @@ Nullable (sugar for `(U T Nil)`):
 - `(splice rest-name)` in template: inlines the list at that position
 - `safe` macros use gensym-hygienic substitution; `unsafe` macros use naive substitution
 
-## Pre-typed stdlib (~607 functions)
+## Pre-typed stdlib (~666 functions)
 
 **Math** (variadic Any): `+`, `-`, `*`, `/`, `mod`, `quot`, `rem`, `inc`,
 `dec`, `min`, `max`, `abs`
@@ -470,16 +470,22 @@ Each note means: something is wrong at that location. Common fixes:
 
 ## Tools
 
+### Reactive daemon
+- `bin/beagle-daemon start --watch DIR` — start daemon + inotify watcher; re-checks every .rkt file within ~100ms of save. With the PostToolUse hook configured, enriched errors are injected after every edit.
+- `bin/beagle-daemon query check-enriched DIR` — synchronous type check + enriched context (JSON)
+- `bin/beagle-daemon query check-result FILE` — return cached result from watcher (instant)
+- `bin/beagle-verify-enriched BUILD-DIR VERIFY` — run verify + auto-diagnose with trace/cascade
+
 ### Compile & check
 - `bin/beagle-build SOURCE.rkt [OUT.clj]` — compile one file
 - `bin/beagle-build-all FILE-OR-DIR... [--out DIR] [--warn]` — batch compile (9x faster); `--warn` emits despite type errors
 - `bin/beagle-check SOURCE.rkt` — type-check only, no emit
-- `bin/beagle-check-all FILE-OR-DIR...` — batch type-check (10x faster)
+- `bin/beagle-check-all FILE-OR-DIR...` — batch type-check (10x faster); daemon makes this redundant during edit loop
 - `bin/beagle-expand SOURCE.rkt` — show post-macro source
 
 ### Query
 - `bin/beagle-sig FN-NAME FILE-OR-DIR...` — print function's type signature
-- `bin/beagle-fields RECORD FILE-OR-DIR...` — print record fields + accessors
+- `bin/beagle-fields RECORD FILE-OR-DIR...` — print record fields + accessors (daemon enrichment includes these)
 - `bin/beagle-callers FN-NAME FILE-OR-DIR...` — find all call sites
 - `bin/beagle-provides FILE-OR-DIR...` — list module exports with types
 - `bin/beagle-impact FN-NAME FILE-OR-DIR...` — callers + impact of signature change
@@ -495,14 +501,13 @@ Each note means: something is wrong at that location. Common fixes:
 
 ### Repair workflow (recommended order)
 
-1. `beagle-repair src/ verify.clj --emit-patch > fixes.patch` — get machine-applicable fixes
-2. `git apply fixes.patch` — apply all AUTO-tier fixes in one shot
-3. `beagle-build-all --warn src/ --out .build/` — recompile
-4. Run oracle: `bb -cp .build/ -e '(load-file "verify.clj")'`
-5. For remaining failures: `beagle-trace .build/ verify.clj` to see divergence
-6. `beagle-cascade src/ verify.clj --from-failures` to find root causes
-7. Fix root causes first (highest cascade score), rerun oracle
-8. Iterate until 0 failures
+1. `beagle-daemon start --watch .` — reactive checking on every save
+2. `beagle-fix --apply .` — auto-fix mechanical type errors
+3. Fix remaining type errors (daemon hook shows errors after each edit)
+4. `beagle-build-all *.rkt --out .build/` — compile
+5. `beagle-verify-enriched .build/ verify.clj` — verify + auto-diagnose
+6. Fix root causes first (highest cascade score), rerun oracle
+7. Iterate until 0 failures
 
 ## Empirical baseline
 

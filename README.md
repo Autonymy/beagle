@@ -22,34 +22,31 @@ require judgment.
 
 ## Evidence
 
-Eleven experiments (E1–E11), head-to-head against raw Clojure on the
-same tasks. The progression tells the story:
+Fifteen experiments (E1–E15) across three language tracks (Beagle,
+Clojure, Python), head-to-head on the same tasks.
 
 **E4** (13 modules, 8570 LOC, 35 injected bugs): beagle 3/3
-correctness vs clojure 0/3. First reproducible divergence — types
-produce measurably better outcomes at scale.
+correctness vs clojure 0/3. First reproducible divergence — but this
+is a static-typing result, not a beagle result: Python + mypy also
+achieves 3/3.
 
 **E9** (repair toolchain): beagle gives the agent a better repair
 queue. 29% faster, 36% fewer tokens, same correctness.
 
-**E10** (workflow compression): beagle turns part of that queue into
-an executable patch. `--emit-patch` reduces wall time by 33% and
-tokens by 41% vs E9. Mechanical fixes collapse from several
-agent turns to a single `git apply`. This is not "beagle language vs
-Clojure language" — it is beagle's repair workflow vs raw Clojure's
-repair workflow. The advantage is that the authoring surface gives the
-tooling enough structure to emit trusted patches.
+**E13** (reactive daemon): inotify watcher re-checks every file within
+~100ms of each save. Enriched diagnostics injected after every edit.
+287s avg — variance collapsed from 142s range to 59s. Per-bug faster
+than Python + mypy (8.2s vs 8.5s). The best single-agent configuration.
 
-**E11** (model tier): Opus gains 33% from beagle, Sonnet 4%, Haiku 2%.
-Beagle's advantage scales with model intelligence — it amplifies
-capable models rather than compensating for weak ones.
+**Python + mypy** (same system, typed dataclasses): 255s avg — fastest
+absolute track. But per-bug, beagle E13 is faster. The gap is narrowing.
 
-**Python reference** (same E8 system, typed dataclasses + mypy): Python
-averages 346s — faster than Clojure (595s) and beagle-without-patches
-(421s), but 10% slower than beagle E10 (310s). Per-bug, Python and
-beagle E9 are comparable. The agents never used mypy; Python's
-readability alone accounts for the speed. The differentiator is the
-repair compiler, not the type system.
+**E14–E15** (multi-agent pool): agents currently resist multi-agent edit
+delegation in ways that make this an impractical optimization target.
+Four approaches tested, zero activations. Abandoned.
+
+**Within Clojure:** beagle + reactive daemon (287s) beats the best
+Clojure configuration (365s with clj-kondo) by 21%.
 
 Full methodology and results: [`experiments/report.md`](experiments/report.md)
 
@@ -110,7 +107,7 @@ polymorphic (`forall`), user records, nominal scalars
 **Cross-module:** `(require module :as alias)` imports types, records,
 constructors, accessors, macros — all validated at call sites
 
-**Stdlib:** ~607 Clojure functions pre-typed, key HOFs polymorphic
+**Stdlib:** ~666 Clojure functions pre-typed, key HOFs polymorphic
 
 **Diagnostics:** Rust-style errors with source lines, signatures,
 "did you mean?" suggestions; JSON mode for programmatic consumption
@@ -175,13 +172,31 @@ Requires [Racket](https://racket-lang.org/) and
 
 ```
 raco pkg install --link --auto /path/to/beagle
-raco test tests/   # 370 tests
+raco test tests/   # 399 tests
 ```
+
+## Prompts
+
+Pre-built system prompts for agents working with beagle code.
+
+| Prompt | Audience | Use |
+|--------|----------|-----|
+| `docs/prompts/consumers/full.md` | Agents writing beagle code | Full language reference — load as system context |
+| `docs/prompts/consumers/distilled.md` | Agents who know Clojure | Clojure-delta — only what's different |
+| `docs/prompts/contributors/src.md` | Agents modifying the compiler | Architecture, conventions, file map |
+
+Consumer prompts ship with `beagle init`. Contributor knowledge feeds
+into `CLAUDE.md` (auto-loaded by Claude Code) and `AGENTS.md`.
+
+Mechanical facts (test count, stdlib size, devlog count) are propagated
+by `bin/beagle-docs-sync` — run it after changes that affect these numbers.
 
 ## Reference
 
-- `docs/cheatsheet.md` — single-page language reference (LLM context)
+- `docs/cheatsheet.md` — full language reference (LLM system context)
+- `docs/cheatsheet-consumer.md` — compact consumer reference (used by `beagle init`)
 - `docs/agent-workflow.md` — repair tool routing decision tree
-- `docs/forms.md` — canonical form catalog
-- `docs/devlog/` — development journal, 13 entries over 48 hours
-- `experiments/` — E1–E11 benchmark framework + trial data
+- `docs/forms.md` — canonical form catalog with examples
+- `docs/prompts/` — pre-built agent system prompts (consumer + contributor)
+- `docs/devlog/` — development journal, 17 entries
+- `experiments/report.md` — E1–E15 methodology and results

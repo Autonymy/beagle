@@ -4,40 +4,48 @@ When fixing bugs in a beagle project, use this decision tree to choose
 the right tool at each step. The goal: minimize reasoning cycles by
 letting the toolchain do mechanical work.
 
-## First move: always run `beagle-repair`
+## First move: start the reactive daemon
 
-```
-beagle-repair src/ verify.clj
+```bash
+beagle-daemon start --watch .
+beagle-fix --apply .
 ```
 
-This runs the full pipeline (type check → specfix → blame) and gives you
-a ranked queue. Items are tagged AUTO (apply directly) or SUGGEST (needs
-judgment).
+The daemon watches all .rkt files via inotify. Every time you edit a
+file, it re-checks within ~100ms and (with the PostToolUse hook) injects
+enriched diagnostics automatically — error count, fix hints, record
+field context. This replaces manual `beagle-check-all` and most
+`beagle-fields`/`beagle-sig` calls during the edit loop.
+
+Then run `beagle-fix --apply .` to auto-fix mechanical type errors.
 
 ## Decision tree
 
 ```
 Start
  │
- ├─ Got AUTO items in repair queue?
- │   YES → apply them (or use --auto), rebuild, rerun oracle
- │   NO  → skip to trace
+ ├─ Daemon watching? Hook configured?
+ │   YES → errors appear after each edit, no manual check needed
+ │   NO  → run beagle-check-all . after each edit batch
  │
- ├─ Still have failures after AUTO fixes?
- │   YES → run beagle-trace to see divergence
- │   NO  → done ✓
+ ├─ Type errors remaining (from hook output or check-all)?
+ │   YES → fix using the error output (fix hints, field context)
+ │   NO  → compile and verify
+ │
+ ├─ Compile + verify
+ │   Use beagle-verify-enriched for auto-diagnosis, or run verify directly
  │
  ├─ Many failures (>5)?
- │   YES → run beagle-cascade --from-failures
+ │   YES → beagle-cascade --from-failures
  │         Fix highest cascade-score function FIRST
  │         (one fix may resolve 3-5 downstream failures)
- │   NO  → fix them individually using trace output
+ │   NO  → fix them individually
  │
  ├─ Trace shows wrong operator/operand?
  │   YES → swap the operator/operands at the traced source line
  │
  ├─ Trace shows wrong accessor (e.g., carrier-id where base-rate expected)?
- │   YES → check beagle-sig for the correct accessor type
+ │   YES → the hook output already shows available fields
  │
  ├─ Trace shows wrong argument to a function?
  │   YES → check beagle-provides for expected parameter types
@@ -50,9 +58,12 @@ Start
 
 | Situation | Tool | What it tells you |
 |-----------|------|-------------------|
+| Starting a session | `beagle-daemon start --watch .` | Reactive checking on every edit |
+| Auto-fix mechanical errors | `beagle-fix --apply .` | 6-8 fixes in zero reasoning |
+| After editing a file | (automatic via hook) | Enriched errors with field context |
 | Starting a repair session | `beagle-repair` | Full ranked queue with AUTO/SUGGEST |
-| Type error with suggestion | (repair queue has it) | Which accessor/arg to use instead |
-| Logic bug, assertion fails | `beagle-trace` | Exact operation + line that diverged |
+| Logic bug, assertion fails | `beagle-verify-enriched` | Auto-diagnose with trace/cascade |
+| Targeted trace | `beagle-trace --focus fn` | Exact operation + line that diverged |
 | Many assertions failing | `beagle-cascade --from-failures` | Root cause(s) to fix first |
 | Want to predict impact of a change | `beagle-cascade --modified fn1,fn2` | Which assertions will break |
 | Need function signature | `beagle-sig fn-name src/` | Arg types and return type |

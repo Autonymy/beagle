@@ -14,7 +14,7 @@ it as canonical when explaining the language.
 
 ## Status
 
-`#lang beagle` v0.4.0 — consumer-hardened, type inference floor reached:
+`#lang beagle` v0.5.0 — consumer-ready, packaged, doc infrastructure:
 
 - Forms: `def`, `defn` (single + multi-arity), `fn`, `let`, `if`, `cond`,
   `when`, `do`, `match`, `loop`, `recur`, `for` (with `:when`), `doseq`,
@@ -38,7 +38,7 @@ it as canonical when explaining the language.
 - Keyword field inference: `(:name person)` returns the field type when
   target is a known typed record
 - Macros: safe (gensym-hygienic) / unsafe with `&rest` and `(splice ...)`
-- Stdlib catalog: ~607 Clojure functions + 26 JS interop entries pre-typed; CLJS-EXCLUDE set warns on JVM-only usage
+- Stdlib catalog: ~666 Clojure functions + 26 JS interop entries pre-typed; CLJS-EXCLUDE set warns on JVM-only usage
 - Cross-file type import: `(require module)` / `(require module :as alias)`
   resolves source at compile time, imports typed defs/defns/externs/records/macros.
   `declare-extern` is only needed for Java interop and non-beagle namespaces.
@@ -72,9 +72,12 @@ it as canonical when explaining the language.
 - Typed REPL: persistent type env, `:type EXPR`, `:sig NAME`, `:env`, compile + emit
 - Differential testing: `beagle-proptest --diff` compares function outputs between
   golden and modified builds, flags behavioral regressions (6143 calls on E8)
-- 370 tests passing
-- Empirical benchmarks: 40 tasks, 3 variants, head-to-head against raw Clojure,
-  refactoring and bug-detection experiments — 5 real bugs caught
+- 399 tests passing
+- 15 experiments across 3 language tracks (Beagle, Clojure, Python):
+  best Beagle config 287s avg with reactive daemon (E13), variance
+  collapsed to 59s range; per-bug faster than Python+mypy (8.2s vs 8.5s);
+  strict improvement over Clojure (287s vs 365s best);
+  multi-agent pool abandoned after E14-E15 (0 activations)
 - Type-system query tools: beagle-sig, beagle-fields, beagle-callers,
   beagle-provides, beagle-impact (with clojure analogs for fair experiments)
 - v2 experiment framework: 5-module inventory system (1651 LOC), 444 verify
@@ -96,6 +99,12 @@ it as canonical when explaining the language.
 - Distributed tracing: `beagle-dtrace` instruments cross-service calls (432 sites on E8),
   collects spans, visualizes waterfalls, and runs cross-service blame analysis with
   oracle-output correlation (identifies root cause services and cascade chains)
+- Reactive checking: daemon file watcher (Racket filesystem-change-evt) re-checks on every save (~100ms),
+  enriches errors with record field context; Claude Code PostToolUse hook injects
+  diagnostics after every Edit/Write on .rkt files
+- Repair agent pool: abandoned after E14-E15. Agents currently resist
+  multi-agent edit delegation in ways that make this an impractical optimization
+  target (4 approaches tested, 0 activations)
 
 ## Architecture
 
@@ -109,7 +118,7 @@ parse → check → emit
   `#"..."` (regex) via `MAP-TAG`/`SET-TAG`/`#%regex`.
 - `private/types.rkt` — type AST, parser, compatibility checker.
   `MAP-TAG`/`SET-TAG` are well-known symbols (`#%map`/`#%set`), not gensyms.
-- `private/stdlib-types.rkt` — pre-typed Clojure stdlib catalog (~607 functions).
+- `private/stdlib-types.rkt` — pre-typed Clojure stdlib catalog (~666 functions).
 - `private/macros.rkt` — macro registry, naive substitution, depth-capped
   recursive expansion, safe/unsafe boundary.
 - `private/parse.rkt` — source → AST. Two passes: meta-form collection
@@ -168,12 +177,17 @@ parse → check → emit
 - `bin/beagle-dtrace graph TRACE-DIR` — service dependency graph with impact analysis
 - `bin/beagle-dtrace cascade TRACE-DIR [--trace-id ID]` — root cause analysis across service boundaries
 - `bin/beagle-daemon start|stop|status|query CMD` — persistent query server (45× faster than cold tools)
+- `bin/beagle-daemon start --watch DIR` — start with file watcher; re-checks .rkt files on save, caches enriched results
+- `bin/beagle-verify-enriched BUILD-DIR VERIFY` — run verify + auto-diagnose failures (trace, cascade, pattern analysis)
 - `bin/beagle-sig FN-NAME FILE-OR-DIR...` — print a function's typed signature (daemon-accelerated)
 - `bin/beagle-fields RECORD FILE-OR-DIR...` — print record fields, types, and accessors (daemon-accelerated)
 - `bin/beagle-callers FN-NAME FILE-OR-DIR...` — find all call sites of a function (daemon-accelerated)
 - `bin/beagle-provides FILE-OR-DIR...` — list all exports with types from a module (daemon-accelerated)
 - `bin/beagle-impact FN-NAME FILE-OR-DIR...` — show callers and impact of changing a signature (daemon-accelerated)
 - `bin/beagle-fix --dry-run|--apply FILE-OR-DIR` — auto-apply high-confidence type-error fixes
+- `bin/beagle-syntax FILE...` — fast paren/bracket balance check (<200ms); catches delimiter corruption before compile
+- `bin/beagle-pool DIR` — repair agent pool watcher (abandoned E15; kept for reference)
+- `bin/beagle-docs-sync [--dry-run] [--verbose]` — propagate mechanical facts (test count, stdlib size, devlog count) into docs
 - `bin/gen-stdlib-types` — generate stdlib type entries from clojure.core metadata
 - `raco test tests/` — test suite
 - `experiments/` — benchmark framework (see `experiments/README.md`)
@@ -282,6 +296,8 @@ it gets a devlog entry. Routine feature additions do not.
 
 ## Reference
 
+- `docs/prompts/consumers/` — agent system prompts (full + distilled).
+- `docs/prompts/contributors/src.md` — canonical contributor reference (feeds CLAUDE.md + AGENTS.md).
 - `docs/devlog/README.md` — development journal (discoveries + experiments).
 - `experiments/README.md` — benchmark framework for design decisions.
 - `docs/forms.md` — canonical form catalog.
@@ -289,4 +305,5 @@ it gets a devlog entry. Routine feature additions do not.
 - `docs/cheatsheet-consumer.md` — 154-line consumer reference (for `beagle init`).
 - `docs/todo.md` — roadmap and completed work.
 - `docs/agent-workflow.md` — LLM agent workflow patterns.
-- `docs/findings.md` — empirical findings from experiments.
+- `docs/findings.md` — empirical findings from experiments (through E8; E9+ in report.md).
+- `experiments/report.md` — full experiment report (E3b–E14, all tracks).

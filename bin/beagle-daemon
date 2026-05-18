@@ -22,6 +22,11 @@ Queries (same as CLI tools but returns JSON):
   provides <file>
   impact <fn-name> <dir>
   check <dir>
+  check-enriched <dir>        Full type check + enriched context
+  check-result [file]         Latest pre-computed result from watcher
+  latest-results              All results since last query (clears buffer)
+  watch <dir>                 Start inotify watcher on directory
+  unwatch                     Stop all watchers
   invalidate [file]
   ping
 
@@ -136,7 +141,14 @@ if [[ $# -lt 1 ]]; then
 fi
 
 case "$1" in
-    start)   cmd_start ;;
+    start)
+        shift
+        cmd_start
+        # If --watch <dir> was passed, start watching after daemon is up
+        if [[ ${1:-} == "--watch" ]] && [[ -n ${2:-} ]]; then
+            send_query "watch" "$2"
+        fi
+        ;;
     stop)    cmd_stop ;;
     status)  cmd_status ;;
     query)   shift; send_query "$@" ;;

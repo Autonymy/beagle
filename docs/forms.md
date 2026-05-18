@@ -140,11 +140,20 @@ Example:
 
 ### `cond`
 
+Bracketed style:
 ```racket
 (cond
   [TEST BODY...]
   [TEST BODY...]
   ...)
+```
+
+Flat style (Clojure-compatible):
+```racket
+(cond
+  TEST1 BODY1
+  TEST2 BODY2
+  :else FALLBACK)
 ```
 
 Example:
@@ -153,6 +162,12 @@ Example:
   [(< n 0) "negative"]
   [(= n 0) "zero"]
   [(> n 0) "positive"])
+
+;; equivalent flat form
+(cond
+  (< n 0) "negative"
+  (= n 0) "zero"
+  (> n 0) "positive")
 ```
 
 ### `when`
@@ -302,6 +317,30 @@ Declares an enum value set. Compiles to `(def NAME-values #{:value1 :value2 ...}
 ```racket
 (defenum OrderStatus :placed :confirmed :paid :shipped :delivered :cancelled)
 ;; → (def OrderStatus-values #{:placed :confirmed :paid :shipped :delivered :cancelled})
+```
+
+### `defscalar`
+
+```racket
+(defscalar NAME BASE-TYPE)
+(defscalar NAME BASE-TYPE :where (PRED1) (PRED2) ...)
+```
+
+Nominal scalar (newtype). Creates a distinct type wrapping a base type.
+Constructor `->Name`, accessor `name-value`.
+
+```racket
+(defscalar Amount Long)
+;; (->Amount 500)       — wrap Long into Amount
+;; (amount-value a)     — unwrap Amount back to Long
+
+(defscalar Pct Long :where (>= 0) (<= 100))
+;; compile-time literal checking + runtime :pre conditions
+```
+
+Amount ≠ Long at compile time. Unwrap before arithmetic, rewrap after:
+```racket
+(->Amount (+ (amount-value a) (amount-value b)))
 ```
 
 ### `defprotocol`

@@ -102,6 +102,14 @@ This shadows the real imported type and can cause false type errors.
 Only annotate when you need to narrow: `(let [(x : Product) (find-item id)] ...)`
 when `find-item` returns `(U Product Service)`.
 
+## Use the daemon, not manual checks
+
+Start every session with `beagle-daemon start --watch .` — the daemon
+re-checks every file within ~100ms of each save. With the PostToolUse
+hook, you see enriched errors (including record field context)
+automatically after each edit. No need to manually run `beagle-check-all`
+or `beagle-fields` during the edit loop.
+
 ## Use beagle-sig before guessing signatures
 
 When unsure about a function's types, query don't guess:
@@ -112,17 +120,21 @@ beagle-sig order-total .
 ```
 
 This is faster and more reliable than reading the source file, especially
-for cross-module calls.
+for cross-module calls. (With the daemon watching, record fields are
+already in the error output — but `beagle-sig` is still useful for
+function signatures not involved in an error.)
 
-## cond uses `[test body]` pairs, not bare expressions
+## cond accepts both bracketed and flat styles
 
 ```racket
-;; WRONG — Clojure-style flat cond
-(cond (> x 0) "pos" (< x 0) "neg" :else "zero")
-
-;; RIGHT — Beagle cond uses bracketed pairs
+;; Bracketed (Beagle-native)
 (cond [(> x 0) "pos"] [(< x 0) "neg"] [true "zero"])
+
+;; Flat (Clojure-style) — also valid
+(cond (> x 0) "pos" (< x 0) "neg" :else "zero")
 ```
+
+Both are fully type-checked. Flat cond requires an even number of forms.
 
 ## for returns a Vec, doseq returns nil
 

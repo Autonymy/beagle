@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# beagle-verify-enriched: run behavioral verification with automatic diagnosis.
+#
+# Usage:
+#   beagle-verify-enriched <build-dir> <verify-script>
+#
+# Runs the verify script, parses failures, and automatically enriches with:
+#   - beagle-trace for each failing function (if ≤5 failures)
+#   - beagle-cascade --from-failures (if >5 failures)
+#   - Summary with root cause analysis
+#
+# Designed for agent consumption: outputs a single enriched report.
+set -euo pipefail
+
+BEAGLE_BIN="$(cd "$(dirname "$0")" && pwd)"
+
+if [[ $# -lt 2 ]]; then
+    echo "usage: beagle-verify-enriched <build-dir> <verify-script>" >&2
+    exit 2
+fi
+
+BUILD_DIR="$1"
+VERIFY="$2"
+
+# Run the verification
+VERIFY_OUTPUT=$(clojure -Sdeps "{:paths [\"$BUILD_DIR\"]}" -M -e "(load-file \"$VERIFY\")" 2>&1) || true
+
+TOTAL=$(echo "$VERIFY_OUTPUT" | grep -c "^PASS\|^FAIL" || true)
+PASS=$(echo "$VERIFY_OUTPUT" | grep -c "^PASS" || true)
+FAIL=$(echo "$VERIFY_OUTPUT" | grep -c "^FAIL" || true)
+
+echo "=== Verification: $PASS/$TOTAL passed, $FAIL failed ==="
+echo ""
+
+if [[ "$FAIL" -eq 0 ]]; then
+    echo "All assertions pass."
+    exit 0
+fi
+
+# Extract failing function names and details
+FAILURES=$(echo "$VERIFY_OUTPUT" | grep "^FAIL")
+echo "$FAILURES"
+echo ""
+
+# Extract unique function identifiers from failures
+FN_NAMES=$(echo "$FAILURES" | sed 's/^FAIL: \([^ ]*\).*/\1/' | sort -u)
+FN_COUNT=$(echo "$FN_NAMES" | wc -l)
+
+if [[ "$FAIL" -gt 5 ]]; then
+    echo "=== Root cause analysis ($FAIL failures — checking for cascades) ==="
+    "$BEAGLE_BIN/beagle-cascade" . "$VERIFY" --from-failures 2>/dev/null || echo "(cascade analysis unavailable)"
+    echo ""
+fi
+
+if [[ "$FAIL" -le 10 ]]; then
+    echo "=== Tracing failing functions ==="
+    for fn in $FN_NAMES; do
+        # Extract just the function name (after module/ prefix)
+        CLEAN_FN=$(echo "$fn" | sed 's|.*/||')
+        echo "--- $fn ---"
+        "$BEAGLE_BIN/beagle-trace" "$BUILD_DIR" "$VERIFY" --focus "$CLEAN_FN" 2>/dev/null | head -20 || echo "(trace unavailable for $fn)"
+        echo ""
+    done
+fi
+
+# Common patterns summary
+echo "=== Common fix patterns ==="
+SIGN_ERRORS=$(echo "$VERIFY_OUTPUT" | grep "^FAIL" | python3 -c "
+import sys
+sign = 0
+for line in sys.stdin:
+    parts = line.strip().split()
+    for i, p in enumerate(parts):
+        if p == 'expected:':
+            try:
+                exp = int(parts[i+1])
+                act_idx = parts.index('actual:') + 1
+                act = int(parts[act_idx])
+                if exp == -act:
+                    sign += 1
+            except (ValueError, IndexError):
+                pass
+print(f'{sign} possible sign errors (expected X, got -X)')
+" 2>/dev/null || true)
+echo "  $SIGN_ERRORS"
+echo "  Check: wrong operator (+ vs -), swapped operands (a-b vs b-a), wrong comparison (> vs <)"
