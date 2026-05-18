@@ -73,6 +73,28 @@ raco pkg install --link --auto /path/to/beagle
 raco test tests/   # 466 tests
 ```
 
+## Agent integration
+
+**Claude Code** (one command):
+
+```
+beagle init --claude-code
+beagle-daemon start --watch .
+```
+
+Generates PostToolUse hook (instant type feedback on every `.rkt` edit),
+settings, CLAUDE.md, and language context. The daemon re-checks within
+~100ms of each save.
+
+**MCP** (any agent framework):
+
+```
+beagle mcp
+```
+
+9 tools over stdio: `sig`, `fields`, `callers`, `provides`, `impact`,
+`check`, `check_enriched`, `build`, `expand`. Daemon-first, CLI fallback.
+
 ## Documentation
 
 **Scribble docs** (language reference, all forms, types, tools):
