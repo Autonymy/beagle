@@ -294,7 +294,7 @@ activations across 7 runs. See devlog 016 and experiments/report.md.
 - Custom reader preserving `[]`/`()`, intercepting `{}`/`#{}`
 - Stdlib extern catalog (~666 functions), bin/gen-stdlib-types auto-generator
 - bin/beagle-build, bin/beagle-build-all, bin/beagle-expand
-- 399-test suite
+- 400-test suite
 - experiments/ benchmark framework (40 tasks × 3 variants, gen-prompts + score + verify-behavior)
 - Head-to-head benchmark (8 programs, beagle vs raw Clojure, 16/16 pass)
 - Refactoring experiment (overhead-pct cascade, 2/2 pass)

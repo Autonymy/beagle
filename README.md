@@ -172,7 +172,7 @@ Requires [Racket](https://racket-lang.org/) and
 
 ```
 raco pkg install --link --auto /path/to/beagle
-raco test tests/   # 399 tests
+raco test tests/   # 400 tests
 ```
 
 ## Prompts

@@ -646,18 +646,19 @@
   (check-eq? (extend-type-form-type-name f) 'String)
   (check-equal? (length (extend-type-form-impls f)) 1))
 
-;; --- threading macros pass through as call-forms ----------------------------
+;; --- threading macros expand at parse time -----------------------------------
 
-(test-case "-> passes through as call-form"
+(test-case "-> expands to nested calls (first position)"
   (define f (car (parse-one '(-> x (f a) g))))
   (check-true (call-form? f))
-  (check-eq? (call-form-fn f) '->)
-  (check-equal? (length (call-form-args f)) 3))
+  (check-eq? (call-form-fn f) 'g)
+  (check-equal? (length (call-form-args f)) 1))
 
-(test-case "->> passes through as call-form"
+(test-case "->> expands to nested calls (last position)"
   (define f (car (parse-one '(->> coll (map inc) (filter even?)))))
   (check-true (call-form? f))
-  (check-eq? (call-form-fn f) '->>))
+  (check-eq? (call-form-fn f) 'filter)
+  (check-equal? (length (call-form-args f)) 2))
 
 ;; --- with form ---------------------------------------------------------------
 

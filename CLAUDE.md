@@ -22,7 +22,7 @@ it as canonical when explaining the language.
   `defenum`, `defunion`, `defprotocol`, `defmulti`/`defmethod`, `deftype`, `extend-type`,
   constructor calls (`ClassName.`), keyword-as-function (`(:key map)`), call,
   vector literal, map literal (`{}`), set literal (`#{}`), quote, threading
-  (`->`, `->>`)
+  (`->`, `->>`, `cond->`, `cond->>`, `some->`, `some->>`)
 - Meta: `ns`, `define-mode`, `require`, `declare-extern`, `define-macro`,
   `import`, `unsafe` (top-level AND in expression position)
 - Param syntax: **wrapped only** — `(name : Type)`. Plus `{:keys [a b c]}`
@@ -72,7 +72,7 @@ it as canonical when explaining the language.
 - Typed REPL: persistent type env, `:type EXPR`, `:sig NAME`, `:env`, compile + emit
 - Differential testing: `beagle-proptest --diff` compares function outputs between
   golden and modified builds, flags behavioral regressions (6143 calls on E8)
-- 399 tests passing
+- 400 tests passing
 - 15 experiments across 3 language tracks (Beagle, Clojure, Python):
   best Beagle config 287s avg with reactive daemon (E13), variance
   collapsed to 59s range; per-bug faster than Python+mypy (8.2s vs 8.5s);

@@ -612,6 +612,50 @@
     (error 'beagle "defscalar :where predicate must be (op literal), got: ~v" d))
   (scalar-predicate (car d) (cadr d)))
 
+;; threading macro expansion (parse-time rewrite → fully type-checked)
+(define (thread-step-insert val step position)
+  (if (pair? step)
+      (if (eq? position 'first)
+          (cons (car step) (cons val (cdr step)))
+          (append step (list val)))
+      (list step val)))
+
+(define (expand-thread-first init steps)
+  (foldl (lambda (step acc) (thread-step-insert acc step 'first))
+         init steps))
+
+(define (expand-thread-last init steps)
+  (foldl (lambda (step acc) (thread-step-insert acc step 'last))
+         init steps))
+
+(define (expand-cond-thread kind init clauses)
+  (define pairs
+    (let loop ([cs clauses])
+      (if (or (null? cs) (null? (cdr cs))) '()
+          (cons (list (car cs) (cadr cs)) (loop (cddr cs))))))
+  (define sym (gensym 'ct))
+  (define body
+    (foldl (lambda (pair acc)
+             (define test (car pair))
+             (define step (cadr pair))
+             (define pos (if (eq? kind 'cond->) 'first 'last))
+             `(let [,sym (if ,test ,(thread-step-insert sym step pos) ,sym)]
+                ,acc))
+           sym (reverse pairs)))
+  `(let [,sym ,init] ,body))
+
+(define (expand-some-thread kind init steps)
+  (define pos (if (eq? kind 'some->) 'first 'last))
+  (define sym (gensym 'st))
+  (define body
+    (foldl (lambda (step acc)
+             `(let [,sym ,acc]
+                (if (some? ,sym)
+                    ,(thread-step-insert sym step pos)
+                    nil)))
+           init steps))
+  body)
+
 (define (parse-list-form d subs)
   (match d
     [(list 'unsafe-expr inner)
@@ -752,6 +796,19 @@
 
     [(list (? static-method-sym? cm) args ...)
      (static-call cm (map parse-expr (or (stx-tail subs 1) args)))]
+
+    [(list '-> init steps ...)
+     (parse-expr (expand-thread-first init steps))]
+    [(list '->> init steps ...)
+     (parse-expr (expand-thread-last init steps))]
+    [(list 'cond-> init clauses ...)
+     (parse-expr (expand-cond-thread 'cond-> init clauses))]
+    [(list 'cond->> init clauses ...)
+     (parse-expr (expand-cond-thread 'cond->> init clauses))]
+    [(list 'some-> init steps ...)
+     (parse-expr (expand-some-thread 'some-> init steps))]
+    [(list 'some->> init steps ...)
+     (parse-expr (expand-some-thread 'some->> init steps))]
 
     [(list (? symbol? f) args ...)
      (call-form f (map parse-expr (or (stx-tail subs 1) args)))]

@@ -273,10 +273,15 @@
     [(defenum-form _ _) (void)]
     [_ (void)]))
 
+(define (gensym-name? n)
+  (and (symbol? n) (regexp-match? #rx"[0-9]+$" (symbol->string n))
+       (regexp-match? #rx"^(ct|st)" (symbol->string n))))
+
 (define (warn-shadow kind name ctx)
-  (if ctx
-    (warn "~a ~a shadows outer binding (in ~a)" kind name ctx)
-    (warn "~a ~a shadows outer binding" kind name)))
+  (unless (gensym-name? name)
+    (if ctx
+      (warn "~a ~a shadows outer binding (in ~a)" kind name ctx)
+      (warn "~a ~a shadows outer binding" kind name))))
 
 (define (scope-copy h)
   (define out (make-hasheq))

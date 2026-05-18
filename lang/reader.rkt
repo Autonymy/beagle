@@ -96,11 +96,18 @@ beagle/main
     [else
      (error 'beagle "unexpected dispatch sequence: #~a" next)]))
 
+;; `@expr` → `(deref expr)` (Clojure deref sugar)
+(define (at-reader ch port src line col pos)
+  (define expr (read-syntax src port))
+  (define result (list 'deref expr))
+  (datum->syntax #f result (vector src line col pos #f)))
+
 (define beagle-readtable
   (make-readtable #f
     #\{ 'terminating-macro curly-reader
     #\} 'terminating-macro (lambda (ch port src line col pos)
                              (error 'beagle "unexpected `}`"))
+    #\@ 'non-terminating-macro at-reader
     #\# 'non-terminating-macro hash-dispatch))
 
 (define (beagle-read in)

@@ -427,15 +427,15 @@
   (check-true (matches? #rx"Showable" out))
   (check-true (matches? #rx"\\(show \\[self\\]" out)))
 
-;; --- threading macros pass through -------------------------------------------
+;; --- threading macros expand at parse time ------------------------------------
 
-(test-case "-> emits as Clojure threading"
+(test-case "-> emits expanded form"
   (define out (compile '(def x (-> m :name))))
-  (check-true (matches? #rx"\\(-> m :name\\)" out)))
+  (check-true (matches? #rx"\\(:name m\\)" out)))
 
-(test-case "->> emits correctly"
+(test-case "->> emits expanded form"
   (define out (compile '(def x (->> coll (map inc) (filter even?)))))
-  (check-true (matches? #rx"\\(->> coll \\(map inc\\) \\(filter even\\?\\)\\)" out)))
+  (check-true (matches? #rx"\\(filter even\\? \\(map inc coll\\)\\)" out)))
 
 ;; --- expression-level source mapping ----------------------------------------
 
