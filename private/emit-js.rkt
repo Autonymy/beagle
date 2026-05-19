@@ -19,10 +19,12 @@
   (string-replace
    (string-replace
     (string-replace
-     (string-replace s "_" "__")
-     "-" "_")
-    "?" "_p")
-   "!" "_bang"))
+     (string-replace
+      (string-replace s "_" "__")
+      "-" "_")
+     "?" "_p")
+    "!" "_bang")
+   "=" "_eq"))
 
 ;; --- infix operators -------------------------------------------------------
 
