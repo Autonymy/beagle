@@ -22,9 +22,7 @@
   (define out
     (string-replace
      (string-replace
-      (string-replace
-       (string-replace s "->" "mk")
-       "-" "_")
+      (string-replace s "->" "mk")
       "?" "_p")
      "!" "_bang"))
   (if (nix-reserved? out) (string-append out "'") out))
@@ -305,7 +303,7 @@
     [(kw-access? e)
      (define target (emit-expr (kw-access-target e) depth))
      (define kw (symbol->string (kw-access-kw e)))
-     (define field (string-replace (if (string-prefix? kw ":") (substring kw 1) kw) "-" "_"))
+     (define field (if (string-prefix? kw ":") (substring kw 1) kw))
      (format "~a.~a" target field)]
 
     [(quoted? e)
@@ -390,9 +388,17 @@
                           " "))]
 
     [(nix-with? e)
-     (format "with ~a; ~a"
-             (emit-expr (nix-with-ns-expr e) depth)
-             (emit-expr (nix-with-body e) depth))]
+     (define ns-str (emit-expr (nix-with-ns-expr e) depth))
+     (define body-expr (nix-with-body e))
+     (define body-str (emit-expr body-expr depth))
+     (define ns-prefix (string-append ns-str "."))
+     (if (and (vec-form? body-expr)
+              (andmap (lambda (item)
+                        (and (symbol? item)
+                             (string-prefix? (symbol->string item) ns-prefix)))
+                      (vec-form-items body-expr)))
+       body-str
+       (format "with ~a; ~a" ns-str body-str))]
 
     [(nix-rec-attrs? e)
      (emit-nix-rec-attrs (nix-rec-attrs-pairs e) depth)]
@@ -421,6 +427,12 @@
 
     [(nix-multiline-string? e)
      (emit-nix-multiline-string (nix-multiline-string-lines e) depth)]
+
+    [(nix-indented-string? e)
+     (emit-nix-indented-string (nix-indented-string-text e) depth)]
+
+    [(block-string? e)
+     (emit-nix-indented-string (block-string-text e) depth)]
 
     [(nix-path? e)
      (nix-path-path-string e)]
@@ -627,6 +639,11 @@
                                      (map (lambda (a) (paren-wrap (emit-expr a depth) a)) args)
                                      " "))))]
 
+    [(and fn-name (eq? fn-name 'nix-ident))
+     (if (and (pair? args) (string? (car args)))
+       (car args)
+       (emit-expr (car args) depth))]
+
     ;; Generic function call
     [else
      (define fn-str (emit-expr fn-expr depth))
@@ -640,13 +657,18 @@
   (case sym
     [(+) "+"] [(-) "-"] [(*) "*"] [(/) "/"]
     [(<) "<"] [(>) ">"] [(<=) "<="] [(>=) ">="]
-    [(=) "=="] [(not=) "!="]
+    [(=) "=="] [(==) "=="] [(not=) "!="] [(!=) "!="]
     [(and) "&&"] [(or) "||"]
     [(mod) "/* mod */"]
     [else #f]))
 
 (define (paren-wrap text expr)
   (cond
+    [(and (call-form? expr)
+          (symbol? (call-form-fn expr))
+          (let ([fn (call-form-fn expr)])
+            (or (nix-infix-op fn) (eq? fn 'nix-ident))))
+     text]
     [(or (call-form? expr) (fn-form? expr) (let-form? expr)
          (if-form? expr) (when-form? expr) (cond-form? expr)
          (match-form? expr) (for-form? expr))
@@ -658,7 +680,8 @@
 (define (emit-nix-list items depth)
   (cond
     [(null? items) "[ ]"]
-    [(<= (length items) 6)
+    [(and (<= (length items) 6)
+          (not (ormap map-form? items)))
      (format "[ ~a ]"
              (string-join
               (map (lambda (i) (paren-wrap (emit-expr i depth) i)) items)
@@ -675,6 +698,46 @@
 
 ;; --- nix attrs (map literal) -----------------------------------------------
 
+(define (emit-key key depth)
+  (cond
+    [(symbol? key)
+     (define s (symbol->string key))
+     (if (string-prefix? s ":")
+       (substring s 1)
+       (format "${~a}" (mangle-name key)))]
+    [(string? key) (format "\"~a\"" key)]
+    [(quoted? key)
+     (define d (quoted-datum key))
+     (if (symbol? d)
+       (let ([s (symbol->string d)])
+         (if (string-prefix? s ":")
+           (substring s 1)
+           s))
+       (emit-expr key (+ depth 1)))]
+    [(nix-interpolated-string? key)
+     (emit-expr key (+ depth 1))]
+    [else (format "${~a}" (emit-expr key (+ depth 1)))]))
+
+(define (interp-key? key)
+  (and (symbol? key)
+       (not (string-prefix? (symbol->string key) ":"))))
+
+(define (flatten-through-interp prefix pairs depth)
+  (define ind (indent (+ depth 1)))
+  (apply append
+    (for/list ([pair (in-list pairs)])
+      (define key (car pair))
+      (define val (cdr pair))
+      (define key-str (emit-key key depth))
+      (define full-key (string-append prefix "." key-str))
+      (cond
+        [(interp-key? key)
+         (list (format "~a~a = ~a;" ind full-key (emit-expr val (+ depth 1))))]
+        [(map-form? val)
+         (flatten-through-interp full-key (map-form-pairs val) depth)]
+        [else
+         (list (format "~a~a = ~a;" ind full-key (emit-expr val (+ depth 1))))]))))
+
 (define (emit-nix-attrs pairs depth)
   (cond
     [(null? pairs) "{ }"]
@@ -684,29 +747,16 @@
        (for/list ([pair (in-list pairs)])
          (define key (car pair))
          (define val (cdr pair))
-         (define key-str
-           (cond
-             [(symbol? key)
-              (define s (symbol->string key))
-              (if (string-prefix? s ":")
-                (substring s 1)
-                (format "${~a}" (mangle-name key)))]
-             [(string? key) (format "\"~a\"" key)]
-             [(quoted? key)
-              (define d (quoted-datum key))
-              (if (symbol? d)
-                (let ([s (symbol->string d)])
-                  (if (string-prefix? s ":")
-                    (substring s 1)
-                    s))
-                (emit-expr key (+ depth 1)))]
-             [(nix-interpolated-string? key)
-              (emit-expr key (+ depth 1))]
-             [else (format "${~a}" (emit-expr key (+ depth 1)))]))
-         (format "~a~a = ~a;" ind key-str (emit-expr val (+ depth 1)))))
+         (define key-str (emit-key key depth))
+         (if (and (map-form? val)
+                  (string-contains? key-str ".")
+                  (= (length (map-form-pairs val)) 1)
+                  (interp-key? (car (car (map-form-pairs val)))))
+           (flatten-through-interp key-str (map-form-pairs val) depth)
+           (list (format "~a~a = ~a;" ind key-str (emit-expr val (+ depth 1)))))))
      (string-append
       "{\n"
-      (string-join entries "\n")
+      (string-join (apply append entries) "\n")
       "\n" (indent depth) "}")]))
 
 ;; --- cond → nested if/then/else -------------------------------------------
@@ -781,7 +831,7 @@
   (define update-entries
     (for/list ([u (in-list updates)])
       (define kw (symbol->string (with-update-field-kw u)))
-      (define field (string-replace (if (string-prefix? kw ":") (substring kw 1) kw) "-" "_"))
+      (define field (if (string-prefix? kw ":") (substring kw 1) kw))
       (format "~a = ~a;" field (emit-expr (with-update-value u) depth))))
   (format "(~a // { ~a })" target (string-join update-entries " ")))
 
@@ -887,6 +937,23 @@
    (string-join line-strs "\n")
    "\n" (indent depth) "''"))
 
+(define (emit-nix-indented-string text depth)
+  (define ind (indent (+ depth 1)))
+  (define lines (regexp-split #rx"\n" text))
+  (string-append
+   "''\n"
+   (string-join
+    (map (lambda (l) (if (string=? l "") "" (string-append ind l)))
+         lines)
+    "\n")
+   "\n" (indent depth) "''"))
+
+(define options-root-rx #rx"options\\.myConfig\\.modules\\.([a-zA-Z0-9_-]+)")
+
+(define (extract-cfg-root body-str)
+  (define m (regexp-match options-root-rx body-str))
+  (and m (string-append "config.myConfig.modules." (cadr m))))
+
 (define (emit-nix-fn-set e depth)
   (define formals (nix-fn-set-formals e))
   (define rest? (nix-fn-set-rest? e))
@@ -908,7 +975,26 @@
     (if at-name
       (format "{ ~a } @ ~a" set-str (mangle-name at-name))
       (format "{ ~a }" set-str)))
-  (format "~a: ~a" pattern (emit-expr body depth)))
+  (define body-str (emit-expr body depth))
+  (define cfg-root (and rest? (extract-cfg-root body-str)))
+  (cond
+    [(and cfg-root (map-form? body))
+     (define rewritten (string-replace body-str (string-append cfg-root ".") "cfg."))
+     (format "~a:\n\nlet\n  cfg = ~a;\nin\n~a" pattern cfg-root rewritten)]
+    [(and cfg-root (let-form? body)
+          (regexp-match #rx"^let\n" body-str))
+     (define rewritten (string-replace body-str (string-append cfg-root ".") "cfg."))
+     (define injected (regexp-replace #rx"^let\n" rewritten
+                                      (format "let\n  cfg = ~a;\n" cfg-root)))
+     (format "~a:\n\n~a" pattern injected)]
+    [else
+     (cond
+       [(and rest? (= depth 0))
+        (format "~a:\n\n~a" pattern body-str)]
+       [rest?
+        (format "~a: ~a" pattern body-str)]
+       [else
+        (format "~a: ~a" pattern body-str)])]))
 
 ;; --- registration ----------------------------------------------------------
 

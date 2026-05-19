@@ -203,6 +203,9 @@
 (struct letfn-form   (fns body)                              #:transparent)
 (struct letfn-fn     (name params rest-param return-type body) #:transparent)
 
+;; --- Generic block string (available in all langs via #<<TAG heredoc) -----
+(struct block-string (text tag) #:transparent)
+
 ;; --- Nix-specific AST nodes (valid only under #lang beagle/nix) -----------
 (struct nix-inherit        (names)                            #:transparent)
 (struct nix-inherit-from   (ns-expr names)                    #:transparent)
@@ -214,6 +217,7 @@
 (struct nix-search-path    (name)                             #:transparent)
 (struct nix-interpolated-string (parts)                       #:transparent)
 (struct nix-multiline-string (lines)                          #:transparent)
+(struct nix-indented-string (text)                            #:transparent)
 (struct nix-path           (path-string)                      #:transparent)
 (struct nix-fn-set         (formals rest? at-name body)       #:transparent)
 (struct nix-fn-set-formal  (name default)                     #:transparent)
@@ -963,6 +967,13 @@
              (define d (->datum line))
              (if (string? d) d (parse-expr line)))
            (or (stx-tail subs 1) lines)))]
+
+    [(list '#%block-string tag text)
+     (block-string (->datum (or (stx-ref subs 2) text))
+                   (->datum (or (stx-ref subs 1) tag)))]
+
+    [(list '#%nix-string text)
+     (nix-indented-string (->datum (or (stx-ref subs 1) text)))]
 
     [(list 'p path-str)
      (define d (->datum (or (stx-ref subs 1) path-str)))
@@ -1972,6 +1983,7 @@
  (struct-out set!-form)
  (struct-out letfn-form)
  (struct-out letfn-fn)
+ (struct-out block-string)
  (struct-out nix-inherit)
  (struct-out nix-inherit-from)
  (struct-out nix-with)
@@ -1982,6 +1994,7 @@
  (struct-out nix-search-path)
  (struct-out nix-interpolated-string)
  (struct-out nix-multiline-string)
+ (struct-out nix-indented-string)
  (struct-out nix-path)
  (struct-out nix-fn-set)
  (struct-out nix-fn-set-formal)

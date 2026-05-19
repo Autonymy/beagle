@@ -3,7 +3,10 @@
 ;; Shared reader logic for all #lang beagle/* variants.
 ;; Provides the readtable that preserves [...], {...}, #{...}, #"...", @, ^{}.
 
-(require beagle/private/types)
+(require beagle/private/types
+         racket/port
+         racket/string
+         racket/list)
 
 (define (read-regex-pattern port)
   (let loop ([acc '()])
@@ -54,9 +57,65 @@
     (datum->syntax #f result (vector src line col pos #f))
     result))
 
+(define (read-heredoc-tag port)
+  (let loop ([acc '()])
+    (define c (read-char port))
+    (cond
+      [(eof-object? c) (error 'beagle "unterminated #<< tag")]
+      [(char=? c #\newline) (list->string (reverse acc))]
+      [(char-whitespace? c) (loop acc)]
+      [else (loop (cons c acc))])))
+
+(define (read-heredoc-body port tag)
+  (let loop ([lines '()] [current '()])
+    (define c (read-char port))
+    (cond
+      [(eof-object? c) (error 'beagle "unterminated #<<~a heredoc" tag)]
+      [(char=? c #\newline)
+       (define line (list->string (reverse current)))
+       (define stripped (string-trim line))
+       (if (string=? stripped tag)
+         (values (reverse lines) line)
+         (loop (cons line lines) '()))]
+      [else (loop lines (cons c current))])))
+
+(define (heredoc-dedent lines closing-line)
+  (define baseline
+    (string-length
+      (car (regexp-match #rx"^([ \t]*)" closing-line))))
+  (define stripped
+    (map (lambda (l)
+           (if (regexp-match? #rx"^[ \t]*$" l) ""
+             (if (>= (string-length l) baseline)
+               (substring l baseline) l)))
+         lines))
+  (define trimmed
+    (let* ([s stripped]
+           [s (if (and (pair? s) (string=? (car s) "")) (cdr s) s)]
+           [s (if (and (pair? s) (string=? (last s) "")) (drop-right s 1) s)])
+      s))
+  (string-join trimmed "\n"))
+
 (define (hash-dispatch ch port src line col pos)
   (define next (peek-char port))
   (cond
+    [(and (char? next) (char=? next #\<))
+     (read-char port)
+     (define next2 (peek-char port))
+     (cond
+       [(and (char? next2) (char=? next2 #\<))
+        (read-char port)
+        (define tag (read-heredoc-tag port))
+        (define-values (lines closing-line) (read-heredoc-body port tag))
+        (define text (heredoc-dedent lines closing-line))
+        (define result (list '#%block-string tag text))
+        (if src
+          (datum->syntax #f result (vector src line col pos #f))
+          result)]
+       [else
+        (define combined (input-port-append #f (open-input-string "#<") port))
+        (parameterize ([current-readtable (make-readtable #f)])
+          (if src (read-syntax src combined) (read combined)))])]
     [(and (char? next) (char=? next #\{))
      (read-char port)
      (define items (read-until-close-brace port))
@@ -73,7 +132,11 @@
                                         (+ 3 (string-length pattern))))
        result)]
     [else
-     (error 'beagle "unexpected dispatch sequence: #~a" next)]))
+     (define combined (input-port-append #f (open-input-string "#") port))
+     (parameterize ([current-readtable (make-readtable #f)])
+       (if src
+         (read-syntax src combined)
+         (read combined)))]))
 
 (define (at-reader ch port src line col pos)
   (define expr (read-syntax src port))
@@ -117,4 +180,4 @@
                  [current-readtable beagle-readtable])
     (read-syntax src in)))
 
-(provide beagle-read beagle-read-syntax)
+(provide beagle-read beagle-read-syntax beagle-readtable)

@@ -578,6 +578,7 @@
 
 (define (emit-expr-core e)
   (cond
+    [(block-string? e)  (emit-js-block-string (block-string-text e))]
     [(string? e)        (~v e)]
     [(boolean? e)       (if e "true" "false")]
     [(exact-integer? e) (number->string e)]
@@ -722,11 +723,17 @@
                              (expr-has-await? (let-binding-value b)))
                            (contains-await? body)))
      (define let-names (apply append (map (lambda (b) (names-from-binding-target (let-binding-name b))) bindings)))
-     (define bind-strs
-       (for/list ([b (in-list bindings)])
-         (format "const ~a = ~a;"
-                 (emit-binding-target (let-binding-name b))
-                 (emit-expr (let-binding-value b)))))
+     (define-values (bind-strs _ignored)
+       (for/fold ([strs '()]
+                  [bound (current-js-bound)])
+                 ([b (in-list bindings)])
+         (define s (parameterize ([current-js-bound bound])
+                     (format "const ~a = ~a;"
+                             (emit-binding-target (let-binding-name b))
+                             (emit-expr (let-binding-value b)))))
+         (define new-names (names-from-binding-target (let-binding-name b)))
+         (values (append strs (list s))
+                 (set-union bound (list->set new-names)))))
      (with-bindings let-names
        (lambda ()
          (iife (format "~a ~a" (string-join bind-strs " ") (emit-body-return body ""))
@@ -1317,6 +1324,11 @@
 
 (define (last lst)
   (if (null? (cdr lst)) (car lst) (last (cdr lst))))
+
+;; --- block string -----------------------------------------------------------
+
+(define (emit-js-block-string text)
+  (~v text))
 
 ;; --- registration ----------------------------------------------------------
 
