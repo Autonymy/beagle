@@ -5,10 +5,10 @@
          racket/string
          racket/match
          racket/port
-         "../private/parse.rkt"
-         "../private/check.rkt"
-         "../private/emit.rkt"
-         "../private/types.rkt")
+         beagle/private/parse
+         beagle/private/check
+         beagle/private/emit
+         beagle/private/types)
 
 (define (br . xs) (cons BRACKET-TAG xs))
 (define (mt . xs) (cons MAP-TAG xs))

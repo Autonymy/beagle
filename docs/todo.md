@@ -47,7 +47,7 @@ Package beagle as a proper Racket package so it can be installed via `raco pkg i
 from the catalog (not just `--link`).
 
 - [x] Add `info.rkt` with proper deps, collection, pkg metadata, tags, test-paths
-- [ ] Composable lib/test/doc package split — see [`docs/plan-racket-package-reorg.md`](plan-racket-package-reorg.md)
+- [x] Composable lib/test/doc package split — see [`docs/plan-racket-package-reorg.md`](plan-racket-package-reorg.md)
 - [x] Register on [Racket package catalog](https://github.com/racket/racket/wiki/Creating-Packages)
 
 ### Nix target: full Nisp parity

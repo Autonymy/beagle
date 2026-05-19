@@ -3,9 +3,9 @@
 (require rackunit
          racket/string
          racket/port
-         "../private/parse.rkt"
-         "../private/emit.rkt"
-         "../private/types.rkt")
+         beagle/private/parse
+         beagle/private/emit
+         beagle/private/types)
 
 (define (mt . xs) (cons MAP-TAG xs))
 (define (br . xs) (cons '#%brackets xs))

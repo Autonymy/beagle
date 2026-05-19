@@ -7,11 +7,11 @@
          racket/port
          racket/format
          racket/file
-         racket/runtime-path
-         "../private/parse.rkt"
-         "../private/check.rkt"
-         "../private/emit.rkt"
-         "../private/types.rkt")
+         setup/collects
+         beagle/private/parse
+         beagle/private/check
+         beagle/private/emit
+         beagle/private/types)
 
 (define (br . xs) (cons BRACKET-TAG xs))
 (define (mt . xs) (cons MAP-TAG xs))
@@ -37,7 +37,8 @@
 
 ;; Compile beagle forms to JS, append assertion code, run with bun.
 ;; assertions-js is raw JS appended after the emitted program.
-(define-runtime-path BEAGLE-CORE-JS-PATH "../lib/beagle/core.js")
+(define BEAGLE-CORE-JS-PATH
+  (collection-file-path "lib/beagle/core.js" "beagle"))
 (define BEAGLE-CORE-JS (path->string BEAGLE-CORE-JS-PATH))
 
 (define (run-js-test beagle-forms assertions-js)

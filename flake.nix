@@ -13,7 +13,7 @@
 
         beagle = pkgs.stdenv.mkDerivation {
           pname = "beagle";
-          version = "0.5.0-dev";
+          version = "0.9.0";
           src = ./.;
 
           nativeBuildInputs = [ pkgs.makeWrapper ];
@@ -24,17 +24,17 @@
           installPhase = ''
             mkdir -p $out/lib/beagle $out/bin
 
-            # Copy the racket package (lang, private, main, info)
-            cp -r lang private main.rkt info.rkt $out/lib/beagle/
+            # Copy the racket package (core + target dialects)
+            cp -r beagle-lib/lang beagle-lib/private beagle-lib/main.rkt beagle-lib/info.rkt $out/lib/beagle/
+            for d in clj cljs js nix sql py; do
+              if [ -d "beagle-lib/$d" ]; then
+                cp -r "beagle-lib/$d" $out/lib/beagle/
+              fi
+            done
 
-            # Copy runtime if it exists
-            if [ -d runtime ]; then
-              cp -r runtime $out/lib/beagle/
-            fi
-
-            # Copy lib if it exists
-            if [ -d lib ]; then
-              cp -r lib $out/lib/beagle/
+            # Copy runtime helpers
+            if [ -d beagle-lib/lib ]; then
+              cp -r beagle-lib/lib $out/lib/beagle/
             fi
 
             # Copy docs for beagle init

@@ -7,6 +7,8 @@ Currently supported targets:
 - `#lang beagle/clj` — Clojure
 - `#lang beagle/cljs` — ClojureScript
 - `#lang beagle/js` — JavaScript
+- `#lang beagle/nix` — Nix
+- `#lang beagle/sql` — SQL
 
 Same types, same checker, same repair compiler — different backends.
 
@@ -56,7 +58,7 @@ Clojure also has useful training data. LLMs can bootstrap from existing Clojure 
       0))
 ```
 
-Portable Beagle source can emit to any supported target — change `#lang beagle/js` to `#lang beagle/clj` and the same program emits Clojure. Target-specific `#lang`s expose target-specific forms (`await` for JS, Java interop for CLJ).
+Portable Beagle source can emit to any supported target — change `#lang beagle/js` to `#lang beagle/clj` and the same program emits Clojure. Target-specific `#lang`s expose target-specific forms (`await` for JS, `fn-set`/`inh`/`with-do` for Nix, Java interop for CLJ).
 
 ## Experiments
 
@@ -83,8 +85,8 @@ raco pkg install beagle
 Or from source:
 
 ```sh
-raco pkg install --link --auto /path/to/beagle
-raco test tests/   # 600+ tests
+raco pkg install --link beagle-lib/ beagle-test/ beagle-doc/ beagle/
+raco test beagle-test/tests/   # 773 tests
 ```
 
 ## Agent integration
@@ -98,6 +100,17 @@ beagle-daemon start --watch .
 
 Generates a PostToolUse hook, settings, `CLAUDE.md`, and language context. The daemon gives instant type feedback on every beagle source edit (`.bclj`, `.bjs`, `.bnix`, etc.) and re-checks within ~100ms of each save.
 
+## Tooling
+
+- **LSP server** — hover, diagnostics, symbols, jump-to-definition, completion
+- **Typed REPL** — persistent environment, parse → check → emit per input
+- **Reactive daemon** — AST cache, inotify file watching, ~100ms re-check
+- **Repair compiler** — blame, specfix, trace, cascade analysis
+- **Property testing** — record generators, return-type inference, differential testing
+- **Distributed tracing** — instrument, collect, view, blame across services
+
+See [`docs/tool-reference.md`](docs/tool-reference.md) for the full CLI catalog.
+
 ## Documentation
 
 Scribble docs:
@@ -109,13 +122,13 @@ raco docs beagle
 Standalone HTML:
 
 ```sh
-raco scribble --html scribblings/beagle.scrbl
+raco scribble --html beagle-doc/scribblings/beagle.scrbl
 ```
 
 Other references:
 
 - [`docs/cheatsheet.md`](docs/cheatsheet.md) — single-page language summary for agent context
 - [`docs/agent-workflow.md`](docs/agent-workflow.md) — repair tool routing decision tree
-- [`docs/prompts/`](docs/prompts/) — pre-built agent system prompts
+- [`docs/tool-reference.md`](docs/tool-reference.md) — complete CLI tool catalog
 - [`docs/devlog/`](docs/devlog/) — development journal
 - [`experiments/report.md`](experiments/report.md) — E1–E15 methodology and results

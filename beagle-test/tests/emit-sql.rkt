@@ -3,10 +3,10 @@
 (require rackunit
          racket/string
          racket/port
-         "../private/parse.rkt"
-         "../private/emit.rkt"
-         "../private/check.rkt"
-         "../private/types.rkt")
+         beagle/private/parse
+         beagle/private/emit
+         beagle/private/check
+         beagle/private/types)
 
 (define (br . xs) (cons '#%brackets xs))
 

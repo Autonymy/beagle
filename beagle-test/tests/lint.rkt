@@ -2,8 +2,8 @@
 
 (require rackunit
          racket/port
-         "../private/parse.rkt"
-         "../private/lint.rkt")
+         beagle/private/parse
+         beagle/private/lint)
 
 (define (lint-prog . forms)
   (define prog (parse-program (map (lambda (f) (datum->syntax #f f)) forms)))

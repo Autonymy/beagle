@@ -15,7 +15,7 @@ it as canonical when explaining the language.
 
 ## Status
 
-`#lang beagle` v0.8.0 — 687 tests passing.
+`#lang beagle` v0.9.0 — 773 tests passing.
 
 - **Targets:** `beagle/clj` (default), `beagle/cljs`, `beagle/js`, `beagle/nix`, `beagle/sql`, `beagle/py` (plumbed, no emitter)
 - **Forms:** ~50 forms — definitions, control flow, data structures, pattern matching, threading, interop. See `docs/cheatsheet.md` for the full catalog.
@@ -35,49 +35,49 @@ parse → check → emit-dispatch → emit-{clj,js,sql}
 (all expand-time, inside our custom #%module-begin)
 ```
 
-- `lang/reader.rkt` — custom reader preserving `[]` vs `()` via
+- `beagle-lib/lang/reader.rkt` — custom reader preserving `[]` vs `()` via
   `#%brackets` tag. Intercepts `{}` (map literals), `#{}` (set literals),
   `#"..."` (regex) via `MAP-TAG`/`SET-TAG`/`#%regex`.
-- `lang/reader-impl.rkt` — shared reader logic for all `#lang beagle/*` variants.
-- `private/types.rkt` — type AST, parser, compatibility checker.
+- `beagle-lib/lang/reader-impl.rkt` — shared reader logic for all `#lang beagle/*` variants.
+- `beagle-lib/private/types.rkt` — type AST, parser, compatibility checker.
   `MAP-TAG`/`SET-TAG` are well-known symbols (`#%map`/`#%set`), not gensyms.
-- `private/stdlib-types.rkt` — combined stdlib catalog; delegates to
+- `beagle-lib/private/stdlib-types.rkt` — combined stdlib catalog; delegates to
   `private/stdlib-portable.rkt` (256 entries), `private/stdlib-clj.rkt` (365),
   `private/stdlib-cljs.rkt` (75).
-- `private/macros.rkt` — macro registry, naive substitution, depth-capped
+- `beagle-lib/private/macros.rkt` — macro registry, naive substitution, depth-capped
   recursive expansion, safe/unsafe boundary.
-- `private/parse.rkt` — source → AST. Two passes: meta-form collection
+- `beagle-lib/private/parse.rkt` — source → AST. Two passes: meta-form collection
   (mode, ns, macros, externs, requires, imports) then expr parsing with
   macro expansion.
-- `private/check.rkt` — best-effort type checking against annotations and
+- `beagle-lib/private/check.rkt` — best-effort type checking against annotations and
   the built-in env. Record field registry for keyword-access type inference.
   Skipped in dynamic mode.
-- `private/emit-dispatch.rkt` — dispatches to `emit-clj.rkt`, `emit-js.rkt`, or
+- `beagle-lib/private/emit-dispatch.rkt` — dispatches to `emit-clj.rkt`, `emit-js.rkt`, or
   `emit-nix.rkt` based on `(program-target prog)`.
-- `private/emit-clj.rkt` — AST → Clojure/ClojureScript source string (was `emit.rkt`).
-- `private/emit-js.rkt` — AST → JavaScript source string.
-- `private/emit-nix.rkt` — AST → Nix source string (curried fns, attrsets, let/in).
-- `private/js-capabilities.rkt` — JS capability sets (JS-TRANSLATED, JS-VALUE-WRAPPERS,
+- `beagle-lib/private/emit-clj.rkt` — AST → Clojure/ClojureScript source string (was `emit.rkt`).
+- `beagle-lib/private/emit-js.rkt` — AST → JavaScript source string.
+- `beagle-lib/private/emit-nix.rkt` — AST → Nix source string (curried fns, attrsets, let/in).
+- `beagle-lib/private/js-capabilities.rkt` — JS capability sets (JS-TRANSLATED, JS-VALUE-WRAPPERS,
   JS-RUNTIME-HELPERS). Imported by both emit-js and stdlib-js — no circular deps.
-- `private/stdlib-js.rkt` — JS-specific: STDLIB-JS (38 JS-native type declarations),
+- `beagle-lib/private/stdlib-js.rkt` — JS-specific: STDLIB-JS (38 JS-native type declarations),
   JS-NO-EMIT (computed from STDLIB-PORTABLE minus JS-TRANSLATED).
-- `private/stdlib-nix.rkt` — Nix-specific: STDLIB-NIX (120 typed entries for
+- `beagle-lib/private/stdlib-nix.rkt` — Nix-specific: STDLIB-NIX (120 typed entries for
   builtins.*, lib.*, lib.types.*).
-- `lib/beagle/core.js` — JS runtime helpers (12 finite functions: range, remove,
+- `beagle-lib/lib/beagle/core.js` — JS runtime helpers (12 finite functions: range, remove,
   mapcat, etc.). Auto-imported when referenced.
-- `nix/main.rkt` — Nix target module (`#lang beagle/nix` → `define-target nix`).
-- `nix/lang/reader.rkt` — reader hook for `#lang beagle/nix`.
-- `private/expand-tool.rkt` — backend for `bin/beagle-expand`.
-- `private/query.rkt` — type-system query engine for `beagle-sig`,
+- `beagle-lib/nix/main.rkt` — Nix target module (`#lang beagle/nix` → `define-target nix`).
+- `beagle-lib/nix/lang/reader.rkt` — reader hook for `#lang beagle/nix`.
+- `beagle-lib/private/expand-tool.rkt` — backend for `bin/beagle-expand`.
+- `beagle-lib/private/query.rkt` — type-system query engine for `beagle-sig`,
   `beagle-fields`, `beagle-callers`, `beagle-provides`, `beagle-impact`.
-- `private/blame.rkt` — semantic property rules + static suspicion analysis.
-- `private/daemon.rkt` — persistent query server (TCP, AST cache with mtime invalidation, 45× query speedup).
-- `private/check-all.rkt` — batch type-checker (10x vs sequential `beagle-check`).
-- `private/build-all.rkt` — batch compiler (9x vs sequential `beagle-build`).
-- `private/lsp.rkt` — LSP server (JSON-RPC 2.0, Content-Length framing, hover/diagnostics/symbols/definition).
-- `private/repl.rkt` — typed REPL with persistent environment (parse → check → emit per input).
-- `lib/beagle/dtrace.clj` — distributed tracing runtime (Clojure/Babashka): span lifecycle, context propagation, Ring middleware, file/TCP exporters.
-- `main.rkt` — language module; `#%module-begin` runs the pipeline,
+- `beagle-lib/private/blame.rkt` — semantic property rules + static suspicion analysis.
+- `beagle-lib/private/daemon.rkt` — persistent query server (TCP, AST cache with mtime invalidation, 45× query speedup).
+- `beagle-lib/private/check-all.rkt` — batch type-checker (10x vs sequential `beagle-check`).
+- `beagle-lib/private/build-all.rkt` — batch compiler (9x vs sequential `beagle-build`).
+- `beagle-lib/private/lsp.rkt` — LSP server (JSON-RPC 2.0, Content-Length framing, hover/diagnostics/symbols/definition).
+- `beagle-lib/private/repl.rkt` — typed REPL with persistent environment (parse → check → emit per input).
+- `beagle-lib/lib/beagle/dtrace.clj` — distributed tracing runtime (Clojure/Babashka): span lifecycle, context propagation, Ring middleware, file/TCP exporters.
+- `beagle-lib/main.rkt` — language module; `#%module-begin` runs the pipeline,
   embeds resulting string, runtime `(display)`s it.
 
 ## Adding a new form (the pattern)
@@ -209,7 +209,7 @@ Host-language idioms whose cost > benefit for beagle's goals:
 ## Setup (one-time)
 
 ```
-raco pkg install --link --auto /home/tom/code/beagle
+raco pkg install --link beagle-lib/ beagle-test/ beagle-doc/ beagle/
 ```
 
 ## Doc maintenance

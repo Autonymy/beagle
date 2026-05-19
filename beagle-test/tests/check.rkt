@@ -2,9 +2,9 @@
 
 (require rackunit
          (for-syntax racket/base)
-         "../private/parse.rkt"
-         "../private/check.rkt"
-         "../private/types.rkt")
+         beagle/private/parse
+         beagle/private/check
+         beagle/private/types)
 
 ;; =============================================================================
 ;; Test helpers — flat wrappers that eliminate nesting

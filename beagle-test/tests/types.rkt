@@ -1,7 +1,7 @@
 #lang racket/base
 
 (require rackunit
-         "../private/types.rkt")
+         beagle/private/types)
 
 ;; --- parse-type ------------------------------------------------------------
 

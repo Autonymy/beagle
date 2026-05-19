@@ -2,8 +2,8 @@
 
 (require rackunit
          (for-syntax racket/base)
-         "../private/parse.rkt"
-         "../private/types.rkt")
+         beagle/private/parse
+         beagle/private/types)
 
 (define (parse-one form)
   (program-forms

@@ -2,10 +2,10 @@
 
 (require rackunit
          racket/string
-         "../private/parse.rkt"
-         "../private/emit.rkt")
+         beagle/private/parse
+         beagle/private/emit)
 
-(require "../private/types.rkt")
+(require beagle/private/types)
 
 (define (compile . forms)
   (emit-program
