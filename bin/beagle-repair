@@ -659,33 +659,10 @@ else:
             print(f"    after:  {r['after']}")
         print()
 
-    # --- Auto-apply mode ---
+    # --- Auto-apply disabled ---
     if auto_mode:
-        applicable = [r for r in merged if r['auto_applicable'] and r['confidence'] >= threshold]
-        if applicable:
-            print(f"\n{'=' * 60}")
-            print(f"AUTO-APPLY: {len(applicable)} fix(es) above threshold {threshold}")
-            print(f"{'=' * 60}\n")
-
-            for r in applicable:
-                if r.get('before') and r.get('after') and r['before'] != 'null' and r['after'] != 'null':
-                    target_file = r['file']
-                    if os.path.exists(target_file):
-                        with open(target_file) as f:
-                            content = f.read()
-                        if r['before'] in content:
-                            content = content.replace(r['before'], r['after'], 1)
-                            with open(target_file, 'w') as f:
-                                f.write(content)
-                            print(f"  APPLIED: {target_file}:{r['line']} — {r['fix_hint']}")
-                        else:
-                            print(f"  SKIP: pattern not found in {target_file}")
-                    else:
-                        print(f"  SKIP: file not found: {target_file}")
-                else:
-                    print(f"  SKIP (no before/after): {r['file']}:{r['line']} — {r['fix_hint']}")
-        else:
-            print(f"\nNo fixes above threshold {threshold} to auto-apply.")
+        print(f"\n--auto is disabled. Review the repair queue above and apply fixes manually.", file=sys.stderr)
+        print(f"Use --emit-patch to generate a unified diff.", file=sys.stderr)
 
 # Summary
 corr_count = sum(1 for r in merged

@@ -15,7 +15,7 @@ it as canonical when explaining the language.
 
 ## Status
 
-`#lang beagle` v0.9.0 — 773 tests passing.
+`#lang beagle` v0.9.1 — 773 tests passing.
 
 - **Targets:** `beagle/clj` (default), `beagle/cljs`, `beagle/js`, `beagle/nix`, `beagle/sql`, `beagle/py` (plumbed, no emitter)
 - **Forms:** ~50 forms — definitions, control flow, data structures, pattern matching, threading, interop. See `docs/cheatsheet.md` for the full catalog.
@@ -134,9 +134,9 @@ The PostToolUse hook fires on Edit/Write to any beagle file
 If it reports a syntax error, fix delimiters first — do not type-check
 or inspect deeper errors until delimiters pass.
 
-- `bin/beagle-syntax FILE` — structural check (use `--ledger` for depth trace, `--repair --write` for auto-fix)
+- `bin/beagle-syntax FILE` — structural check (use `--ledger` for depth trace, `--repair --emit-patch` for suggested fixes)
 - `bin/beagle-daemon query check-enriched FILE` — type errors with field context and fix hints
-- `bin/beagle-fix --apply .` — auto-fix (when hook suggests it)
+- `bin/beagle-fix .` — report fixable type errors (advisory only, does not modify files)
 
 ### During normal development
 

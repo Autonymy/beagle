@@ -21,7 +21,6 @@ beagle-syntax [--check|--repair|--edits|--ledger] FILE ...
 | `--ledger` | Show structural event ledger |
 | `--json` | Machine-readable JSON output |
 | `--diff` | Show edits without applying |
-| `--write` | Write repaired file in place |
 | `--emit-patch` | Output unified diff from repair |
 | `--around N` | Center ledger around line N |
 
@@ -71,16 +70,15 @@ beagle-build-all <file-or-dir> ... [--out <dir>]
 
 ### `beagle-fix`
 
-Auto-fix high-confidence type errors.
+Report high-confidence type-error fixes (advisory only — does not modify files).
 
 ```
-beagle-fix [--dry-run|--apply] <file-or-dir> ...
+beagle-fix [--dry-run] <file-or-dir> ...
 ```
 
 | flag | description |
 |---|---|
-| `--dry-run` | Show what would be fixed without applying |
-| `--apply` | Apply high-confidence fixes in-place |
+| `--dry-run` | Show what would be fixed (default, only mode) |
 
 ## Query tools
 
@@ -210,16 +208,15 @@ Multi-stage repair pipeline for when the type checker isn't enough.
 
 ### `beagle-repair`
 
-Unified repair pipeline with auto mode.
+Unified repair pipeline (advisory — does not modify files).
 
 ```
-beagle-repair <source-dir> <verify-script> [--auto] [--threshold 0.85] [--emit-patch]
+beagle-repair <source-dir> <verify-script> [--threshold 0.85] [--emit-patch]
 ```
 
 | flag | description |
 |---|---|
-| `--auto` | Apply fixes automatically above threshold |
-| `--threshold N` | Confidence threshold (default: 0.85) |
+| `--threshold N` | Confidence threshold for display (default: 0.85) |
 | `--emit-patch` | Output unified diff |
 
 ### `beagle-blame`

@@ -15,11 +15,11 @@
 (require json
          racket/string
          racket/cmdline
-         "../private/parse.rkt"
-         "../private/check.rkt"
-         "../private/error-format.rkt"
-         "../private/query.rkt"
-         "../private/extensions.rkt")
+         beagle/private/parse
+         beagle/private/check
+         beagle/private/error-format
+         beagle/private/query
+         beagle/private/extensions)
 
 ;; --- source cache (shared with check-all) ---
 
@@ -198,8 +198,8 @@
    #:once-any
    ["--dry-run" "Show what would be fixed without applying"
     (mode 'dry-run)]
-   ["--apply" "Apply high-confidence fixes in-place"
-    (mode 'apply)]
+   ["--apply" "REMOVED — review dry-run output and apply manually"
+    (mode 'dry-run)]
    #:args file-or-dirs
    (expand-args file-or-dirs)))
 

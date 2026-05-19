@@ -13,7 +13,7 @@
 
         beagle = pkgs.stdenv.mkDerivation {
           pname = "beagle";
-          version = "0.9.0";
+          version = "0.9.1";
           src = ./.;
 
           nativeBuildInputs = [ pkgs.makeWrapper ];

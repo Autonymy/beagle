@@ -375,12 +375,9 @@
                       (repair-edit-reason e)))]
 
            [(write-mode?)
-            (call-with-output-file f
-              (lambda (out) (display (repair-result-output result) out))
-              #:exists 'replace)
-            (printf "~a: repaired (~a edit(s), ~a confidence)\n" f
-                    (length (repair-result-edits result))
-                    (repair-result-confidence result))]
+            (fprintf (current-error-port)
+                     "~a: --write is disabled. Use --emit-patch and apply manually.\n" f)
+            (exit 1)]
 
            [else
             (printf "~a: ~a edit(s), confidence: ~a\n" f
@@ -481,7 +478,7 @@
      #:once-each
      [("--diff") "Show edits without applying" (diff-mode? #t)]
      [("--json") "Output as JSON" (json-mode? #t)]
-     [("--write") "Write repaired file in place" (write-mode? #t)]
+     [("--write") "REMOVED — use --emit-patch and apply manually" (void)]
      [("--emit-patch") "Output unified diff from repair" (emit-patch? #t)]
      [("--around") n "Center ledger around line N" (around-line (string->number n))]
      #:args files

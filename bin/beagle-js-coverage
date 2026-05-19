@@ -2,9 +2,9 @@
 #lang racket/base
 
 (require racket/set
-         "../private/stdlib-types.rkt"
-         "../private/js-capabilities.rkt"
-         "../private/stdlib-js.rkt")
+         beagle/private/stdlib-types
+         beagle/private/js-capabilities
+         beagle/private/stdlib-js)
 
 (define js-stdlib (stdlib-for-target 'js))
 (define all-keys (list->set (hash-keys js-stdlib)))
