@@ -31,13 +31,19 @@ One command wires up everything for Claude Code: daemon, hooks, system prompt.
 - [x] `set!` for property mutation — `(set! (.-value el) "")` parsed and emitted for CLJ + JS
 - [x] ~45 stdlib fns in `emit-core-call`: mapv, filterv, sort-by, dissoc, update, merge, get, subvec, pop, peek, some, take, drop, vector?, map?, distinct, flatten, complement, constantly, partial, comp, frequencies, group-by, partition, interleave, juxt, not-empty, take-last, drop-last, sequential?, seq?, coll?, set?, pr-str, to-array, aget, aset, array-seq, clj->js, js->clj, seq, not=
 - [x] Bare npm imports — single-word requires emit as bare package imports
-- [x] `letfn` — mutual recursion local fns (CLJ + JS emit, lint, 6 tests)
+- [x] `letfn` — mutual recursion local fns (CLJ + JS emit, lint, 550 tests)
 - [x] Atom ops in emit-core-call — `atom`, `deref`, `reset!`, `swap!`, `add-watch`, `remove-watch`
 - [x] Core fns as higher-order values — JS-VALUE-WRAPPERS emit lambda wrappers in value position; binding-aware (user defs shadow stdlib)
 - [x] JS-NO-EMIT safety net — compile-time warning for portable stdlib fns with no JS translation (139 symbols)
 - [x] `beagle.core.js` runtime — 12 finite helpers: range, remove, mapcat, every?, keep, map-indexed, assoc-in, update-in, select-keys, merge-with, take-while, drop-while
 - [x] STDLIB-JS — 38 JS-native type declarations (Math, JSON, Promise, fetch, timers, Object, Array, console)
 - [x] `beagle-js-coverage` — coverage report showing `silent fallback: 0`
+
+### Doc consolidation
+
+- [x] Delete dead weight: `forms.md`, `cheatsheet-distilled.md`, `findings.md`, prompts stubs
+- [ ] Strip CLAUDE.md experiment results into experiments/report.md only
+- [ ] Single cheatsheet generation from Scribble
 
 ### Doc generation / single source of truth
 
@@ -81,6 +87,12 @@ All forms are target-specific (`nix-*` AST nodes, invalid outside `beagle/nix`).
 **Phase 3 — Operator/convenience parity:**
 - [x] `pipe-to` / `pipe-from` — pipe operators
 - [x] `impl` — logical implication
+
+**Phase 4 — Target-form gating:**
+- [x] `TARGET-ONLY-FORMS` registry in `check.rkt` — compile error for target-specific forms outside their target
+- [x] `check-target-form` validation in `infer-expr` — gates all 15 nix forms + `await`
+- [x] Fix `emit-nix.rkt` silent `await` handling (was emitting inner expr, now errors)
+- [x] Cross-target rejection tests (10 tests: await on clj/nix, nix forms on clj/js)
 
 Win condition: every NixOS module expressible in Nisp is expressible
 in `beagle/nix` without `unsafe`. Emitted Nix evaluates correctly.

@@ -357,8 +357,7 @@
              (if (null? args) "" (string-append " " (string-join args " "))))]
 
     [(await-form? e)
-     ;; No async in Nix — just emit the inner expression
-     (emit-expr (await-form-expr e) depth)]
+     (error 'beagle-nix "await is only supported in beagle/js")]
 
     [(when-let-form? e)
      (format "let __v = ~a; in if __v != null then ~a else null"
