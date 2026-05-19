@@ -2,7 +2,7 @@
 (ns modules.boot)
 
 ;; NixOS module: boot configuration
-(fn-set-rest (config lib pkgs)
+(module [config lib pkgs]
   {:options.myConfig.modules.boot.enable
      (lib/mkEnableOption "boot configuration")
 

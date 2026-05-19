@@ -34,7 +34,7 @@
                     sops-nix.nixosModules.sops
                     hostConfig
 
-                    (fn-set-rest (config pkgs)
+                    (module [config pkgs]
                       {:networking.hostName hostname
                        :sops.age.keyFile "/var/lib/sops-nix/key.txt"
                        :environment.systemPackages
