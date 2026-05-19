@@ -29,23 +29,26 @@
 
 (define (read-message in)
   (define headers (read-headers in))
+  (when (eof-object? headers) (exit 0))
   (define len (hash-ref headers "Content-Length" #f))
   (unless len (error 'lsp "missing Content-Length header"))
   (define n (string->number len))
   (define body (read-string n in))
-  (when (eof-object? body) (error 'lsp "unexpected EOF"))
+  (when (eof-object? body) (exit 0))
   (string->jsexpr body))
 
 (define (read-headers in)
-  (let loop ([h (hash)])
-    (define line (read-line in 'return-linefeed))
-    (cond
-      [(or (eof-object? line) (equal? line "")) h]
-      [else
-       (define parts (regexp-match #rx"^([^:]+): (.+)$" line))
-       (if parts
-           (loop (hash-set h (cadr parts) (caddr parts)))
-           (loop h))])))
+  (define first-line (read-line in 'return-linefeed))
+  (cond
+    [(eof-object? first-line) eof]
+    [else
+     (let loop ([h (hash)] [line first-line])
+       (cond
+         [(or (eof-object? line) (equal? line "")) h]
+         [else
+          (define parts (regexp-match #rx"^([^:]+): (.+)$" line))
+          (loop (if parts (hash-set h (cadr parts) (caddr parts)) h)
+                (read-line in 'return-linefeed))]))]))
 
 (define (send-message out msg)
   (define body (jsexpr->string msg))
@@ -558,11 +561,15 @@
   (define in (current-input-port))
   (define out (current-output-port))
   (file-stream-buffer-mode out 'none)
-  (let loop ()
+  (let loop ([consecutive-errors 0])
     (with-handlers ([exn:fail? (lambda (e)
                                   (fprintf (current-error-port) "lsp error: ~a\n" (exn-message e))
                                   (flush-output (current-error-port))
-                                  (loop))])
+                                  (if (>= consecutive-errors 5)
+                                      (begin (fprintf (current-error-port)
+                                                      "lsp: too many consecutive errors, exiting\n")
+                                             (exit 1))
+                                      (loop (add1 consecutive-errors))))])
       (define msg (read-message in))
       (define method (hash-ref msg 'method #f))
       (define params (hash-ref msg 'params (hasheq)))
@@ -571,6 +578,6 @@
         [id (handle-request method params id out)]
         [method (handle-notification method params out)]
         [else (void)])
-      (loop))))
+      (loop 0))))
 
 (provide run-lsp)

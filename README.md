@@ -98,16 +98,6 @@ beagle-daemon start --watch .
 
 Generates a PostToolUse hook, settings, `CLAUDE.md`, and language context. The daemon gives instant type feedback on every beagle source edit (`.bclj`, `.bjs`, `.bnix`, etc.) and re-checks within ~100ms of each save.
 
-MCP:
-
-```sh
-beagle mcp
-```
-
-9 tools over stdio: `sig`, `fields`, `callers`, `provides`, `impact`, `check`, `check_enriched`, `build`, `expand`.
-
-Daemon-first, CLI fallback.
-
 ## Documentation
 
 Scribble docs:

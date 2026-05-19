@@ -20,9 +20,8 @@ Commands:
   expand <file>              Show source after macro expansion
   lsp                       Start LSP server (stdio)
   repl                      Start typed REPL
-  mcp                       Start MCP server (stdio)
   init [--claude-code]      Bootstrap a beagle project
-  init --claude-code        Full Claude Code setup (hooks, daemon, MCP, context)
+  init --claude-code        Full Claude Code setup (hooks, daemon, context)
 
 Options:
   --out DIR                 Output directory (for build)
@@ -73,9 +72,6 @@ case "$cmd" in
         ;;
     repl)
         exec "$BIN/beagle-repl" "$@"
-        ;;
-    mcp)
-        exec "$BIN/beagle-mcp" "$@"
         ;;
     init)
         claude_code=false
@@ -201,9 +197,6 @@ CLAUDE
             echo "" >&2
             echo "Setup complete. Start the daemon:" >&2
             echo "  beagle-daemon start --watch ." >&2
-            echo "" >&2
-            echo "MCP server (optional, for non-Claude-Code agents):" >&2
-            echo "  beagle mcp" >&2
         else
             echo "Add to your CLAUDE.md instructions." >&2
             echo "For full Claude Code setup: beagle init --claude-code" >&2

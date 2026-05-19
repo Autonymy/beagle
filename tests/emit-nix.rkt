@@ -86,8 +86,8 @@
   (define out (nix-emit "(define-target nix) (defrecord Point [(x : Int) (y : Int)])"))
   (check-true (string-contains? out "mkPoint = x: y:"))
   (check-true (string-contains? out "_tag = \"point\""))
-  (check-true (string-contains? out "point_x = r: r.x;"))
-  (check-true (string-contains? out "point_y = r: r.y;")))
+  (check-true (string-contains? out "point-x = r: r.x;"))
+  (check-true (string-contains? out "point-y = r: r.y;")))
 
 ;; --- nix builtins ----------------------------------------------------------
 
@@ -263,3 +263,23 @@
 (test-case "impl emits logical implication"
   (define out (nix-emit "(define-target nix) (impl a b)"))
   (check-true (and out (string-contains? out "a -> b"))))
+
+;; --- nix indented strings (''...'') ----------------------------------------
+
+(test-case "nix-indented-string emits '' block"
+  (define out (nix-emit-forms
+    '(define-target nix)
+    `(def x (#%nix-string "hello \"world\"\nline 2"))))
+  (check-true (and out (string-contains? out "''") (string-contains? out "hello \"world\""))))
+
+(test-case "nix-indented-string preserves ''' escape from reader"
+  (define out (nix-emit-forms
+    '(define-target nix)
+    `(def x (#%nix-string "has ''' inside"))))
+  (check-true (and out (string-contains? out "has ''' inside"))))
+
+(test-case "nix-indented-string preserves $ in shell scripts"
+  (define out (nix-emit-forms
+    '(define-target nix)
+    `(def x (#%nix-string "echo $HOME\nname=\"test\""))))
+  (check-true (and out (string-contains? out "echo $HOME") (string-contains? out "name=\"test\""))))

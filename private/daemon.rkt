@@ -13,6 +13,7 @@
 ;;   impact <fn-name> <file-or-dir>...
 ;;   check <file-or-dir>...
 ;;   check-enriched <file-or-dir>...     full type check + enriched context
+;;   repair <file>                        structural repair (fix delimiters in-place)
 ;;   check-result [<file>]               latest pre-computed result from watcher
 ;;   latest-results                      all results since last query (clears buffer)
 ;;   watch <dir>                         start inotify watcher on directory
@@ -37,7 +38,8 @@
          "query.rkt"
          "blame.rkt"
          "types.rkt"
-         "extensions.rkt")
+         "extensions.rkt"
+         "syntax.rkt")
 
 ;; --- Cache -------------------------------------------------------------------
 
@@ -80,9 +82,34 @@
   (with-handlers ([exn:fail? (lambda (_) "unknown")])
     (call-with-input-file path sha1)))
 
+(define (try-structural-repair! path)
+  (with-handlers ([exn:fail? (lambda (_) #f)])
+    (define source (file->string path))
+    (define r (repair-structure source))
+    (cond
+      [(and (repair-result-changed? r)
+            (eq? (repair-result-confidence r) 'high))
+       (call-with-output-file path
+         (lambda (out) (write-string (repair-result-output r) out))
+         #:exists 'truncate/replace)
+       (hasheq 'repaired #t
+               'edits (for/list ([e (in-list (repair-result-edits r))])
+                        (hasheq 'line (repair-edit-line e)
+                                'text (repair-edit-insert-text e)
+                                'reason (repair-edit-reason e)))
+               'confidence "high")]
+      [(repair-result-changed? r)
+       (hasheq 'repaired #f
+               'confidence (symbol->string (repair-result-confidence r))
+               'diagnostics (for/list ([d (in-list (repair-result-diagnostics r))])
+                              (hasheq 'line (structural-diagnostic-line d)
+                                      'message (structural-diagnostic-message d))))]
+      [else #f])))
+
 (define (check-file-full path)
   (define errors '())
   (define suspicions '())
+  (define repair-info (try-structural-repair! path))
   (with-handlers
     ([exn:fail?
       (lambda (e)
@@ -153,7 +180,7 @@
                           'confidence (suspicion-confidence s)
                           'message (suspicion-message s))
                   suspicions))))
-  (values (reverse errors) (reverse suspicions)))
+  (values (reverse errors) (reverse suspicions) repair-info))
 
 (define (enrich-errors errors path)
   (for/list ([e (in-list errors)])
@@ -191,7 +218,7 @@
   (call-with-semaphore check-sema
     (lambda ()
       (define hash-val (file-content-hash path))
-      (define-values (errors suspicions) (check-file-full path))
+      (define-values (errors suspicions repair-info) (check-file-full path))
       (define enriched (enrich-errors errors path))
       (define auto-count (count (lambda (e) (hash-ref e 'auto_fixable #f)) enriched))
       (define result
@@ -201,7 +228,8 @@
                 'error_count (length enriched)
                 'auto_fixable auto-count
                 'errors enriched
-                'suspicions suspicions))
+                'suspicions suspicions
+                'repair (or repair-info 'null)))
       (hash-set! check-results path result)
       (hash-set! pending-results path result)
       result)))
@@ -479,7 +507,7 @@
   (define files (find-rkt-in (if (null? args) (list ".") args)))
   (define all-errors '())
   (for ([f (in-list files)])
-    (define-values (errs _suspicions) (check-file-full f))
+    (define-values (errs _suspicions _repair) (check-file-full f))
     (for ([e (in-list errs)])
       (set! all-errors
             (cons (hasheq 'file f 'error (hash-ref e 'message "unknown"))
@@ -490,6 +518,33 @@
 
 (define (handle-ping _args)
   (hasheq 'ok #t 'status "running" 'cached (hash-count datum-cache)))
+
+(define (handle-repair args)
+  (when (null? args) (error "repair requires: <file>"))
+  (define path (car args))
+  (unless (file-exists? path) (error (format "file not found: ~a" path)))
+  (define source (file->string path))
+  (define r (repair-structure source))
+  (cond
+    [(not (repair-result-changed? r))
+     (hasheq 'ok #t 'changed #f 'message "no structural issues")]
+    [(eq? (repair-result-confidence r) 'high)
+     (call-with-output-file path
+       (lambda (out) (write-string (repair-result-output r) out))
+       #:exists 'truncate/replace)
+     (invalidate-cache! path)
+     (hasheq 'ok #t 'changed #t 'confidence "high"
+             'edits (for/list ([e (in-list (repair-result-edits r))])
+                      (hasheq 'line (repair-edit-line e)
+                              'text (repair-edit-insert-text e)
+                              'reason (repair-edit-reason e))))]
+    [else
+     (hasheq 'ok #t 'changed #f
+             'confidence (symbol->string (repair-result-confidence r))
+             'message "low confidence — not applied"
+             'diagnostics (for/list ([d (in-list (repair-result-diagnostics r))])
+                            (hasheq 'line (structural-diagnostic-line d)
+                                    'message (structural-diagnostic-message d))))]))
 
 (define (handle-invalidate args)
   (if (null? args)
@@ -506,6 +561,7 @@
     [(list "provides" args ...) (handle-provides args)]
     [(list "impact" args ...) (handle-impact args)]
     [(list "check" args ...) (handle-check args)]
+    [(list "repair" args ...) (handle-repair args)]
     [(list "watch" args ...) (handle-watch args)]
     [(list "unwatch" args ...) (handle-unwatch args)]
     [(list "check-result" args ...) (handle-check-result args)]

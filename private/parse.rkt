@@ -951,7 +951,11 @@
     [(list 'get-or base path-expr default-expr)
      (nix-get-or (parse-expr (or (stx-ref subs 1) base))
                  (let ([d (->datum (or (stx-ref subs 2) path-expr))])
-                   (if (symbol? d) (symbol->string d) (format "~a" d)))
+                   (cond
+                     [(symbol? d) (symbol->string d)]
+                     [(and (pair? d) (eq? (car d) 'quote) (pair? (cdr d)))
+                      (symbol->string (cadr d))]
+                     [else (format "~a" d)]))
                  (parse-expr (or (stx-ref subs 3) default-expr)))]
 
     [(list 'has base path-expr)

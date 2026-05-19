@@ -1,90 +1,497 @@
 #!/usr/bin/env racket
 #lang racket/base
 
-;; Fast paren/bracket balance checker for .rkt files.
-;; Reports unmatched delimiters with line numbers.
-;; Designed to run <10ms — no parsing, just delimiter tracking.
+;; beagle-syntax — structural checker with four output layers:
+;;
+;;   1. Human summary     beagle-syntax check FILE
+;;   2. Structural ledger beagle-syntax ledger FILE [--around N]
+;;   3. Machine JSON      beagle-syntax check FILE --json
+;;   4. Patch output      beagle-syntax repair FILE --emit-patch
+;;
+;; Other modes:
+;;   repair FILE --write      auto-fix and write back
+;;   repair FILE --diff       show edits without applying
+;;   edits  FILE              repair edits as JSON (for daemon/agent)
 
-(require racket/cmdline racket/string racket/port racket/file)
+(require racket/cmdline racket/string racket/port racket/file
+         racket/format racket/list json file/sha1
+         beagle/private/syntax)
 
-(define (check-file path)
-  (define stack '())
-  (define errors '())
-  (define line-num 1)
-  (define in-string? #f)
-  (define in-comment? #f)
-  (define prev-char #f)
+(define mode (make-parameter 'check))
+(define diff-mode? (make-parameter #f))
+(define json-mode? (make-parameter #f))
+(define write-mode? (make-parameter #f))
+(define emit-patch? (make-parameter #f))
+(define around-line (make-parameter #f))
 
-  (define openers '(#\( #\[ #\{))
-  (define closers '(#\) #\] #\}))
-  (define (closer-for c)
-    (case c
-      [(#\() #\)]
-      [(#\[) #\]]
-      [(#\{) #\}]
-      [else #f]))
-  (define (opener-for c)
-    (case c
-      [(#\)) #\(]
-      [(#\]) #\[]
-      [(#\}) #\{]
-      [else #f]))
+;; ---------------------------------------------------------------------------
+;; Helpers
+;; ---------------------------------------------------------------------------
 
-  (define content (file->string path))
-  (for ([ch (in-string content)])
+(define (fhash source)
+  (string-append "sha1:" (substring (sha1 (open-input-string source)) 0 12)))
+
+(define (lhash text)
+  (substring (sha1 (open-input-string text)) 0 8))
+
+(define (source-lines source)
+  (string-split source "\n" #:trim? #f))
+
+(define (source-line-at lines n)
+  (if (and (>= n 1) (<= n (length lines)))
+      (list-ref lines (sub1 n))
+      ""))
+
+(define (stack-at-first-error events)
+  (define pre '())
+  (for ([e (in-list events)]
+        #:break (event-entry-error? e))
+    (case (event-entry-kind e)
+      [(open) (set! pre (cons e pre))]
+      [(close) (when (pair? pre) (set! pre (cdr pre)))]
+      [else (void)]))
+  (reverse pre))
+
+;; ---------------------------------------------------------------------------
+;; Layer 1: Human summary (check)
+;; ---------------------------------------------------------------------------
+
+(define (run-check files)
+  (define total-errors 0)
+  (for ([f (in-list files)])
+    (when (file-exists? f)
+      (define source (file->string f))
+      (define lr (build-event-ledger source))
+      (cond
+        [(ledger-result-valid? lr)
+         (cond
+           [(json-mode?) (print-check-json-ok f source)]
+           [else (printf "~a: ok\n" f)])]
+        [else
+         (define errors (filter event-entry-error? (ledger-result-events lr)))
+         (set! total-errors (+ total-errors (length errors)))
+         (cond
+           [(json-mode?) (print-check-json-fail f source lr)]
+           [else (print-check-human f source lr)])])))
+  (unless (json-mode?)
+    (if (zero? total-errors)
+        (printf "~a file(s) ok\n" (length files))
+        (printf "\n~a error(s)\n" total-errors)))
+  (unless (zero? total-errors) (exit 1)))
+
+(define (print-check-json-ok f source)
+  (write-json
+   (hasheq 'status "ok"
+           'file f
+           'file_hash (fhash source)))
+  (newline))
+
+(define (print-check-json-fail f source lr)
+  (define events (ledger-result-events lr))
+  (define counts (ledger-result-counts lr))
+  (define errors (filter event-entry-error? events))
+  (define stack-pre (stack-at-first-error events))
+
+  (define repair-res (repair-structure source))
+
+  (write-json
+   (hasheq
+    'status "fail"
+    'file f
+    'file_hash (fhash source)
+    'errors
+    (for/list ([e (in-list errors)])
+      (hasheq 'type (symbol->string (event-entry-kind e))
+              'line (event-entry-line e)
+              'col (event-entry-col e)
+              'char (event-entry-char e)
+              'detail (or (event-entry-detail e) "")
+              'depth_before (event-entry-depth-before e)
+              'depth_after (event-entry-depth-after e)))
+    'counts
+    (hasheq
+     'parens (hasheq 'open (delim-counts-open-parens counts)
+                     'close (delim-counts-close-parens counts)
+                     'balance (- (delim-counts-open-parens counts)
+                                (delim-counts-close-parens counts)))
+     'brackets (hasheq 'open (delim-counts-open-brackets counts)
+                       'close (delim-counts-close-brackets counts)
+                       'balance (- (delim-counts-open-brackets counts)
+                                  (delim-counts-close-brackets counts)))
+     'braces (hasheq 'open (delim-counts-open-braces counts)
+                     'close (delim-counts-close-braces counts)
+                     'balance (- (delim-counts-open-braces counts)
+                                (delim-counts-close-braces counts))))
+    'stack_at_first_error
+    (for/list ([e (in-list stack-pre)])
+      (hasheq 'char (event-entry-char e)
+              'line (event-entry-line e)
+              'col (event-entry-col e)))
+    'repair
+    (if (repair-result-changed? repair-res)
+        (hasheq 'confidence (symbol->string (repair-result-confidence repair-res))
+                'edits (for/list ([e (repair-result-edits repair-res)])
+                         (hasheq 'line (repair-edit-line e)
+                                 'col (repair-edit-col e)
+                                 'length (repair-edit-length e)
+                                 'insert (repair-edit-insert-text e)
+                                 'reason (repair-edit-reason e))))
+        'null)))
+  (newline))
+
+(define (print-check-human f source lr)
+  (define events (ledger-result-events lr))
+  (define counts (ledger-result-counts lr))
+  (define errors (filter event-entry-error? events))
+  (define first-err (and (pair? errors) (car errors)))
+  (define lines (source-lines source))
+
+  (printf "\nFAIL: ~a\n\n"
+          (if first-err (event-entry-detail first-err) "structural error"))
+
+  (printf "file:      ~a\n" f)
+  (printf "file-hash: ~a\n\n" (fhash source))
+
+  (when first-err
+    (printf "first error at ~a:~a\n" (event-entry-line first-err) (event-entry-col first-err))
+    (printf "  ~a\n" (event-entry-detail first-err))
+    (printf "  context: ~a\n\n" (event-entry-context first-err)))
+
+  (define stack-pre (stack-at-first-error events))
+  (unless (null? stack-pre)
+    (printf "stack at error (~a deep):\n" (length stack-pre))
+    (for ([e (in-list stack-pre)])
+      (printf "  ~a:~a  ~a\n" (event-entry-line e) (event-entry-col e) (event-entry-char e)))
+    (printf "\n"))
+
+  (printf "--- delimiter counts ---\n")
+  (print-count-line "(" ")" (delim-counts-open-parens counts) (delim-counts-close-parens counts))
+  (print-count-line "[" "]" (delim-counts-open-brackets counts) (delim-counts-close-brackets counts))
+  (print-count-line "{" "}" (delim-counts-open-braces counts) (delim-counts-close-braces counts))
+  (define total-open (+ (delim-counts-open-parens counts)
+                        (delim-counts-open-brackets counts)
+                        (delim-counts-open-braces counts)))
+  (define total-close (+ (delim-counts-close-parens counts)
+                         (delim-counts-close-brackets counts)
+                         (delim-counts-close-braces counts)))
+  (printf "total: ~a open, ~a close\n\n" total-open total-close)
+
+  (when (> (length errors) 1)
+    (printf "all errors (~a):\n" (length errors))
+    (for ([e (in-list errors)])
+      (printf "  ~a:~a  ~a\n"
+              (event-entry-line e) (event-entry-col e)
+              (event-entry-detail e)))
+    (printf "\n"))
+
+  (when first-err
+    (print-nearby-ledger events first-err lines)))
+
+(define (print-count-line oc cc opens closes)
+  (define balance (- opens closes))
+  (printf "~a~a  open: ~a  close: ~a  balance: ~a~a\n"
+          oc cc
+          (~a opens #:min-width 4 #:align 'right)
+          (~a closes #:min-width 4 #:align 'right)
+          (cond [(positive? balance) (format "+~a" balance)]
+                [(negative? balance) (format "~a" balance)]
+                [else "0"])
+          (if (zero? balance) "" "  UNBALANCED")))
+
+(define (print-nearby-ledger events first-err lines)
+  (define err-line (event-entry-line first-err))
+  (define err-col (event-entry-col first-err))
+  (define non-unclosed (filter (lambda (e) (not (eq? (event-entry-kind e) 'unclosed))) events))
+
+  (define nearby
+    (filter (lambda (e) (<= (abs (- (event-entry-line e) err-line)) 5)) non-unclosed))
+
+  (define display-events
     (cond
-      [(char=? ch #\newline)
-       (set! line-num (add1 line-num))
-       (set! in-comment? #f)]
-      [in-comment? (void)]
-      [(and (char=? ch #\") (not (equal? prev-char #\\)))
-       (set! in-string? (not in-string?))]
-      [in-string? (void)]
-      [(char=? ch #\;)
-       (set! in-comment? #t)]
-      [(member ch openers)
-       (set! stack (cons (cons ch line-num) stack))]
-      [(member ch closers)
-       (define expected-opener (opener-for ch))
-       (cond
-         [(null? stack)
-          (set! errors (cons (format "~a:~a: unmatched closing '~a'"
-                                     path line-num ch) errors))]
-         [(not (char=? (car (car stack)) expected-opener))
-          (set! errors (cons (format "~a:~a: '~a' closes '~a' opened at line ~a"
-                                     path line-num ch
-                                     (car (car stack))
-                                     (cdr (car stack))) errors))
-          (set! stack (cdr stack))]
-         [else
-          (set! stack (cdr stack))])])
-    (set! prev-char ch))
+      [(<= (length nearby) 40) nearby]
+      [else
+       (define before
+         (filter (lambda (e)
+                   (or (< (event-entry-line e) err-line)
+                       (and (= (event-entry-line e) err-line)
+                            (<= (event-entry-col e) err-col))))
+                 nearby))
+       (define after
+         (filter (lambda (e)
+                   (and (= (event-entry-line e) err-line)
+                        (> (event-entry-col e) err-col)))
+                 nearby))
+       (append (if (> (length before) 25) (take-right before 25) before)
+               (if (> (length after) 5) (take after 5) after))]))
 
-  (for ([s (in-list stack)])
-    (set! errors (cons (format "~a:~a: unclosed '~a'"
-                               path (cdr s) (car s)) errors)))
+  (when (pair? display-events)
+    (printf "--- nearby ledger ---\n")
+    (print-ledger-header)
+    (for ([e (in-list display-events)])
+      (print-ledger-row e lines))
+    (printf "\n")))
 
-  (reverse errors))
+;; ---------------------------------------------------------------------------
+;; Layer 2: Structural ledger
+;; ---------------------------------------------------------------------------
+
+(define (run-ledger files)
+  (for ([f (in-list files)])
+    (when (file-exists? f)
+      (define source (file->string f))
+      (define lr (build-event-ledger source))
+      (define events (ledger-result-events lr))
+      (define lines (source-lines source))
+      (define counts (ledger-result-counts lr))
+
+      (define display-events
+        (cond
+          [(around-line)
+           (filter (lambda (e) (<= (abs (- (event-entry-line e) (around-line))) 15))
+                   events)]
+          [else
+           (define first-err
+             (for/first ([e (in-list events)] #:when (event-entry-error? e)) e))
+           (if first-err
+               (filter (lambda (e)
+                         (<= (abs (- (event-entry-line e) (event-entry-line first-err))) 15))
+                       events)
+               events)]))
+
+      (printf "~a  ~a\n" (if (ledger-result-valid? lr) "OK" "FAIL") f)
+      (printf "~a events shown (~a total)\n\n"
+              (length display-events) (length events))
+
+      (print-ledger-header)
+      (for ([e (in-list display-events)])
+        (print-ledger-row e lines))
+      (printf "\n")
+
+      (printf "--- counts ---\n")
+      (print-count-line "(" ")" (delim-counts-open-parens counts) (delim-counts-close-parens counts))
+      (print-count-line "[" "]" (delim-counts-open-brackets counts) (delim-counts-close-brackets counts))
+      (print-count-line "{" "}" (delim-counts-open-braces counts) (delim-counts-close-braces counts))
+      (printf "\n")
+
+      (define errors (filter event-entry-error? events))
+      (when (pair? errors)
+        (printf "--- errors (~a) ---\n" (length errors))
+        (for ([e (in-list errors)])
+          (printf "  ~a:~a  ~a\n"
+                  (event-entry-line e) (event-entry-col e)
+                  (event-entry-detail e)))
+        (printf "\n")))))
+
+(define (print-ledger-header)
+  (printf "~a  ~a  ~a  ~a  ~a  ~a\n"
+          (~a "line:col" #:min-width 12)
+          (~a "depth" #:min-width 10)
+          (~a "event" #:min-width 14)
+          (~a "stack" #:min-width 14)
+          (~a "hash" #:min-width 8)
+          "context")
+  (printf "~a\n" (make-string 100 #\-)))
+
+(define (print-ledger-row e lines)
+  (define loc (format "~a:~a" (event-entry-line e) (event-entry-col e)))
+  (define depth-str
+    (if (eq? (event-entry-kind e) 'unclosed)
+        "---"
+        (format "~a → ~a" (event-entry-depth-before e) (event-entry-depth-after e))))
+  (define evt
+    (case (event-entry-kind e)
+      [(open)         (format "open ~a" (event-entry-char e))]
+      [(close)        (format "close ~a" (event-entry-char e))]
+      [(mismatch)     (format "ERR ~a" (event-entry-char e))]
+      [(extra-closer) (format "EXTRA ~a" (event-entry-char e))]
+      [(unclosed)     (format "UNCLOSED ~a" (event-entry-char e))]
+      [else           (~a (event-entry-kind e))]))
+  (define line-text (source-line-at lines (event-entry-line e)))
+  (define hash (if (string=? line-text "") "--------" (lhash line-text)))
+  (define ctx
+    (let ([c (event-entry-context e)])
+      (if (> (string-length c) 40)
+          (string-append (substring c 0 40) "…")
+          c)))
+  (define mark (if (event-entry-error? e) "  ← ERROR" ""))
+
+  (printf "~a  ~a  ~a  ~a  ~a  ~a~a\n"
+          (~a loc #:min-width 12)
+          (~a depth-str #:min-width 10)
+          (~a evt #:min-width 14)
+          (~a (event-entry-stack-display e) #:min-width 14)
+          hash
+          ctx
+          mark))
+
+;; ---------------------------------------------------------------------------
+;; Layer 4: Repair + patch
+;; ---------------------------------------------------------------------------
+
+(define (run-repair files)
+  (for ([f (in-list files)])
+    (when (file-exists? f)
+      (define source (file->string f))
+      (define result (repair-structure source))
+      (cond
+        [(not (repair-result-changed? result))
+         (unless (json-mode?) (printf "~a: ok (no changes)\n" f))]
+
+        [(eq? (repair-result-confidence result) 'low)
+         (fprintf (current-error-port) "~a: low confidence, not repairing\n" f)
+         (for ([d (repair-result-diagnostics result)])
+           (fprintf (current-error-port) "  ~a:~a: ~a\n"
+                    (structural-diagnostic-line d)
+                    (structural-diagnostic-col d)
+                    (structural-diagnostic-message d)))
+         (exit 1)]
+
+        [else
+         (cond
+           [(emit-patch?)
+            (display (make-unified-diff f source (repair-result-output result)))]
+
+           [(json-mode?)
+            (write-json
+             (hasheq 'file f
+                     'changed #t
+                     'confidence (symbol->string (repair-result-confidence result))
+                     'edits (for/list ([e (repair-result-edits result)])
+                              (hasheq 'offset (repair-edit-offset e)
+                                      'length (repair-edit-length e)
+                                      'insert (repair-edit-insert-text e)
+                                      'line (repair-edit-line e)
+                                      'col (repair-edit-col e)
+                                      'reason (repair-edit-reason e)))))
+            (newline)]
+
+           [(diff-mode?)
+            (printf "~a: ~a edit(s), confidence: ~a\n" f
+                    (length (repair-result-edits result))
+                    (repair-result-confidence result))
+            (for ([e (repair-result-edits result)])
+              (printf "  ~a:~a ~a\n"
+                      (repair-edit-line e) (repair-edit-col e)
+                      (repair-edit-reason e)))]
+
+           [(write-mode?)
+            (call-with-output-file f
+              (lambda (out) (display (repair-result-output result) out))
+              #:exists 'replace)
+            (printf "~a: repaired (~a edit(s), ~a confidence)\n" f
+                    (length (repair-result-edits result))
+                    (repair-result-confidence result))]
+
+           [else
+            (printf "~a: ~a edit(s), confidence: ~a\n" f
+                    (length (repair-result-edits result))
+                    (repair-result-confidence result))
+            (for ([e (repair-result-edits result)])
+              (printf "  ~a:~a ~a\n"
+                      (repair-edit-line e) (repair-edit-col e)
+                      (repair-edit-reason e)))
+            (display (repair-result-output result))])]))))
+
+;; ---------------------------------------------------------------------------
+;; Unified diff
+;; ---------------------------------------------------------------------------
+
+(define (make-unified-diff filename old-text new-text)
+  (define old-lines (string-split old-text "\n" #:trim? #f))
+  (define new-lines (string-split new-text "\n" #:trim? #f))
+  (define max-len (max (length old-lines) (length new-lines)))
+  (define out (open-output-string))
+
+  (define (ref-safe ls i) (if (< i (length ls)) (list-ref ls i) #f))
+
+  (define changed
+    (for/list ([i (in-range max-len)]
+               #:when (not (equal? (ref-safe old-lines i) (ref-safe new-lines i))))
+      i))
+
+  (when (pair? changed)
+    (fprintf out "--- a/~a\n" filename)
+    (fprintf out "+++ b/~a\n" filename)
+
+    (define groups
+      (let loop ([rest (cdr changed)] [grp (list (car changed))] [acc '()])
+        (cond
+          [(null? rest) (reverse (cons (reverse grp) acc))]
+          [(<= (- (car rest) (car grp)) 6)
+           (loop (cdr rest) (cons (car rest) grp) acc)]
+          [else
+           (loop (cdr rest) (list (car rest)) (cons (reverse grp) acc))])))
+
+    (define ctx 3)
+    (for ([group (in-list groups)])
+      (define first-idx (car group))
+      (define last-idx (last group))
+      (define start (max 0 (- first-idx ctx)))
+      (define end (min max-len (+ last-idx ctx 1)))
+      (define old-count (- (min (length old-lines) end) start))
+      (define new-count (- (min (length new-lines) end) start))
+
+      (fprintf out "@@ -~a,~a +~a,~a @@\n"
+               (add1 start) old-count (add1 start) new-count)
+
+      (for ([i (in-range start end)])
+        (define ol (ref-safe old-lines i))
+        (define nl (ref-safe new-lines i))
+        (cond
+          [(equal? ol nl) (fprintf out " ~a\n" (or ol ""))]
+          [else
+           (when ol (fprintf out "-~a\n" ol))
+           (when nl (fprintf out "+~a\n" nl))]))))
+
+  (get-output-string out))
+
+;; ---------------------------------------------------------------------------
+;; Edits (existing, for daemon/agent)
+;; ---------------------------------------------------------------------------
+
+(define (run-edits files)
+  (for ([f (in-list files)])
+    (when (file-exists? f)
+      (define source (file->string f))
+      (define edits (structure-edits source))
+      (write-json
+       (hasheq 'file f
+               'edits (for/list ([e edits])
+                        (hasheq 'offset (repair-edit-offset e)
+                                'length (repair-edit-length e)
+                                'insert (repair-edit-insert-text e)
+                                'line (repair-edit-line e)
+                                'col (repair-edit-col e)
+                                'reason (repair-edit-reason e)))))
+      (newline))))
+
+;; ---------------------------------------------------------------------------
+;; Main
+;; ---------------------------------------------------------------------------
 
 (module+ main
   (define files
     (command-line
      #:program "beagle-syntax"
+     #:once-any
+     [("--check") "Validate delimiter structure (default)" (mode 'check)]
+     [("--repair") "Auto-fix delimiter structure" (mode 'repair)]
+     [("--edits") "Print repair edits as JSON" (mode 'edits)]
+     [("--ledger") "Show structural event ledger" (mode 'ledger)]
+     #:once-each
+     [("--diff") "Show edits without applying" (diff-mode? #t)]
+     [("--json") "Output as JSON" (json-mode? #t)]
+     [("--write") "Write repaired file in place" (write-mode? #t)]
+     [("--emit-patch") "Output unified diff from repair" (emit-patch? #t)]
+     [("--around") n "Center ledger around line N" (around-line (string->number n))]
      #:args files
      (if (null? files)
-         (error "usage: beagle-syntax FILE ...")
+         (begin (eprintf "usage: beagle-syntax [--check|--repair|--edits|--ledger] FILE ...\n")
+                (exit 1))
          files)))
 
-  (define all-errors '())
-  (for ([f (in-list files)])
-    (when (file-exists? f)
-      (set! all-errors (append all-errors (check-file f)))))
-
-  (cond
-    [(null? all-errors)
-     (printf "~a file(s) ok\n" (length files))]
-    [else
-     (for ([e (in-list all-errors)])
-       (displayln e))
-     (printf "\n~a error(s)\n" (length all-errors))
-     (exit 1)]))
+  (case (mode)
+    [(check) (run-check files)]
+    [(ledger) (run-ledger files)]
+    [(repair) (run-repair files)]
+    [(edits) (run-edits files)]))

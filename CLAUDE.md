@@ -23,7 +23,7 @@ it as canonical when explaining the language.
 - **Stdlib:** ~700 entries total — portable (269), Clojure (352), CLJS (75), JS (38 native), Nix (120), SQL (10)
 - **Type checking:** flow-sensitive narrowing, cross-module import, collection/destructuring inference, exhaustive match warnings, refinement predicates
 - **Diagnostics:** Rust-style errors with signatures, "did you mean?" suggestions, JSON mode
-- **Tooling:** LSP, typed REPL, MCP server, reactive daemon (~100ms re-check), repair compiler, property testing, distributed tracing
+- **Tooling:** LSP, typed REPL, reactive daemon (~100ms re-check), repair compiler, property testing, distributed tracing
 - **Experiments:** 15 across 3 tracks (Beagle/Clojure/Python) — best config 287s avg (E13), per-bug faster than Python+mypy
 
 See `docs/cheatsheet.md` for the full language reference.
@@ -114,86 +114,54 @@ Example: `(defn foo [(x : Int)] (+ x 1))` in test form:
 - `emit-form` handles top-level forms (def, defn, defrecord, etc.); `emit-expr` handles everything else
 - `check-form` does top-level type checking; `infer-expr` does expression-level inference
 
-## Tools
+## Session start
 
-- `bin/beagle` — unified CLI: `beagle check`, `beagle build`, `beagle fix`, `beagle sig`, `beagle lsp`, `beagle repl`, `beagle mcp`, `beagle init`
-- `bin/beagle-build SOURCE [OUT]` — single-file compile; auto-detects target from `#lang` line, outputs `.clj`/`.cljs`/`.js`/`.py` accordingly (`.rkt` sources accepted)
-- `bin/beagle-build-all FILE-OR-DIR... [--out DIR] [--warn]` — batch compile (9x vs sequential); `--warn` emits despite type errors; auto-detects target per file
-- `bin/beagle-check SOURCE` — type-check without emitting (`.rkt` sources accepted)
-- `bin/beagle-check-all FILE-OR-DIR...` — batch type-check (10x vs sequential) + semantic suspicions
-- `bin/beagle-expand SOURCE` — print source after macro expansion (`.rkt` sources accepted)
-- `bin/beagle-blame BUILD-DIR VERIFY-SCRIPT` — run oracle with blame analysis (ratio → likely bug type)
-- `bin/beagle-specfix BUILD-DIR VERIFY-SCRIPT` — oracle-guided speculative fix (9 strategies incl. accessor swap, arg permutation)
-- `bin/beagle-trace BUILD-DIR VERIFY-SCRIPT [--focus FN]` — instrumented tracing with call-graph walk (arithmetic ops + function call/return chain, cross-module)
-- `bin/beagle-repair SOURCE-DIR VERIFY-SCRIPT [--auto] [--threshold N] [--emit-patch]` — unified repair pipeline with cross-evidence correlation; `--emit-patch` emits unified diff to stdout (machine-consumable, `git apply` compatible)
-- `bin/beagle-proptest SOURCE-DIR [--run] [--build-dir DIR] [--diff DIR2]` — property tests + differential testing (record generators, round-trips, behavioral comparison)
-- `bin/beagle-cascade SOURCE-DIR VERIFY [--modified fn1,...] [--from-failures]` — call graph impact prediction and cascade root-cause analysis
-- `bin/beagle-oracle GOLDEN-DIR [--out FILE] [--diff MODIFIED-DIR]` — behavioral oracle synthesis (golden code IS the test spec)
-- `bin/beagle-lsp` — LSP server (stdio transport) for editor integration
-- `bin/beagle-repl` — interactive REPL with type checking
-- `bin/beagle-smap extract FILE.cljs` / `compose JS.map MAPPING.json` — source map: .bclj/.rkt → .cljs → .js
-- `bin/beagle-muttest BUILD-DIR VERIFY [--limit N]` — mutation testing (13 operators, reports kill rate + oracle gaps)
-- `bin/beagle-dtrace instrument BUILD-DIR [--services s1,s2] [--out DIR]` — auto-instrument cross-service calls with span creation
-- `bin/beagle-dtrace collect [--port N] [--dir DIR]` — TCP collector daemon for span aggregation
-- `bin/beagle-dtrace view TRACE-DIR [--trace-id ID]` — trace waterfall with ASCII timeline
-- `bin/beagle-dtrace blame TRACE-DIR [--oracle-output FILE]` — cross-service blame with oracle failure correlation
-- `bin/beagle-dtrace graph TRACE-DIR` — service dependency graph with impact analysis
-- `bin/beagle-dtrace cascade TRACE-DIR [--trace-id ID]` — root cause analysis across service boundaries
-- `bin/beagle-daemon start|stop|status|query CMD` — persistent query server (45× faster than cold tools)
-- `bin/beagle-daemon start --watch DIR` — start with file watcher; re-checks .bclj/.rkt files on save, caches enriched results
-- `bin/beagle-mcp` — MCP server exposing type system as tools (sig, fields, callers, provides, impact, check, check-enriched, build, expand); delegates to daemon when running
-- `bin/beagle-verify-enriched BUILD-DIR VERIFY` — run verify + auto-diagnose failures (trace, cascade, pattern analysis)
-- `bin/beagle-sig FN-NAME FILE-OR-DIR...` — print a function's typed signature (daemon-accelerated)
-- `bin/beagle-fields RECORD FILE-OR-DIR...` — print record fields, types, and accessors (daemon-accelerated)
-- `bin/beagle-callers FN-NAME FILE-OR-DIR...` — find all call sites of a function (daemon-accelerated)
-- `bin/beagle-provides FILE-OR-DIR...` — list all exports with types from a module (daemon-accelerated)
-- `bin/beagle-impact FN-NAME FILE-OR-DIR...` — show callers and impact of changing a signature (daemon-accelerated)
-- `bin/beagle-fix --dry-run|--apply FILE-OR-DIR` — auto-apply high-confidence type-error fixes
-- `bin/beagle-syntax FILE...` — fast paren/bracket balance check (<200ms); catches delimiter corruption before compile
-- `bin/beagle-pool DIR` — repair agent pool watcher (abandoned E15; kept for reference)
-- `bin/beagle-docs-sync [--dry-run] [--verbose]` — propagate mechanical facts (test count, stdlib size, devlog count) into docs
-- `bin/beagle-js-coverage` — JS target stdlib coverage report (win condition: `silent fallback: 0`)
-- `bin/gen-stdlib-types` — generate stdlib type entries from clojure.core metadata
-- `raco test tests/` — test suite
-- `experiments/` — benchmark framework (see `experiments/README.md`)
+1. Confirm daemon: `bin/beagle-daemon status` — start with `bin/beagle-daemon start --watch .` if not running
+2. The daemon auto-starts via the PostToolUse hook, but confirming at session start avoids cold-start delay on first edit
 
-### Query tools for LLM agents
+## Agent loop
 
-The `beagle-sig`, `beagle-fields`, `beagle-callers`, `beagle-provides`,
-and `beagle-impact` tools expose the type system as a query interface.
-Instead of reading source files to understand a codebase, agents can ask
-the type system directly:
+1. After edits, trust hook output. Fix syntax errors before type errors.
+2. Use query tools (`sig`, `fields`, `callers`, `provides`) before opening large files.
+3. Use `--emit-patch` tools before manual repair.
+4. Escalate to `trace`/`blame`/`cascade` only when stuck.
 
-```bash
-# "What does inv/can-fulfill? expect?"
-bin/beagle-sig can-fulfill? path/to/inventory.bclj
-# → can-fulfill? : [(Vec StockLevel) Int Int -> Bool]
+### After every edit (automatic)
 
-# "What fields does an Invoice have?"
-bin/beagle-fields Invoice path/to/billing.bclj
-# → Invoice
-#   id : Int           accessor: invoice-id
-#   order-id : Int     accessor: invoice-order-id
-#   ...
+The PostToolUse hook fires on Edit/Write to any beagle file
+(`.bgl`, `.bclj`, `.bcljs`, `.bjs`, `.bnix`, `.bsql`, `.bpy`, `.rkt`).
 
-# "What does the billing module export?"
-bin/beagle-provides path/to/billing.bclj
-# → records: Invoice, Payment, CreditNote ...
-#   functions: create-invoice : [...], invoice-balance : [...] ...
+If it reports a syntax error, fix delimiters first — do not type-check
+or inspect deeper errors until delimiters pass.
 
-# "Who calls create-invoice and with what arity?"
-bin/beagle-callers create-invoice path/to/
-# → (create-invoice id order customer ...)  in audit-order (audit.bclj)
+- `bin/beagle-syntax FILE` — structural check (use `--ledger` for depth trace, `--repair --write` for auto-fix)
+- `bin/beagle-daemon query check-enriched FILE` — type errors with field context and fix hints
+- `bin/beagle-fix --apply .` — auto-fix (when hook suggests it)
 
-# "If I change create-invoice's signature, what breaks?"
-bin/beagle-impact create-invoice path/to/
-# → callers with current arg counts
-```
+### During normal development
 
-Clojure-analog tools (`bin/clj-sig`, `bin/clj-fields`, `bin/clj-callers`,
-`bin/clj-provides`) provide the same interface but without type information.
-These exist so experiments can give both tracks the same structural query
-tools, ensuring beagle's advantage comes from types, not tool availability.
+- `bin/beagle-check SOURCE` / `bin/beagle-check-all DIR...`
+- `bin/beagle-build SOURCE` / `bin/beagle-build-all DIR...`
+- `bin/beagle-expand SOURCE` — show macro expansion
+- `raco test tests/`
+
+### When navigating — prefer query tools over grep
+
+- `bin/beagle-sig NAME FILE...` — typed signature
+- `bin/beagle-fields RECORD FILE...` — fields, types, accessors
+- `bin/beagle-callers NAME FILE...` — call sites
+- `bin/beagle-provides FILE...` — module exports
+- `bin/beagle-impact NAME FILE...` — callers + change impact
+
+### When stuck — after ordinary checks fail
+
+- `bin/beagle-repair ... --emit-patch`
+- `bin/beagle-trace ... --focus FN`
+- `bin/beagle-cascade ... --from-failures`
+- `bin/beagle-blame ...`
+- `bin/beagle-specfix ...`
+
+Full tool reference with all flags: `docs/tool-reference.md`
 
 ## Lint warnings
 

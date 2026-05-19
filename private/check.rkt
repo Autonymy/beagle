@@ -13,7 +13,8 @@
          racket/list
          "parse.rkt"
          "types.rkt"
-         "stdlib-types.rkt")
+         "stdlib-types.rkt"
+         "nixos-schema.rkt")
 
 (define (builtin-env-for-target target)
   (stdlib-for-target target))
@@ -55,6 +56,7 @@
    nix-search-path?         'nix
    nix-interpolated-string? 'nix
    nix-multiline-string?    'nix
+   nix-indented-string?     'nix
    nix-path?                'nix
    nix-fn-set?              'nix
    nix-pipe?                'nix
@@ -79,6 +81,7 @@
    nix-search-path?         "spath"
    nix-interpolated-string? "s"
    nix-multiline-string?    "ms"
+   nix-indented-string?     "''"
    nix-path?                "p"
    nix-fn-set?              "fn-set"
    nix-pipe?                "pipe-to/pipe-from"
@@ -114,6 +117,9 @@
 
 ;; SQL table registry: table-name -> (hash column-name -> type)
 (define SQL-TABLES (make-hash))
+
+;; NixOS option schema for validating dotted map keys in beagle/nix
+(define current-nixos-schema (make-parameter #f))
 
 ;; Expression-level source locations from the parser.
 (define current-check-src-table (make-parameter #f))
@@ -200,6 +206,26 @@
 
 ;; --- entry point -----------------------------------------------------------
 
+(define (program-source-file prog)
+  (define tbl (program-src-table prog))
+  (and tbl
+       (for/or ([(node loc) (in-hash tbl)])
+         (define s (src-loc-source loc))
+         (and s (if (path? s) s (and (string? s) (string->path s)))))))
+
+(define nixos-schema-cache (make-hash))
+
+(define (load-nixos-schema-cached source-path)
+  (define schema-path (find-schema-json source-path))
+  (and schema-path
+       (let ([mtime (file-or-directory-modify-seconds schema-path)])
+         (define cached (hash-ref nixos-schema-cache schema-path #f))
+         (if (and cached (= (car cached) mtime))
+             (cdr cached)
+             (let ([schema (load-nixos-schema schema-path)])
+               (hash-set! nixos-schema-cache schema-path (cons mtime schema))
+               schema)))))
+
 (define (type-check! prog)
   (when (eq? (program-mode prog) 'strict)
     (hash-clear! RECORD-FIELDS)
@@ -207,8 +233,13 @@
     (hash-clear! UNION-MEMBERS)
     (hash-clear! SQL-TABLES)
     (define env (build-initial-env prog))
+    (define nix-schema
+      (and (eq? (program-target prog) 'nix)
+           (let ([src (program-source-file prog)])
+             (and src (load-nixos-schema-cached src)))))
     (parameterize ([current-union-members UNION-MEMBERS]
-                   [current-check-target (program-target prog)])
+                   [current-check-target (program-target prog)]
+                   [current-nixos-schema nix-schema])
       (for ([form (in-list (program-forms prog))])
         (check-target-form form)
         (check-form form env)))
@@ -888,6 +919,64 @@
                               (string-join (map format-predicate preds) ", "))
                       #:src (src-for e)))))))
 
+;; --- NixOS option path validation ------------------------------------------
+
+(define MODULE-STRUCTURAL-KEYS '("config" "options" "imports" "_module" "_file"))
+
+(define (dotted-option-key? sym)
+  (and (symbol? sym)
+       (let ([s (symbol->string sym)])
+         (and (> (string-length s) 1)
+              (char=? (string-ref s 0) #\:)
+              (string-contains? s ".")))))
+
+(define (key-sym->path sym)
+  (substring (symbol->string sym) 1))
+
+(define (validate-nixos-map-keys! pairs env)
+  (define schema (current-nixos-schema))
+  (when schema
+    (for ([pair (in-list pairs)])
+      (define key (car pair))
+      (define val (cdr pair))
+      (when (dotted-option-key? key)
+        (define path-str (key-sym->path key))
+        (cond
+          [(member (car (string-split path-str ".")) MODULE-STRUCTURAL-KEYS)
+           (void)]
+          [(string-prefix? path-str "options.")
+           (void)]
+          [else
+           (define entry (nixos-option-lookup schema path-str))
+           (cond
+             [(not entry)
+              (define top-ns (car (string-split path-str ".")))
+              (when (nixos-namespace-exists? schema top-ns)
+                (define similars (nixos-find-similar schema path-str))
+                (define suggest
+                  (if (null? similars) ""
+                      (format " -- did you mean: ~a?"
+                              (string-join (take similars (min 3 (length similars)))
+                                           ", "))))
+                (with-handlers ([exn:fail? void])
+                  (raise-diag 'nixos-unknown-option
+                    (format "unknown NixOS option: ~a~a" path-str suggest)
+                    (hasheq 'path path-str)
+                    #:src (src-for key))))]
+             [else
+              (define val-type (infer-expr val env))
+              (define result (nixos-check-value-type entry val-type))
+              (when (and (pair? result) (eq? (car result) 'mismatch))
+                (with-handlers ([exn:fail? void])
+                  (raise-diag 'nixos-type-mismatch
+                    (format "NixOS option ~a: ~a" path-str (cadr result))
+                    (hasheq 'path path-str
+                            'expected (hash-ref entry 't "?"))
+                    #:src (src-for val))))])]))
+      ;; Recurse into nested maps
+      (when (map-form? val)
+        (validate-nixos-map-keys! (map-form-pairs val) env)))))
+
 ;; --- inference -------------------------------------------------------------
 
 (define (infer-expr e env)
@@ -912,6 +1001,8 @@
            (type-app 'Vec (list ANY)))))]
     [(map-form? e)
      (define pairs (map-form-pairs e))
+     (when (current-nixos-schema)
+       (validate-nixos-map-keys! pairs env))
      (if (null? pairs)
        (type-app 'Map (list ANY ANY))
        (let ()

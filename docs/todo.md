@@ -2,18 +2,6 @@
 
 ## Now: Developer experience
 
-### MCP server ✓
-
-Expose beagle's query tools over Model Context Protocol so any agent
-framework gets type-aware code intelligence without beagle-specific wiring.
-
-- [x] MCP server binary (`bin/beagle-mcp` / `beagle mcp`)
-- [x] Tools: `sig`, `fields`, `callers`, `provides`, `impact`
-- [x] Tool: `check` — type-check a file, return structured diagnostics
-- [x] Tool: `build` — compile a file, return Clojure source or errors
-- [x] Daemon integration: delegate to running daemon for speed
-- [x] stdio transport (standard MCP)
-
 ### `beagle init --claude-code` ✓
 
 One command wires up everything for Claude Code: daemon, hooks, system prompt.
@@ -59,8 +47,8 @@ Package beagle as a proper Racket package so it can be installed via `raco pkg i
 from the catalog (not just `--link`).
 
 - [x] Add `info.rkt` with proper deps, collection, pkg metadata, tags, test-paths
-- [ ] Follow [Racket package tutorial](https://blog.racket-lang.org/2017/10/tutorial-creating-a-package.html)
-- [ ] Register on [Racket package catalog](https://github.com/racket/racket/wiki/Creating-Packages)
+- [ ] Composable lib/test/doc package split — see [`docs/plan-racket-package-reorg.md`](plan-racket-package-reorg.md)
+- [x] Register on [Racket package catalog](https://github.com/racket/racket/wiki/Creating-Packages)
 
 ### Nix target: full Nisp parity
 

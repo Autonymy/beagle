@@ -41,7 +41,10 @@
    #rx"\\$\\{"
    (regexp-replace*
     #rx"\""
-    (regexp-replace* #rx"\\\\" s "\\\\\\\\")
+    (regexp-replace*
+     #rx"\n"
+     (regexp-replace* #rx"\\\\" s "\\\\\\\\")
+     "\\\\n")
     "\\\\\"")
    "\\\\${"))
 
@@ -722,7 +725,12 @@
   (and (symbol? key)
        (not (string-prefix? (symbol->string key) ":"))))
 
-(define (flatten-through-interp prefix pairs depth)
+(define (flattenable-map? val)
+  (and (map-form? val)
+       (= (length (map-form-pairs val)) 1)
+       (not (map-form? (cdr (car (map-form-pairs val)))))))
+
+(define (flatten-dot-path prefix pairs depth)
   (define ind (indent (+ depth 1)))
   (apply append
     (for/list ([pair (in-list pairs)])
@@ -731,10 +739,8 @@
       (define key-str (emit-key key depth))
       (define full-key (string-append prefix "." key-str))
       (cond
-        [(interp-key? key)
-         (list (format "~a~a = ~a;" ind full-key (emit-expr val (+ depth 1))))]
-        [(map-form? val)
-         (flatten-through-interp full-key (map-form-pairs val) depth)]
+        [(flattenable-map? val)
+         (flatten-dot-path full-key (map-form-pairs val) depth)]
         [else
          (list (format "~a~a = ~a;" ind full-key (emit-expr val (+ depth 1))))]))))
 
@@ -748,12 +754,13 @@
          (define key (car pair))
          (define val (cdr pair))
          (define key-str (emit-key key depth))
-         (if (and (map-form? val)
-                  (string-contains? key-str ".")
-                  (= (length (map-form-pairs val)) 1)
-                  (interp-key? (car (car (map-form-pairs val)))))
-           (flatten-through-interp key-str (map-form-pairs val) depth)
-           (list (format "~a~a = ~a;" ind key-str (emit-expr val (+ depth 1)))))))
+         (cond
+           [(and (map-form? val)
+                 (string-contains? key-str ".")
+                 (= (length (map-form-pairs val)) 1))
+            (flatten-dot-path key-str (map-form-pairs val) depth)]
+           [else
+            (list (format "~a~a = ~a;" ind key-str (emit-expr val (+ depth 1))))])))
      (string-append
       "{\n"
       (string-join (apply append entries) "\n")
@@ -917,11 +924,20 @@
    (string-join entries "\n")
    "\n" (indent depth) "}"))
 
+(define (escape-nix-string-keep-interp s)
+  (regexp-replace*
+   #rx"\""
+   (regexp-replace*
+    #rx"\n"
+    (regexp-replace* #rx"\\\\" s "\\\\\\\\")
+    "\\\\n")
+   "\\\\\""))
+
 (define (emit-nix-interp-string parts depth)
   (define chunks
     (for/list ([part (in-list parts)])
       (cond
-        [(string? part) (escape-nix-string part)]
+        [(string? part) (escape-nix-string-keep-interp part)]
         [else (format "${~a}" (emit-expr part depth))])))
   (format "\"~a\"" (string-join chunks "")))
 

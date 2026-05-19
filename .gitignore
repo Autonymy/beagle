@@ -4,7 +4,6 @@ compiled/
 .DS_Store
 .claude/
 .direnv/
-.venv/
 .beagle/
 doc/
 runtime/.cpcache/
