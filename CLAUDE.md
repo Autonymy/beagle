@@ -46,10 +46,15 @@ parse → check → emit-dispatch → emit-{clj,js,sql}
   `private/stdlib-cljs.rkt` (75).
 - `beagle-lib/private/macros.rkt` — macro registry, naive substitution, depth-capped
   recursive expansion, safe/unsafe boundary.
+- `beagle-lib/private/ast.rkt` — 144 AST struct definitions, shared utilities
+  (tag helpers, symbol predicates, source location tracking), parse injection
+  parameters (`current-parse-expr`, `current-parse-params`).
 - `beagle-lib/private/parse.rkt` — source → AST. Two passes: meta-form collection
   (mode, ns, macros, externs, requires, imports) then expr parsing with
-  macro expansion. Includes 28 `jst-*` structs for typed JS target AST
-  (`js/*` surface forms).
+  macro expansion. Delegates to target-specific parse modules.
+- `beagle-lib/private/parse-jst.rkt` — typed JS target (`js/*`) parse helpers.
+- `beagle-lib/private/parse-js-quote.rkt` — JS/quote AST parse helpers.
+- `beagle-lib/private/parse-sql.rkt` — SQL-specific parse helpers.
 - `beagle-lib/private/check.rkt` — best-effort type checking against annotations and
   the built-in env. Record field registry for keyword-access type inference.
   Skipped in dynamic mode. Includes `jst-*` type inference + JS target gating.
@@ -83,12 +88,12 @@ parse → check → emit-dispatch → emit-{clj,js,sql}
 
 ## Adding a new form (the pattern)
 
-1. **Struct** in `parse.rkt` — new AST node
-2. **Parse case** in `parse-list-form` — pattern-match the source
+1. **Struct** in `ast.rkt` — new AST node (add to provide list)
+2. **Parse case** in `parse-list-form` (in `parse.rkt`) — pattern-match the source
 3. **Emit case** in `emit-clj.rkt` AND `emit-js.rkt` — produce target source
 4. **Infer case** in `infer-expr` — return type (or `ANY`)
 5. **Lint traversal** in `lint.rkt` — `check-shadow` and `collect-symbols`
-6. **Provide** the struct in parse.rkt's provide list
+6. **Provide** the struct in ast.rkt's provide list
 7. **Tests** in parse/emit/check test files
 
 ## Test helpers
