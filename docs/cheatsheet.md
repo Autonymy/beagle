@@ -175,6 +175,8 @@ Declares an enum value set. Compiles to `(def OrderStatus-values #{:placed ...})
 (:key map default)                  ; keyword lookup with default
 ^{:key val} form                    ; metadata
 'datum                              ; quote
+(fmt "hello ${name}")               ; interpolated string → (str "hello " name)
+(fmt #<<TAG ... ${expr} ... TAG)    ; interpolated heredoc → (str ...)
 [item1 item2 ...]                   ; vector literal
 {k1 v1 k2 v2}                      ; map literal
 #{item1 item2}                      ; set literal

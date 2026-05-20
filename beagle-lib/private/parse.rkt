@@ -266,6 +266,7 @@
                  imported-scalar-fns ; set of symbols (scalar ctors/accessors from imports)
                  imported-scalar-preds ; hash: scalar-name → (listof scalar-predicate)
                  imported-symbol-ns ; hash: unqualified-symbol → module-prefix-symbol
+                 imported-union-members ; hash: union-name → (listof symbol) of record type names
                  target)        ; 'clj or 'cljs
   #:transparent)
 
@@ -372,7 +373,8 @@
 (define (import-module-types! mod-path prefix externs registry imp-rec-fields imp-rec-field-order imp-rec-ns mod-ns
                               #:scalar-fns [imp-scalar-fns #f]
                               #:scalar-preds [imp-scalar-preds #f]
-                              #:symbol-ns [imp-symbol-ns #f])
+                              #:symbol-ns [imp-symbol-ns #f]
+                              #:union-members [imp-union-members #f])
   (define datums (read-beagle-datums mod-path))
   (define (reg! name type)
     (hash-set! externs (qualify-name prefix name) type)
@@ -443,6 +445,12 @@
          (hash-set! imp-scalar-fns accessor #t)
          (hash-set! imp-scalar-fns (qualify-name prefix ctor) #t)
          (hash-set! imp-scalar-fns (qualify-name prefix accessor) #t))]
+      [(list 'defunion (? symbol? name) members ...)
+       ;; Register the union type as (U member1 member2 ...)
+       (reg! name (type-union (map (lambda (m) (type-prim m)) members)))
+       ;; Store the member list for exhaustive match checking
+       (when imp-union-members
+         (hash-set! imp-union-members name members))]
       [(list 'def (? symbol? name) ': type-expr _)
        (reg! name (parse-type type-expr))]
       [(list 'defonce (? symbol? name) ': type-expr _)
@@ -482,6 +490,7 @@
   (define imp-scalar-fns (make-hash))
   (define imp-scalar-preds (make-hash))
   (define imp-symbol-ns (make-hash))
+  (define imp-union-members (make-hash))
 
   (for ([d (in-list datums)])
     (match d
@@ -525,7 +534,8 @@
            (import-module-types! mod-path prefix externs registry imp-rec-fields imp-rec-field-order imp-rec-ns rn
                                  #:scalar-fns imp-scalar-fns
                                  #:scalar-preds imp-scalar-preds
-                                 #:symbol-ns imp-symbol-ns)))
+                                 #:symbol-ns imp-symbol-ns
+                                 #:union-members imp-union-members)))
        (set! requires (cons (require-entry rn #f #f) requires))]
       [(list 'require (? symbol? rn) ':as (? symbol? alias))
        (with-handlers ([exn:fail? (lambda (_e) (void))])
@@ -534,7 +544,8 @@
            (import-module-types! mod-path alias externs registry imp-rec-fields imp-rec-field-order imp-rec-ns rn
                                  #:scalar-fns imp-scalar-fns
                                  #:scalar-preds imp-scalar-preds
-                                 #:symbol-ns imp-symbol-ns)))
+                                 #:symbol-ns imp-symbol-ns
+                                 #:union-members imp-union-members)))
        (set! requires (cons (require-entry rn alias #f) requires))]
       [(list 'require (? symbol? rn) ':refer (? (lambda (x) (and (pair? x) (eq? (car x) '#%brackets))) names))
        (define refer-syms (map ->datum (cdr (->datum names))))
@@ -545,7 +556,8 @@
            (import-module-types! mod-path prefix externs registry imp-rec-fields imp-rec-field-order imp-rec-ns rn
                                  #:scalar-fns imp-scalar-fns
                                  #:scalar-preds imp-scalar-preds
-                                 #:symbol-ns imp-symbol-ns)))
+                                 #:symbol-ns imp-symbol-ns
+                                 #:union-members imp-union-members)))
        (set! requires (cons (require-entry rn #f refer-syms) requires))]
 
       [(list 'import (? symbol? class-name))
@@ -566,7 +578,7 @@
   (define parsed (map car pairs))
   (define form-stxs (map cdr pairs))
 
-  (program mode ns parsed registry externs (reverse requires) (reverse imports) form-stxs src-table imp-rec-fields imp-rec-field-order imp-rec-ns (hash-keys imp-scalar-fns) imp-scalar-preds imp-symbol-ns target))
+  (program mode ns parsed registry externs (reverse requires) (reverse imports) form-stxs src-table imp-rec-fields imp-rec-field-order imp-rec-ns (hash-keys imp-scalar-fns) imp-scalar-preds imp-symbol-ns imp-union-members target))
 
 (define (meta-form? d)
   (and (pair? d)
@@ -730,6 +742,48 @@
                (or (exact-integer? (cadr d)) (real? (cadr d))))
     (error 'beagle "defscalar :where predicate must be (op literal), got: ~v" d))
   (scalar-predicate (car d) (cadr d)))
+
+;; fmt: interpolated string templates (parse-time rewrite → str call)
+;; (fmt "hello ${name}") → (str "hello " name)
+;; (fmt #<<JS ... ${expr} ... JS) → (str "..." expr "...")
+;; See docs/todo.md "Target-aware code generation" for the roadmap.
+(define (fmt-find-close-brace text start)
+  (define len (string-length text))
+  (let loop ([i start] [depth 1])
+    (cond
+      [(>= i len) #f]
+      [(char=? (string-ref text i) #\})
+       (if (= depth 1) i (loop (+ i 1) (- depth 1)))]
+      [(char=? (string-ref text i) #\{)
+       (loop (+ i 1) (+ depth 1))]
+      [else (loop (+ i 1) depth)])))
+
+(define (fmt-split-template text)
+  (define len (string-length text))
+  (let loop ([i 0] [start 0] [acc '()])
+    (cond
+      [(>= i len)
+       (define tail (substring text start len))
+       (reverse (if (> (string-length tail) 0) (cons tail acc) acc))]
+      [(and (< (+ i 1) len)
+            (char=? (string-ref text i) #\$)
+            (char=? (string-ref text (+ i 1)) #\{))
+       (define prefix (substring text start i))
+       (define acc2 (if (> (string-length prefix) 0) (cons prefix acc) acc))
+       (define close (fmt-find-close-brace text (+ i 2)))
+       (unless close
+         (error 'beagle "fmt: unmatched ${ in template"))
+       (define expr-str (string-trim (substring text (+ i 2) close)))
+       (define expr-datum (read (open-input-string expr-str)))
+       (loop (+ close 1) (+ close 1) (cons expr-datum acc2))]
+      [else (loop (+ i 1) start acc)])))
+
+(define (expand-fmt text)
+  (define parts (fmt-split-template text))
+  (cond
+    [(null? parts) ""]
+    [(and (= (length parts) 1) (string? (car parts))) (car parts)]
+    [else (cons 'str parts)]))
 
 ;; threading macro expansion (parse-time rewrite → fully type-checked)
 (define (thread-step-insert val step position)
@@ -1192,6 +1246,11 @@
 
     [(list (? static-method-sym? cm) args ...)
      (static-call cm (map parse-expr (or (stx-tail subs 1) args)))]
+
+    [(list 'fmt (list '#%block-string _ (? string? text)))
+     (parse-expr (expand-fmt text))]
+    [(list 'fmt (? string? text))
+     (parse-expr (expand-fmt text))]
 
     [(list '-> init steps ...)
      (parse-expr (expand-thread-first init steps))]

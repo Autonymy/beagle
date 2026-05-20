@@ -1,0 +1,8 @@
+#lang beagle
+
+(ns beagle.result)
+(define-mode strict)
+
+(defrecord Ok [(value : Any)])
+(defrecord Err [(error : String)])
+(defunion Result Ok Err)

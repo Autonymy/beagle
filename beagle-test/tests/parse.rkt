@@ -651,6 +651,34 @@
   (check-eq? (extend-type-form-type-name f) 'String)
   (check-equal? (length (extend-type-form-impls f)) 1))
 
+;; --- fmt: interpolated string templates --------------------------------------
+
+(test-case "fmt with no holes returns plain string"
+  (define f (car (parse-one '(fmt "no holes"))))
+  (check-true (string? f))
+  (check-equal? f "no holes"))
+
+(test-case "fmt with one hole expands to str call"
+  (define f (car (parse-one '(fmt "hello ${name}!"))))
+  (check-true (call-form? f))
+  (check-eq? (call-form-fn f) 'str)
+  (check-equal? (length (call-form-args f)) 3))
+
+(test-case "fmt with expression hole"
+  (define f (car (parse-one '(fmt "val: ${(str a b)}"))))
+  (check-true (call-form? f))
+  (check-eq? (call-form-fn f) 'str)
+  (check-equal? (length (call-form-args f)) 2))
+
+(test-case "fmt with heredoc"
+  (define f (car (parse-one '(fmt (#%block-string JS "x = ${v};")))))
+  (check-true (call-form? f))
+  (check-eq? (call-form-fn f) 'str)
+  (check-equal? (length (call-form-args f)) 3))
+
+(parse-err/rx "fmt rejects unmatched ${" #rx"unmatched"
+  '(fmt "broken ${x"))
+
 ;; --- threading macros expand at parse time -----------------------------------
 
 (test-case "-> expands to nested calls (first position)"

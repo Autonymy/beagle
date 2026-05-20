@@ -633,7 +633,21 @@
      (check-true (string-contains? stderr-output "trampoline has no JS translation")
                  (format "expected JS-NO-EMIT warning in: ~a" stderr-output)))
 
-   (test-case "JS-translated function emits no warning"
+      (check-js-contains "fmt plain string → string literal"
+     "const x = \"hello\";"
+     '(def x : String (fmt "hello")))
+
+   (check-js-contains "fmt with hole → concat"
+     "\"\".concat(\"hello \", name)"
+     '(def name : String "world")
+     '(def x : String (fmt "hello ${name}")))
+
+   (check-js-contains "fmt heredoc with hole → concat"
+     "\"\".concat(\"x = \", v, \";\")"
+     '(def v : String "42")
+     '(def x : String (fmt (#%block-string JS "x = ${v};"))))
+
+(test-case "JS-translated function emits no warning"
      (define stderr-output
        (with-output-to-string
          (lambda ()
