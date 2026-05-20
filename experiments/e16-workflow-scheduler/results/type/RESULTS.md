@@ -63,6 +63,14 @@ have a perfect oracle.
 
 ## F1: Feature Building Under Type Profiles
 
+> **Confound (discovered 2026-05-21):** The F1 CLAUDE.md template
+> included a `beagle check` command for ALL profiles, including P0.
+> The `--profile` flag was only set for P2+, so P0 agents ran the
+> checker at the then-default profile (P3 — full with effects).
+> F1 "P0" is actually P3 vs P2, not "no types" vs P2. Conclusions
+> below are retained for context but the comparison is not what was
+> intended.
+
 ### Design
 
 - 2 features × 2 profiles (P0, P2) × 1 rep = 4 trials
@@ -152,6 +160,13 @@ everywhere" — that's just grep.
 ---
 
 ## F1-reps: Structural Replication (N=4)
+
+> **Confound (discovered 2026-05-21):** After commit `158f542` changed
+> the default checker profile from P3 to P2, the P0 agents in F1-reps
+> ran `beagle check` at profile 2 — **identical to the P2 treatment.**
+> Both groups received the same type checking. Speed differences below
+> are noise between identical treatments, not evidence of a P0/P2 gap.
+> The F3-corrected experiment re-runs this matrix with proper separation.
 
 ### Motivation
 
@@ -298,67 +313,98 @@ output and correct workflow positioning, the checker adds negligible
 overhead — the agent invokes it once after tests pass, gets a clean
 result (or a short list of missed match sites), and is done.
 
-This retroactively strengthens the F1-reps finding: P2 was already
-faster on 3/4 features with the *unoptimized* workflow. With the
-optimized workflow, the remaining outlier disappears. The corrected
-picture is that **P2 is at least as fast as P0 across all features
-tested**, and likely faster on features with coordination complexity.
+This validates that the speed penalty was a workflow problem, not a
+type-checking cost.
+
+However: see the confound notice on F1-reps. The F2 result only proves
+"optimized workflow ≈ no workflow overhead." It does NOT prove "P2 is
+faster than true P0" because F1-reps never had a true P0 condition.
+The F3-corrected experiment addresses this.
+
+---
+
+## Confound: P0 Profile Leakage (F1, F1-reps)
+
+The `run-feature-experiment` template included `beagle check` for ALL
+profiles. The `--profile` flag was only appended for profiles > 0:
+
+```
+CHECK_FLAG=""
+if [[ "$PROFILE" -gt 0 ]]; then
+  CHECK_FLAG=" --profile $PROFILE"
+fi
+# CLAUDE.md command: beagle check${CHECK_FLAG} /tmp/.../src/
+```
+
+For P0, this produced `beagle check /tmp/.../src/` — no profile flag,
+so the checker ran at its **default** profile:
+
+- **F1 (before `158f542`):** default was P3 (full with effects)
+- **F1-reps (after `158f542`):** default was P2 (structural)
+
+| Experiment | "P0" actually ran | P2 ran | Comparison |
+|------------|------------------|--------|------------|
+| F1 | P3 | P2 | P3 vs P2 (not "no types" vs P2) |
+| F1-reps | P2 | P2 | **Identical treatment** |
+| F2-optimized | No checker | P2 + --agent | Valid |
+
+**Impact:**
+- F1-reps speed differences attributed to "types providing velocity"
+  are noise between identical treatments.
+- F1's P0 failure on Feature A may have been caused by P3 effects
+  noise rather than absence of types.
+- T1 is unaffected (always passes explicit `--profile`).
+- F2-optimized is unaffected (P0 has no checker command at all).
+
+**Fix:** The corrected `run-feature-experiment` (committed `fab248a`,
+refined `7b0a9c5`) excludes ALL checker commands for P0 and uses
+`--agent --profile N` for P2+. F3 re-runs the full matrix with this
+corrected workflow.
 
 ---
 
 ## Synthesis
 
-| Finding | Evidence |
-|---------|----------|
-| Types don't help agents fix bugs | T1: P0 = P2 = P3, zero checker calls |
-| False-positive type errors actively hurt | T1: P1 is 3.4× slower |
-| Types speed up feature building (when workflow is right) | F1-reps: P2 faster on 3/4 features; F2: outlier eliminated |
-| Types are not required for correctness at this scale | F1-reps: 8/8 complete at both P0 and P2 |
-| Checker noise is worse than no checker | T1-P1 (3.4×), F1-reps A unoptimized (+76%); both caused by agent chasing phantom errors |
-| Workflow positioning matters as much as the tool itself | F2: same checker, same profile — gap collapsed from +76% to +9% via prompt/workflow changes alone |
-| The value of types is coordination speed, not detection | Agent never uses checker for bug finding; types reduce wrong turns during feature construction |
+| Finding | Evidence | Status |
+|---------|----------|--------|
+| Types don't help agents fix bugs | T1: P0 = P2 = P3, zero checker calls | **Valid** (T1 unaffected) |
+| False-positive type errors actively hurt | T1: P1 is 3.4× slower | **Valid** |
+| Checker noise causes overhead | F2: same profile, workflow fix collapsed +76% to +9% | **Valid** |
+| Workflow positioning matters as much as the tool | F2: prompt/workflow changes alone eliminated speed gap | **Valid** |
+| Types speed up feature building | F1-reps: P2 faster on 3/4 features | **Invalidated** — same treatment |
+| Types not required for correctness | F1-reps: 8/8 complete at both profiles | **Weakened** — same treatment |
+| P0 vs P2 speed and correctness | Only F2-optimized FA: 245s vs 267s, both 11/11 | **Insufficient** — N=1, 1 feature |
 
-**Updated finding:**
+**Current finding (post-confound):**
 
-> Types are not a bug-finding tool for agents, and at this codebase
-> scale, they are not required for correctness either. What types
-> provide is *velocity* — a routing signal that helps the agent
-> converge on a correct implementation with fewer iterations.
+> **What we know:** Types are not a bug-finding tool for agents (T1).
+> False positives and checker noise actively hurt performance (T1-P1,
+> F2 pre-fix). The integration surface — output quality, workflow
+> position, framing — determines whether a checker helps or hurts.
 >
-> But this velocity gain is fragile: it depends on the checker
-> producing clean, actionable output and being positioned correctly
-> in the development workflow. A noisy or poorly-timed checker is
-> worse than no checker at all (T1-P1: 3.4× slower; F1-reps Feature A
-> unoptimized: +76% overhead).
+> **What we don't yet know:** Whether a clean type checker provides a
+> speed or correctness advantage over no type checker at all. The only
+> valid P0 vs P2 comparison is F2-optimized Feature A (N=1), which
+> shows parity (245s vs 267s, both 11/11). F1 and F1-reps were
+> confounded by profile leakage — P0 agents received type checking.
 >
-> The F2-optimized experiment proved the point: three non-code changes
-> (suppress noise, reposition in workflow, clarify framing) collapsed
-> the P2 speed penalty from +76% to +9% on the worst-case feature.
-> With the optimized workflow, P2 is at least as fast as P0 across all
-> features tested, and likely faster on coordination-heavy tasks.
->
-> **The implication for language/toolchain designers:** the type checker
-> itself is table stakes. What determines whether it helps or hurts an
-> LLM agent is the *integration surface* — output quality, invocation
-> cost, and workflow position. A clean checker at the right moment is
-> a force multiplier. A noisy checker in the inner loop is a tax.
+> **What F3 will test:** 4 features × 2 profiles (true P0 vs clean P2)
+> to determine if structural types provide any measurable advantage
+> over no type checking when the integration surface is correct.
 
 ## Caveats
 
-- **N=1 per cell.** Speed differences are directionally consistent but
-  not statistically significant. Run 3-5 reps per cell to confirm.
+- **F1 and F1-reps are confounded.** P0 agents received type checking
+  due to a template bug. Speed and correctness comparisons between P0
+  and P2 are invalid. Raw data is retained for context.
+- **Only 1 valid P0 vs P2 data point.** F2-optimized Feature A is the
+  sole clean comparison. Insufficient to draw conclusions.
 - **Small codebase.** 6 files means the agent can read everything. In a
   larger codebase, the navigation advantage of type errors would likely
-  increase, and the correctness gap may re-emerge.
+  increase.
 - **Single model.** All trials used Claude Sonnet. A weaker model might
   benefit more from type guidance.
-- **Beagle-specific.** The type checker profiles are specific to Beagle's
-  implementation. Results may not generalize to other type systems.
-- **F2 is N=1.** The optimized workflow result (267s vs 245s) is a single
-  trial. The gap elimination is dramatic but needs replication.
-- **Original F1 not re-run.** The F1-reps Feature A result contradicts
-  the original F1 Feature A result. We did not re-run the original trial
-  to confirm whether the discrepancy is variance or a changed condition.
+- **Beagle-specific.** Results may not generalize to other type systems.
 
 ## Experiment Infrastructure
 
