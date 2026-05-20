@@ -69,6 +69,11 @@
   (define out (nix-emit "(define-target nix) [1 2 3]"))
   (check-true (string-contains? out "[ 1 2 3 ]")))
 
+(test-case "long list breaks to multi-line"
+  (define out (nix-emit "(define-target nix) [\"local-fs.target\" \"suspend.target\" \"suspend-then-hibernate.target\" \"hibernate.target\"]"))
+  (check-true (and out (string-contains? out "[\n")))
+  (check-true (and out (string-contains? out "\"local-fs.target\""))))
+
 (test-case "map emits nix attrset"
   (define out (nix-emit-forms '(define-target nix) `(def m : Any ,(mt ':a 1 ':b 2))))
   (check-true (string-contains? out "a = 1;"))
@@ -283,3 +288,39 @@
     '(define-target nix)
     `(def x (#%nix-string "echo $HOME\nname=\"test\""))))
   (check-true (and out (string-contains? out "echo $HOME") (string-contains? out "name=\"test\""))))
+
+;; --- qualified calls: / → . --------------------------------------------------
+
+(test-case "pkgs/ call emits as pkgs.fn"
+  (define out (nix-emit "(define-target nix) (pkgs/writeScriptBin \"hello\" \"body\")"))
+  (check-true (and out (string-contains? out "pkgs.writeScriptBin")))
+  (check-false (string-contains? out "pkgs/writeScriptBin")))
+
+(test-case "arbitrary ns/ call emits as ns.fn"
+  (define out (nix-emit "(define-target nix) (config/boot.kernelPackages.kernel)"))
+  (check-true (and out (string-contains? out "config.boot.kernelPackages.kernel"))))
+
+(test-case "ns/ symbol in non-call position emits as ns.sym"
+  (define out (nix-emit "(define-target nix) (def x : Any pkgs/hello)"))
+  (check-true (and out (string-contains? out "pkgs.hello")))
+  (check-false (string-contains? out "pkgs/hello")))
+
+;; --- not → ! -----------------------------------------------------------------
+
+(test-case "not emits ! prefix operator"
+  (define out (nix-emit "(define-target nix) (not true)"))
+  (check-true (and out (string-contains? out "!true")))
+  (check-false (string-contains? out "not true")))
+
+(test-case "not with complex expr wraps inner in parens"
+  (define out (nix-emit "(define-target nix) (not (= x 1))"))
+  (check-true (and out (string-contains? out "!(")))
+  (check-true (and out (string-contains? out "==")))
+  (check-false (string-contains? out "((!")))
+
+;; --- ms + s inline interpolation ---------------------------------------------
+
+(test-case "ms with s inlines interpolation without double-wrapping"
+  (define out (nix-emit "(define-target nix) (ms (s \"#!\" pkgs.bash \"/bin/bash\") \"echo hi\")"))
+  (check-true (and out (string-contains? out "#!${pkgs.bash}/bin/bash")))
+  (check-false (string-contains? out "${\"")))

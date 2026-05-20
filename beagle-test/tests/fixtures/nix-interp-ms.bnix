@@ -1,0 +1,10 @@
+#lang beagle/nix
+(ns test.nix.interp-ms)
+
+(fn-set-rest [pkgs]
+  {:script (pkgs/writeScriptBin "hello"
+             (ms (s "#!" pkgs.bash "/bin/bash")
+                 "echo hello world"))
+   :config {:services.udev.extraRules
+              (ms "ACTION==\"add\", SUBSYSTEM==\"usb\""
+                  (s "ATTR{idVendor}==\"" vendor.id "\""))}})

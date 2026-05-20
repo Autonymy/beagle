@@ -244,8 +244,7 @@
        [(eq? e 'false) "false"]
        [(char=? (string-ref sym-str 0) #\:)
         (format "\"~a\"" (substring sym-str 1))]
-       [(or (string-prefix? sym-str "lib/")
-            (string-prefix? sym-str "builtins/"))
+       [(string-contains? sym-str "/")
         (string-replace sym-str "/" ".")]
        [(string-contains? sym-str ".")
         sym-str]
@@ -491,6 +490,10 @@
 
   ;; Core stdlib translations
   (cond
+    ;; Unary not → !
+    [(and fn-name (eq? fn-name 'not) (= (length args) 1))
+     (format "!~a" (paren-wrap (emit-expr (car args) depth) (car args)))]
+
     ;; Arithmetic/comparison — infix
     [(and fn-name (nix-infix-op fn-name))
      => (lambda (op)
@@ -625,16 +628,8 @@
     [(and fn-name (eq? fn-name 'println))
      (format "builtins.trace ~a null" (paren-wrap (emit-expr (car args) depth) (car args)))]
 
-    ;; Nix-specific: lib.* and builtins.*
-    [(and fn-name (string-prefix? (symbol->string fn-name) "lib/"))
-     (define nix-name (string-replace (symbol->string fn-name) "/" "."))
-     (format "~a~a" nix-name
-             (if (null? args) ""
-                 (string-append " " (string-join
-                                     (map (lambda (a) (paren-wrap (emit-expr a depth) a)) args)
-                                     " "))))]
-
-    [(and fn-name (string-prefix? (symbol->string fn-name) "builtins/"))
+    ;; Nix-specific: qualified calls (lib/mkIf → lib.mkIf, pkgs/foo → pkgs.foo)
+    [(and fn-name (string-contains? (symbol->string fn-name) "/"))
      (define nix-name (string-replace (symbol->string fn-name) "/" "."))
      (format "~a~a" nix-name
              (if (null? args) ""
@@ -683,21 +678,23 @@
 (define (emit-nix-list items depth)
   (cond
     [(null? items) "[ ]"]
-    [(and (<= (length items) 6)
-          (not (ormap map-form? items)))
-     (format "[ ~a ]"
-             (string-join
-              (map (lambda (i) (paren-wrap (emit-expr i depth) i)) items)
-              " "))]
     [else
-     (define ind (indent (+ depth 1)))
-     (string-append
-      "[\n"
-      (string-join
-       (map (lambda (i) (string-append ind (paren-wrap (emit-expr i (+ depth 1)) i)))
-            items)
-       "\n")
-      "\n" (indent depth) "]")]))
+     (define item-strs
+       (map (lambda (i) (paren-wrap (emit-expr i depth) i)) items))
+     (define single-line (format "[ ~a ]" (string-join item-strs " ")))
+     (define base-indent (* depth 2))
+     (if (and (<= (length items) 6)
+              (not (ormap map-form? items))
+              (<= (+ base-indent (string-length single-line)) 80))
+       single-line
+       (let ([ind (indent (+ depth 1))])
+         (string-append
+          "[\n"
+          (string-join
+           (map (lambda (i) (string-append ind (paren-wrap (emit-expr i (+ depth 1)) i)))
+                items)
+           "\n")
+          "\n" (indent depth) "]")))]))
 
 ;; --- nix attrs (map literal) -----------------------------------------------
 
@@ -924,6 +921,9 @@
    (string-join entries "\n")
    "\n" (indent depth) "}"))
 
+(define (escape-nix-multiline-keep-interp s)
+  (regexp-replace* #rx"''" s "'''"))
+
 (define (escape-nix-string-keep-interp s)
   (regexp-replace*
    #rx"\""
@@ -932,6 +932,14 @@
     (regexp-replace* #rx"\\\\" s "\\\\\\\\")
     "\\\\n")
    "\\\\\""))
+
+(define (emit-nix-interp-string-inline parts depth)
+  (define chunks
+    (for/list ([part (in-list parts)])
+      (cond
+        [(string? part) (escape-nix-multiline-keep-interp part)]
+        [else (format "${~a}" (emit-expr part depth))])))
+  (string-join chunks ""))
 
 (define (emit-nix-interp-string parts depth)
   (define chunks
@@ -947,6 +955,9 @@
     (for/list ([line (in-list lines)])
       (cond
         [(string? line) (string-append ind line)]
+        [(nix-interpolated-string? line)
+         (string-append ind (emit-nix-interp-string-inline
+                             (nix-interpolated-string-parts line) depth))]
         [else (string-append ind "${" (emit-expr line depth) "}")])))
   (string-append
    "''\n"
