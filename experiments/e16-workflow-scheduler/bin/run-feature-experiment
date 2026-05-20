@@ -84,7 +84,7 @@ if [[ "$PROFILE" -gt 0 ]]; then
   CHECK_CMD="
 Type check (errors only, fast):
 \`\`\`
-BEAGLE_AGENT_MODE=1 $BEAGLE_BIN check --profile $PROFILE $WORKSPACE/src/
+$BEAGLE_BIN check --agent --profile $PROFILE $WORKSPACE/src/
 \`\`\`
 "
   CHECK_WORKFLOW="5. Run the type checker. Fix any exhaustive-match errors (these point to match sites you missed). Iterate until 0 errors."

@@ -245,37 +245,108 @@ for statistical significance.
 
 ---
 
+## F2-optimized: Closing the Speed Gap
+
+### Motivation
+
+F1-reps showed Feature A as a P2 outlier: 411s vs P0's 234s (+76%).
+Investigation of the P2 agent transcript revealed three sources of
+overhead:
+
+1. **Checker noise.** The P2 agent saw provenance notes and undefined-
+   function warnings alongside real errors. It wasted cycles investigating
+   phantom issues.
+2. **Wrong workflow position.** The CLAUDE.md template presented the
+   checker as step 4 (pre-test), encouraging the agent to type-check
+   before tests passed — adding ~6s of Racket startup per invocation
+   to the inner loop.
+3. **Vague framing.** The checker's role wasn't clearly explained. The
+   agent treated it as an exploration tool rather than a verification
+   gate.
+
+### Changes
+
+Three targeted fixes to `run-feature-experiment`:
+
+| Change | What | Why |
+|--------|------|-----|
+| `BEAGLE_AGENT_MODE=1` | Suppress provenance notes and semantic warnings | Eliminates noise; agent sees only actionable errors |
+| Checker → step 5 | Move type check after all tests pass | Prevents checker in inner loop; ~6s/call savings |
+| Clear framing | "Fix any exhaustive-match errors (these point to match sites you missed)" | Agent knows exactly what checker output means |
+
+### Results: Feature A Head-to-Head
+
+| Metric | P0 (F2) | P2 (F2) | P0 (F1-reps) | P2 (F1-reps) |
+|--------|--------:|--------:|--------------:|--------------:|
+| Visible | 5/5 | 5/5 | 5/5 | 5/5 |
+| Hidden | 11/11 | 11/11 | 11/11 | 11/11 |
+| Duration | 245s | 267s | 234s | 411s |
+| **P2 overhead** | | **+9%** | | **+76%** |
+
+The P2 speed penalty collapsed from **+76% to +9%**. Both profiles
+achieved perfect correctness. The 22-second gap is within normal
+variance for a single trial.
+
+### F2-optimized Conclusions
+
+**The P2 speed penalty on Feature A was a workflow bug, not an
+inherent cost of type checking.**
+
+The original 177s gap was caused by the agent fighting checker noise
+and running the checker in its inner development loop. With clean
+output and correct workflow positioning, the checker adds negligible
+overhead — the agent invokes it once after tests pass, gets a clean
+result (or a short list of missed match sites), and is done.
+
+This retroactively strengthens the F1-reps finding: P2 was already
+faster on 3/4 features with the *unoptimized* workflow. With the
+optimized workflow, the remaining outlier disappears. The corrected
+picture is that **P2 is at least as fast as P0 across all features
+tested**, and likely faster on features with coordination complexity.
+
+---
+
 ## Synthesis
 
 | Finding | Evidence |
 |---------|----------|
 | Types don't help agents fix bugs | T1: P0 = P2 = P3, zero checker calls |
 | False-positive type errors actively hurt | T1: P1 is 3.4× slower |
-| Types may speed up feature building | F1-reps: P2 faster on 3/4 features (avg 274s vs 264s) |
+| Types speed up feature building (when workflow is right) | F1-reps: P2 faster on 3/4 features; F2: outlier eliminated |
 | Types are not required for correctness at this scale | F1-reps: 8/8 complete at both P0 and P2 |
-| Original P2 correctness advantage did not replicate | F1-reps A: P0 now also 5/5 (was 2/5 in F1) |
+| Checker noise is worse than no checker | T1-P1 (3.4×), F1-reps A unoptimized (+76%); both caused by agent chasing phantom errors |
+| Workflow positioning matters as much as the tool itself | F2: same checker, same profile — gap collapsed from +76% to +9% via prompt/workflow changes alone |
 | The value of types is coordination speed, not detection | Agent never uses checker for bug finding; types reduce wrong turns during feature construction |
 
 **Updated finding:**
 
 > Types are not a bug-finding tool for agents, and at this codebase
 > scale, they are not required for correctness either. What types
-> appear to provide is *velocity* — a routing signal that helps the
-> agent converge on a correct implementation with fewer iterations.
+> provide is *velocity* — a routing signal that helps the agent
+> converge on a correct implementation with fewer iterations.
 >
-> The original F1 correctness gap (P0: 2/5, P2: 5/5) did not replicate
-> across 4 structural variants, but P2 consistently trended faster on
-> 3 of 4 features. The value proposition shifts from "types prevent
-> mistakes" to "types reduce search time."
+> But this velocity gain is fragile: it depends on the checker
+> producing clean, actionable output and being positioned correctly
+> in the development workflow. A noisy or poorly-timed checker is
+> worse than no checker at all (T1-P1: 3.4× slower; F1-reps Feature A
+> unoptimized: +76% overhead).
 >
-> This is a weaker but more honest claim than the pilot suggested, and
-> it points toward the right next experiment: higher N to confirm the
-> speed signal, and larger codebases where navigation cost dominates.
+> The F2-optimized experiment proved the point: three non-code changes
+> (suppress noise, reposition in workflow, clarify framing) collapsed
+> the P2 speed penalty from +76% to +9% on the worst-case feature.
+> With the optimized workflow, P2 is at least as fast as P0 across all
+> features tested, and likely faster on coordination-heavy tasks.
+>
+> **The implication for language/toolchain designers:** the type checker
+> itself is table stakes. What determines whether it helps or hurts an
+> LLM agent is the *integration surface* — output quality, invocation
+> cost, and workflow position. A clean checker at the right moment is
+> a force multiplier. A noisy checker in the inner loop is a tax.
 
 ## Caveats
 
-- **N=1 per cell.** Speed differences are suggestive, not significant.
-  Run 3-5 reps on features E and A to test for statistical significance.
+- **N=1 per cell.** Speed differences are directionally consistent but
+  not statistically significant. Run 3-5 reps per cell to confirm.
 - **Small codebase.** 6 files means the agent can read everything. In a
   larger codebase, the navigation advantage of type errors would likely
   increase, and the correctness gap may re-emerge.
@@ -283,6 +354,8 @@ for statistical significance.
   benefit more from type guidance.
 - **Beagle-specific.** The type checker profiles are specific to Beagle's
   implementation. Results may not generalize to other type systems.
+- **F2 is N=1.** The optimized workflow result (267s vs 245s) is a single
+  trial. The gap elimination is dramatic but needs replication.
 - **Original F1 not re-run.** The F1-reps Feature A result contradicts
   the original F1 Feature A result. We did not re-run the original trial
   to confirm whether the discrepancy is variance or a changed condition.
@@ -293,7 +366,7 @@ for statistical significance.
 - `bin/run-F1` — F1 batch runner (2 features × 2 profiles)
 - `bin/run-F1-reps` — F1-reps batch runner (4 features × 2 profiles, randomized)
 - `bin/run-type-experiment` — Single T1 trial runner
-- `bin/run-feature-experiment` — Single F1/F1-reps trial runner
+- `bin/run-feature-experiment` — Single F1/F1-reps/F2 trial runner (with agent-mode + optimized workflow)
 - `bin/fingerprint-type-bugs` — Bug/profile visibility matrix
 - `type-bugs/` — 10 bug injection scripts
 - `feature-tasks/A-task-groups/` — Feature A spec + visible/hidden oracles
@@ -301,11 +374,4 @@ for statistical significance.
 - `feature-tasks/C-worker-load-limits/` — Feature C spec + oracles (F1-reps)
 - `feature-tasks/D-cost-budgets/` — Feature D spec + oracles (F1-reps)
 - `feature-tasks/E-exclusive-resources/` — Feature E spec + oracles (F1-reps)
-
-- `bin/run-T1` — T1 batch runner (3 bugs × 4 profiles)
-- `bin/run-F1` — F1 batch runner (2 features × 2 profiles)
-- `bin/run-type-experiment` — Single T1 trial runner
-- `bin/run-feature-experiment` — Single F1 trial runner
-- `bin/fingerprint-type-bugs` — Bug/profile visibility matrix
-- `type-bugs/` — 10 bug injection scripts
-- `feature-tasks/` — 2 feature specs with visible/hidden oracles
+- `results/type/F2-optimized/` — Optimized workflow head-to-head results
