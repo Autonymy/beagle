@@ -93,6 +93,20 @@
 (define SUBMODULE-BOUNDARY-TYPES
   '("attrsOf" "lazyAttrsOf" "listOf" "submodule"))
 
+(define FREEFORM-TYPES
+  '("either" "oneOf" "anything" "unspecified" "raw" "attrs" "freeformType"))
+
+(define (entry-is-permissive-parent? entry)
+  (define t (hash-ref entry 't "?"))
+  (or (member t SUBMODULE-BOUNDARY-TYPES)
+      (member t FREEFORM-TYPES)
+      (and (equal? t "nullOr")
+           (let ([inner (hash-ref entry 'inner #f)])
+             (and inner (hash? inner)
+                  (let ([it (hash-ref inner 't "?")])
+                    (or (member it SUBMODULE-BOUNDARY-TYPES)
+                        (member it FREEFORM-TYPES))))))))
+
 (define (nixos-option-lookup/wildcard schema path-str)
   (or (nixos-option-lookup schema path-str)
       (let ([parts (string-split path-str ".")])
@@ -112,9 +126,7 @@
                      (define prefix (string-join (take parts i) "."))
                      (define prefix-entry (nixos-option-lookup schema prefix))
                      (cond
-                       [(and prefix-entry
-                             (let ([t (hash-ref prefix-entry 't "?")])
-                               (member t SUBMODULE-BOUNDARY-TYPES)))
+                       [(and prefix-entry (entry-is-permissive-parent? prefix-entry))
                         'permissive]
                        [else (loop (add1 i))])])]))))))
 

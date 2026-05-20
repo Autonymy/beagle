@@ -266,13 +266,12 @@
     (cond
       [(member top-ns MODULE-STRUCTURAL-KEYS) (void)]
       [(string-prefix? path-str "options.") (void)]
+      [(string-prefix? path-str "myConfig.") (void)]
       [else
        (define entry (nixos-option-lookup/wildcard schema path-str))
        (define in-hm-context?
          (and (not entry)
-              (member top-ns HOME-MANAGER-ROOTS)
-              (not (nixos-namespace-exists? schema
-                     (string-join (take (string-split path-str ".") (min 2 (length (string-split path-str ".")))) ".")))))
+              (member top-ns HOME-MANAGER-ROOTS)))
        (cond
          [in-hm-context? (void)]
          [(not entry)
@@ -311,22 +310,27 @@
     (for/list ([(path-str occurrences) (in-hash seen)]
                #:when (> (length occurrences) 1))
       (define locs (reverse occurrences))
-      (define first-fk (car locs))
-      (define first-key-str (symbol->string (found-key-key-sym first-fk)))
-      (define-values (first-line _first-col)
-        (find-key-in-source-nth file-path first-key-str (found-key-occurrence first-fk)))
-      (for/list ([dup (in-list (cdr locs))])
-        (define dup-key-str (symbol->string (found-key-key-sym dup)))
-        (define-values (dup-line dup-col)
-          (find-key-in-source-nth file-path dup-key-str (found-key-occurrence dup)))
-        (validation-error
-         file-path
-         dup-line
-         dup-col
-         (format "duplicate option: ~a (also set at line ~a)"
-                 path-str (or first-line "?"))
-         'duplicate
-         path-str)))))
+      (define vals (map found-key-value locs))
+      (define all-same? (andmap (lambda (v) (equal? v (car vals))) (cdr vals)))
+      (cond
+        [all-same? '()]
+        [else
+         (define first-fk (car locs))
+         (define first-key-str (symbol->string (found-key-key-sym first-fk)))
+         (define-values (first-line _first-col)
+           (find-key-in-source-nth file-path first-key-str (found-key-occurrence first-fk)))
+         (for/list ([dup (in-list (cdr locs))])
+           (define dup-key-str (symbol->string (found-key-key-sym dup)))
+           (define-values (dup-line dup-col)
+             (find-key-in-source-nth file-path dup-key-str (found-key-occurrence dup)))
+           (validation-error
+            file-path
+            dup-line
+            dup-col
+            (format "duplicate option: ~a (also set at line ~a)"
+                    path-str (or first-line "?"))
+            'duplicate
+            path-str))]))))
 
 ;; ============================================================================
 ;; Cross-file conflict detection
