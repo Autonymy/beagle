@@ -18,7 +18,7 @@ beagle/         # Aggregate (multi-collection, implies lib + doc)
 ## How to test
 
 ```
-raco test beagle-test/tests/              # full suite (773 tests)
+raco test beagle-test/tests/              # full suite (796 tests)
 raco test beagle-test/tests/parse.rkt     # just parser
 raco test beagle-test/tests/emit.rkt      # just Clojure emitter
 raco test beagle-test/tests/emit-js.rkt   # just JS emitter
@@ -70,7 +70,7 @@ Example: `(defn foo [(x : Int)] (+ x 1))` in test form:
 | `beagle-lib/private/emit-nix.rkt` | AST → Nix source string |
 | `beagle-lib/private/emit-sql.rkt` | AST → SQL source string |
 | `beagle-lib/private/types.rkt` | Type AST, `MAP-TAG`/`SET-TAG` symbols, compatibility |
-| `beagle-lib/private/stdlib-types.rkt` | ~700 pre-typed stdlib entries |
+| `beagle-lib/private/stdlib-types.rkt` | ~696 pre-typed stdlib entries |
 | `beagle-lib/private/lint.rkt` | Shadow detection, unused externs, untyped warnings |
 | `beagle-lib/private/macros.rkt` | Macro registry, expansion, safe/unsafe boundary |
 | `beagle-lib/private/expand-tool.rkt` | Backend for `beagle-expand` (datum-level, pre-parse) |

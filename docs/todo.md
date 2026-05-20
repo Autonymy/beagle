@@ -36,7 +36,7 @@ Corner agent mistakes mechanically. See [`docs/type-system.md`](type-system.md) 
 - [x] `set!` for property mutation — `(set! (.-value el) "")` parsed and emitted for CLJ + JS
 - [x] ~45 stdlib fns in `emit-core-call`: mapv, filterv, sort-by, dissoc, update, merge, get, subvec, pop, peek, some, take, drop, vector?, map?, distinct, flatten, complement, constantly, partial, comp, frequencies, group-by, partition, interleave, juxt, not-empty, take-last, drop-last, sequential?, seq?, coll?, set?, pr-str, to-array, aget, aset, array-seq, clj->js, js->clj, seq, not=
 - [x] Bare npm imports — single-word requires emit as bare package imports
-- [x] `letfn` — mutual recursion local fns (CLJ + JS emit, lint, 550 tests)
+- [x] `letfn` — mutual recursion local fns (CLJ + JS emit, lint, 796 tests)
 - [x] Atom ops in emit-core-call — `atom`, `deref`, `reset!`, `swap!`, `add-watch`, `remove-watch`
 - [x] Core fns as higher-order values — JS-VALUE-WRAPPERS emit lambda wrappers in value position; binding-aware (user defs shadow stdlib)
 - [x] JS-NO-EMIT safety net — compile-time warning for portable stdlib fns with no JS translation (139 symbols)

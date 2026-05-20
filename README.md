@@ -86,7 +86,7 @@ Or from source:
 
 ```sh
 raco pkg install --link beagle-lib/ beagle-test/ beagle-doc/ beagle/
-raco test beagle-test/tests/   # 773 tests
+raco test beagle-test/tests/   # 796 tests
 ```
 
 ## Agent integration

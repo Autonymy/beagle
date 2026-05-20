@@ -49,18 +49,17 @@ update_in_file() {
 
 echo "Collecting facts..."
 
-# Test count: check-* assertions across test files
-TEST_COUNT=$(grep -rch "check-equal?\|check-true\|check-false\|check-exn\|check-not-exn" tests/*.rkt 2>/dev/null \
-  | awk '{s+=$1} END {print s}')
+# Test count: raco test reports actual test-case count
+TEST_COUNT=$(raco test beagle-test/tests/ 2>&1 | grep -oP '\d+(?= tests passed)' || echo "0")
 echo "  tests: $TEST_COUNT"
 
 # Stdlib function count (sum across portable + clj + cljs hash definitions only)
 STDLIB_COUNT=$(python3 -c "
 import re
 total = 0
-for path, marker in [('private/stdlib-portable.rkt', 'STDLIB-PORTABLE'),
-                     ('private/stdlib-clj.rkt', 'STDLIB-CLJ'),
-                     ('private/stdlib-cljs.rkt', 'STDLIB-CLJS')]:
+for path, marker in [('beagle-lib/private/stdlib-portable.rkt', 'STDLIB-PORTABLE'),
+                     ('beagle-lib/private/stdlib-clj.rkt', 'STDLIB-CLJ'),
+                     ('beagle-lib/private/stdlib-cljs.rkt', 'STDLIB-CLJS')]:
     with open(path) as f:
         content = f.read()
     start = content.find('(define ' + marker)
@@ -88,19 +87,22 @@ echo "  devlog entries: $DEVLOG_COUNT"
 DEPRECATED_TYPES="Long|Double|Boolean|Integer"
 
 # Check for stale type references in docs
+# Exclude lines that explain the alias resolution (e.g. "Long → Int", "resolve to Int")
 STALE_FILES=""
 for f in docs/cheatsheet.md docs/cheatsheet-consumer.md \
          README.md CLAUDE.md AGENTS.md; do
   if [ -f "$f" ]; then
-    # Match deprecated type names used as Beagle types (not Java interop like Long/parseLong)
-    if grep -Pn "(?<![/.])\b($DEPRECATED_TYPES)\b(?!/)" "$f" | grep -v 'Long/\|Double/\|Boolean/\|Integer/' | grep -qv '^\s*#'; then
+    if grep -Pn "(?<![/.])\b($DEPRECATED_TYPES)\b(?!/)" "$f" \
+       | grep -v 'Long/\|Double/\|Boolean/\|Integer/' \
+       | grep -v "resolve to\|sugar\|JVM names\|CLJ-ALIASES\|accepted as\|compatibility\|don't appear\|Don't add\|removed by" \
+       | grep -qv '^\s*#'; then
       STALE_FILES="$STALE_FILES $f"
     fi
   fi
 done
 if [ -n "$STALE_FILES" ]; then
   echo "  WARNING: stale type names (Long/Double/Boolean) in:$STALE_FILES"
-  echo "  Canonical types are: Int Float Bool String Nil Any Keyword Symbol"
+  echo "  Canonical types are: Int Float Bool String Nil Any Keyword Symbol Number"
 else
   echo "  type names: consistent"
 fi
@@ -116,10 +118,11 @@ for f in CLAUDE.md AGENTS.md README.md docs/todo.md; do
   update_in_file "$f" "[0-9]+-test" "$TEST_COUNT-test" "test count (hyphenated)"
 done
 
-# Stdlib count: "~N Clojure functions" and "(~N functions)"
+# Stdlib count: various patterns across docs
 for f in CLAUDE.md README.md docs/cheatsheet.md; do
   update_in_file "$f" "~[0-9]+ Clojure functions" "~$STDLIB_COUNT Clojure functions" "stdlib count"
   update_in_file "$f" "~[0-9]+ functions\)" "~$STDLIB_COUNT functions)" "stdlib count (parens)"
+  update_in_file "$f" "~[0-9]+ entries total" "~$STDLIB_COUNT entries total" "stdlib entries total"
 done
 
 # Devlog count
