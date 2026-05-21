@@ -78,7 +78,10 @@
     "10-let-patterns.bgl"
     "11-when-if-let.bgl"
     "12-dotimes-condp.bgl"
-    "13-letfn-mutual.bgl"))
+    "13-letfn-mutual.bgl"
+    "15-multi-arity.bgl"
+    "16-case-maps.bgl"
+    "17-doseq-sets.bgl"))
 
 (for ([name (in-list differential-fixtures)])
   (define bgl-path (build-path fixtures-dir name))

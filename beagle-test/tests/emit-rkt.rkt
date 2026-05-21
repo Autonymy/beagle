@@ -201,6 +201,10 @@
   (define out (rkt-emit "(define-target rkt) (def f string/upper-case)"))
   (check-true (string-contains? out "string-upcase")))
 
+(test-case "get with default wraps in thunk"
+  (define out (rkt-emit-forms '(define-target rkt) `(def x (get m "k" 0))))
+  (check-true (string-contains? out "(hash-ref m \"k\" (λ () 0))")))
+
 ;; --- constructor translation -----------------------------------------------
 
 (test-case "->Name becomes Name"

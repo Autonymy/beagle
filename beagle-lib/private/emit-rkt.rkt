@@ -534,7 +534,7 @@
     [(nth)    (format "(list-ref ~a)" (string-join a " "))]
     [(get)
      (if (= (length a) 3)
-         (format "(hash-ref ~a ~a)" (car a) (cadr a))
+         (format "(hash-ref ~a ~a (λ () ~a))" (car a) (cadr a) (caddr a))
          (format "(hash-ref ~a ~a)" (car a) (cadr a)))]
     [(assoc)  (format "(hash-set ~a ~a)" (string-join a " "))]
     [(dissoc) (format "(hash-remove ~a ~a)" (car a) (cadr a))]
