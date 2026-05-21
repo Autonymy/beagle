@@ -162,6 +162,57 @@ else
     FAIL=$((FAIL + 1))
 fi
 
+# --- Types module -------------------------------------------------------------
+
+echo ""
+echo "=== Building self-hosted types ==="
+bin/beagle-build self-host/types.bjs
+
+echo "=== TYPES: Running self-tests ==="
+TYPES_OUT=$(node runtime/src/self/host/types.js 2>&1)
+TYPES_RC=$?
+
+echo "$TYPES_OUT"
+if [ $TYPES_RC -eq 0 ]; then
+    PASS=$((PASS + 1))
+else
+    FAIL=$((FAIL + 1))
+fi
+
+# --- Macros module ------------------------------------------------------------
+
+echo ""
+echo "=== Building self-hosted macros ==="
+bin/beagle-build self-host/macros.bjs
+
+echo "=== MACROS: Running self-tests ==="
+MACROS_OUT=$(node runtime/src/self/host/macros.js 2>&1)
+MACROS_RC=$?
+
+echo "$MACROS_OUT"
+if [ $MACROS_RC -eq 0 ]; then
+    PASS=$((PASS + 1))
+else
+    FAIL=$((FAIL + 1))
+fi
+
+# --- AST module ---------------------------------------------------------------
+
+echo ""
+echo "=== Building self-hosted AST ==="
+bin/beagle-build self-host/ast.bjs
+
+echo "=== AST: Running self-tests ==="
+AST_OUT=$(node runtime/src/self/host/ast.js 2>&1)
+AST_RC=$?
+
+echo "$AST_OUT"
+if [ $AST_RC -eq 0 ]; then
+    PASS=$((PASS + 1))
+else
+    FAIL=$((FAIL + 1))
+fi
+
 # --- Summary ------------------------------------------------------------------
 
 echo ""
