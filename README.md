@@ -119,7 +119,7 @@ Beagle matches the typed baseline (mypy) on correctness and beats the untyped on
 
 - **Proc macro body language.** Macro bodies are Racket, not Beagle. This means macro authors need `car`/`cdr`/quasiquote — E19 showed agents can learn this from docs, but the impedance mismatch is real.
 - **Cross-target macro verification.** Proc macros are tested on Clojure and JS. E22 (scoped, not yet run) will verify all 7 targets.
-- **CNF visibility.** E20 (scoped) will test whether query tools see through macro expansions. If they can't, macros create black boxes in multi-agent workflows.
+- ~~**CNF visibility.**~~ Resolved (E20): query tools now expand macros before extracting definitions. `beagle-sig`, `beagle-fields`, and `beagle-provides` all see through macro expansions.
 
 ## Setup
 
