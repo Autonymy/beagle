@@ -177,10 +177,23 @@ types, GROUP BY semantics), and 152 tests. Gaps for real production use:
 - [ ] Derived tables — subquery in FROM clause
 - [ ] Schema migrations — versioned DDL with up/down
 
+### Racket target (`beagle/rkt`)
+
+Emits `#lang typed/racket`. Real target (self-hosting path, Racket community)
+that also serves as a differential oracle — `raco make` independently validates
+Beagle's type promises for free.
+
+- [x] P0: hand-emitted 5 spike programs, all pass `raco make`, mapping table
+- [ ] P1: minimal emitter (`emit-rkt.rkt`) — records, unions, scalars, parametric types, narrowing, basic forms
+- [ ] P1: `beagle/rkt` target module + reader
+- [ ] P1: fixture tests — emit from `.bgl`, compare to expected `.rkt`, run `raco make`
+- [ ] P1: negative fixtures — known-buggy `.bgl` files that `raco make` must reject
+- [ ] P2: oracle CI — `raco make` on emitted output as part of test suite
+- [ ] P3: differential harness — same inputs through JS + Racket, compare outputs
+
 ### New emit targets
 
-- [ ] `beagle/rkt` — Racket
-- [ ] `beagle/py` — Python (plumbed, needs emitter)
+- [x] `beagle/py` — Python
 - [ ] `beagle/elixir` — Elixir
 - [ ] `beagle/bash` — Bash
 

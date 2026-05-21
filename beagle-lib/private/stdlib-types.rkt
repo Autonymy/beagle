@@ -42,6 +42,7 @@
     [(nix)      stdlib-nix-combined]
     [(sql)      stdlib-sql-combined]
     [(py)       stdlib-py-combined]
+    [(rkt)      STDLIB-PORTABLE]
     [else (error 'stdlib-for-target "unknown target: ~a" target)]))
 
 (define (target-excludes-for target)
