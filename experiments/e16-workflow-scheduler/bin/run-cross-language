@@ -282,7 +282,8 @@ else
       if echo "$FINAL_CHECK" | grep -q "Success"; then
         FINAL_TYPE_ERRORS=0
       else
-        FINAL_TYPE_ERRORS=$(echo "$FINAL_CHECK" | grep -c "error:" || echo 0)
+        FINAL_TYPE_ERRORS=$(echo "$FINAL_CHECK" | grep -c "error:" || true)
+        FINAL_TYPE_ERRORS=${FINAL_TYPE_ERRORS:-0}
       fi
 
       # pytest
@@ -310,16 +311,22 @@ else
 
   # ── Step 6: Score quality ──────────────────────────────────────────────
 
-  if [[ "$VISIBLE_TOTAL" -eq 0 ]]; then
-    FIX_QUALITY="broken_build"
-  elif [[ "$VISIBLE_PASSED" -lt "$VISIBLE_TOTAL" ]]; then
-    FIX_QUALITY="visible_incomplete"
-  elif [[ "$ORACLE_TOTAL" -gt 0 && "$ORACLE_PASSED" -eq "$ORACLE_TOTAL" ]]; then
-    FIX_QUALITY="complete"
-  elif [[ "$ORACLE_TOTAL" -gt 0 ]]; then
+  if [[ "$ORACLE_TOTAL" -gt 0 && "$ORACLE_PASSED" -eq "$ORACLE_TOTAL" ]]; then
+    if [[ "$VISIBLE_TOTAL" -gt 0 && "$VISIBLE_PASSED" -lt "$VISIBLE_TOTAL" ]]; then
+      FIX_QUALITY="oracle_complete_visible_incomplete"
+    else
+      FIX_QUALITY="complete"
+    fi
+  elif [[ "$ORACLE_TOTAL" -gt 0 && "$ORACLE_PASSED" -gt 0 ]]; then
     FIX_QUALITY="partial"
-  else
+  elif [[ "$VISIBLE_TOTAL" -eq 0 && "$ORACLE_TOTAL" -eq 0 ]]; then
+    FIX_QUALITY="broken_build"
+  elif [[ "$VISIBLE_TOTAL" -gt 0 && "$VISIBLE_PASSED" -eq "$VISIBLE_TOTAL" ]]; then
     FIX_QUALITY="visible_only"
+  elif [[ "$VISIBLE_TOTAL" -gt 0 ]]; then
+    FIX_QUALITY="visible_incomplete"
+  else
+    FIX_QUALITY="broken_build"
   fi
 
   echo "Quality: ${FIX_QUALITY}  Duration: ${AGENT_DURATION}s"
