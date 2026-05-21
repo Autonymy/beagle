@@ -1,0 +1,42 @@
+#lang beagle
+
+(ns beagle.e19.router)
+
+(define-macro proc defrouter
+  [(name : Symbol) (routes : (Vec Syntax))] : (Vec Form)
+  (let* ((route-items (if (and (pair? routes) (eq? (car routes) BRACKET-TAG))
+                          (cdr routes)
+                          routes))
+         (dispatch-name (string->symbol (format "~a-dispatch" name)))
+         (log-name (string->symbol (format "~a-log" name)))
+         (cond-pairs
+          (append
+           (apply append
+                  (map (lambda (r)
+                         (let ((path (car r))
+                               (handler (cadr r)))
+                           (list (list '= 'path path)
+                                 (symbol->string handler))))
+                       route-items))
+           (list 'true "404 Not Found"))))
+    (list
+     `(defn ,dispatch-name ,(br '(path : String)) : String
+        (cond ,@(let loop ((items cond-pairs) (acc '()))
+                  (if (null? items) (reverse acc)
+                      (loop (cddr items)
+                            (cons (br (car items) (cadr items)) acc))))))
+     `(defn ,log-name ,(br '(path : String)) : String
+        (do (println (str "[LOG] GET " path))
+            (,dispatch-name path))))))
+
+(defrouter api
+  [("/users" handle-users)
+   ("/products" handle-products)])
+
+(defn handle-users [] : String "handle-users")
+(defn handle-products [] : String "handle-products")
+
+(println (str "GET /users -> " (api-dispatch "/users")))
+(println (str "GET /products -> " (api-dispatch "/products")))
+(println (str "GET /unknown -> " (api-dispatch "/unknown")))
+(println (api-log "/users"))
