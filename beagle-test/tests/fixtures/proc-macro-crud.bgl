@@ -1,4 +1,4 @@
-#lang beagle
+#lang beagle/clj
 
 ;; Procedural macro: generates a record + constructor + accessors from a spec.
 ;; 5 lines of macro → expands to ~15 lines of typed code.

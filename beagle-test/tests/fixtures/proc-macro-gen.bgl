@@ -1,4 +1,4 @@
-#lang beagle
+#lang beagle/clj
 
 ;; Procedural macro: generates a typed getter function from a record + field name.
 (define-macro proc gen-getter

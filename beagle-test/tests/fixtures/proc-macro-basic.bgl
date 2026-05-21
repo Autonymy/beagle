@@ -1,4 +1,4 @@
-#lang beagle
+#lang beagle/clj
 
 (define-macro proc make-const
   [(name : Symbol) (val : Expr)] : Form

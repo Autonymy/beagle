@@ -5,15 +5,13 @@
 ;; Pipeline (all expand-time, inside our custom #%module-begin):
 ;;   parse  → check  → emit
 ;;
-;; The user writes Racket-syntax beagle source. The custom reader
-;; (lang/reader.rkt) preserves [...] vs (...) via a `#%brackets` tag.
-;; main.rkt parses, runs the type checker (in strict mode only), emits
-;; Clojure source, and the runtime just `(display)`s it.
+;; The custom reader (lang/reader.rkt) preserves [...] vs (...) via a
+;; `#%brackets` tag. main.rkt parses, type-checks (strict mode), emits
+;; target source, and the runtime `(display)`s it.
 ;;
-;; Pipe to a .clj file:
-;;   racket myprogram.rkt > myprogram.clj
-;;
-;; Or use bin/beagle-build to auto-derive the path from (define-namespace ...).
+;; .bgl files must declare a target explicitly via #lang beagle/<target>
+;; or (define-target <target>). Target-specific extensions (.bclj, .bjs,
+;; .bnix, .bpy) set the target from the #lang line.
 
 (require (for-syntax racket/base
                      racket/string
@@ -63,6 +61,15 @@
                (raise-syntax-error 'beagle
                  (format "extension/header mismatch: ~a expects #lang beagle/~a, found #lang beagle/~a"
                          ext-str expected-tgt (program-target prog))
+                 stx))
+             ;; .bgl files must declare a target explicitly
+             (when (and (not expected-tgt)
+                        (string-suffix? path-str ".bgl")
+                        (not (for/or ([f (in-list forms)])
+                               (define d (syntax->datum f))
+                               (and (pair? d) (eq? (car d) 'define-target)))))
+               (raise-syntax-error 'beagle
+                 "target required — use #lang beagle/js, beagle/clj, beagle/py, beagle/nix, or add (define-target <target>)"
                  stx)))))
 
        (type-check-with-locs! prog handle-error)

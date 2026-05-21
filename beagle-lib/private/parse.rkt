@@ -179,9 +179,20 @@
           (let loop ([acc '()])
             (define d (read-syntax src))
             (if (eof-object? d) (reverse acc) (loop (cons d acc)))))
-        (if target
-          (cons (datum->syntax #f (list 'define-target target)) forms)
-          forms)))))
+        (cond
+          [target
+           (cons (datum->syntax #f (list 'define-target target)) forms)]
+          [has-lang?
+           (define has-define-target?
+             (for/or ([f (in-list forms)])
+               (define d (syntax->datum f))
+               (and (pair? d) (eq? (car d) 'define-target))))
+           (unless has-define-target?
+             (error 'beagle
+                    "~a: #lang beagle requires a target — use #lang beagle/js, beagle/clj, beagle/py, beagle/nix, or add (define-target <target>)"
+                    (path->string src)))
+           forms]
+          [else forms])))))
 
 
 (define (import-module-types! mod-path prefix externs registry imp-rec-fields imp-rec-field-order imp-rec-ns mod-ns

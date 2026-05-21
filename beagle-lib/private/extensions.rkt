@@ -9,7 +9,7 @@
 ;;   .bnix  → #lang beagle/nix
 ;;   .bsql  → #lang beagle/sql
 ;;   .bpy   → #lang beagle/py
-;;   .bgl   → portable (no target-specific forms)
+;;   .bgl   → target-neutral (requires explicit #lang or define-target)
 ;;   .rkt   → legacy (no validation)
 ;;
 ;; Extension/header mismatch is a hard compile error.
