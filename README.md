@@ -1,35 +1,24 @@
 # Beagle
 
-A typed Lisp authoring layer for agent-written code. Agents write typed, structural source. Beagle checks it, repairs it, and emits ordinary Clojure / JavaScript / Nix / Python / SQL — or Typed Racket for independent type verification.
+A typed authoring IR where parse, check, and emit run in one synchronous pass. This makes things possible that phased compilers can't do — like typed contracts on compile-time code generation, where the macro's output goes through the same type checker as hand-written code.
 
-**The types are scaffolding. The emitted code is the building.**
-
-Beagle checks *generation*, not runtime — emitted code carries no type guards by design. The goal is to catch the mechanical errors agents make while writing (wrong fields, missing cases, invalid interop), then get out of the way.
+Agents write typed source. Beagle catches mechanical errors (wrong fields, missing cases, invalid interop), then emits ordinary Clojure, JavaScript, Python, or Nix. The types exist at authoring time and disappear at runtime.
 
 ```text
-source.bclj/.bjs/.bnix/.bpy → parse → check → emit → .clj / .js / .nix / .py
-                             ↑
-                    repair compiler
-                             ↑
-                      daemon + AST cache
+.bclj/.bjs/.bnix/.bpy → parse → check → emit → .clj / .js / .nix / .py
+                              ↑
+                     one pass — no phase boundary
 ```
 
-## Core ideas
+## Why the architecture matters
 
-- **S-expressions as structural compression.** Source is close to an AST — repair tooling is cheap and structural, not expensive and string-based.
-- **Explicit mutation.** Agents over-explore mutation-coupled programs. Beagle marks mutation explicitly, collapsing the reasoning search space.
-- **Authoring-time types.** Types catch mechanical errors during generation — wrong fields, missing cases, invalid interop. Then they disappear.
-- **Dynamic runtimes as targets.** One typed surface, multiple backends. Clojure stays Clojure. JavaScript stays JavaScript.
+Most typed languages separate macro expansion from type checking (different compiler phases). Beagle doesn't — expansion, checking, and emission happen in the same pass over the same AST. This means:
 
-## Targets
+- Proc macro output is type-checked identically to hand-written code
+- Input/output contracts are enforced at expansion time
+- The agent can inspect expansions (`beagle-expand`) and get typed errors on generated code
 
-- `#lang beagle/clj` — Clojure
-- `#lang beagle/cljs` — ClojureScript
-- `#lang beagle/js` — JavaScript
-- `#lang beagle/nix` — Nix
-- `#lang beagle/py` — Python
-- `#lang beagle/sql` — SQL *(experimental)*
-- `#lang beagle/rkt` — Typed Racket *(oracle — validates type promises via `raco make`)*
+This is an architectural consequence of being a transpiler, not a design goal we started with. We discovered it while building procedural macros and confirmed it experimentally (E18, E19).
 
 ## A program
 
@@ -53,7 +42,7 @@ source.bclj/.bjs/.bnix/.bpy → parse → check → emit → .clj / .js / .nix /
 
 ## Procedural macros
 
-Compile-time code generation with typed AST contracts. The macro body is Racket; inputs and outputs are contract-checked; the expansion goes through the full type-checking pipeline.
+Compile-time code generation with typed AST contracts. The macro body is Racket (not Beagle — this is an impedance mismatch we haven't closed yet). Inputs and outputs are contract-checked; the expansion goes through the full type-checking pipeline.
 
 ```racket
 #lang beagle
@@ -71,7 +60,21 @@ Compile-time code generation with typed AST contracts. The macro body is Racket;
 ;; → defrecord User + typed getters User-name, User-email, User-age
 ```
 
-Template macros can't express this — they can't iterate over data to generate variable numbers of forms. Proc macros compress 2-3× at realistic scale (E18).
+Proc macros compress 2-3× at realistic scale when you have enough instances to amortize the definition cost (crossover at 2-4 instances). Below that, hand-written code is shorter. Template macros can't express these patterns at all — they can't iterate over data to generate variable numbers of forms.
+
+## Targets
+
+| Target | `#lang` | Maturity | Runtime verification |
+|--------|---------|----------|---------------------|
+| Clojure | `beagle/clj` | Production — full stdlib (352), all experiments | Babashka |
+| JavaScript | `beagle/js` | Production — 38 native stdlib + 28 typed `js/*` forms | Node |
+| Python | `beagle/py` | Complete — 131 stdlib, dataclasses, match/case | Python 3 |
+| Nix | `beagle/nix` | Complete — 120 stdlib, curried fns, attrsets | nix eval |
+| ClojureScript | `beagle/cljs` | Emitter complete, 75 stdlib | compile-only |
+| SQL | `beagle/sql` | Experimental — DDL, DML, schema validation | compile-only |
+| Typed Racket | `beagle/rkt` | Oracle — `raco make` independently validates type promises | raco make |
+
+Portable stdlib (269 entries) is shared across all targets. Target-specific entries add platform-native operations.
 
 ## Experiments
 
@@ -93,11 +96,9 @@ The load-bearing finding is about *integration*, not the checker itself: the sam
 
 ### E18–E19: Procedural macros
 
-E18 measured compression: proc macros compress 2-3× at realistic scale (crossover at 2-4 instances). Template macros can't express any of the three test patterns — all require iterating over data.
+E18 measured compression: proc macros compress 2-3× at realistic scale. Template macros can't express any of the three test patterns.
 
-E19 tested agent authoring: a prompted agent (with proc macro docs) wrote a working macro in 2 iterations / 271s. An unprompted agent (no docs) independently invented runtime data dispatch in 1 iteration / 117s — the structurally correct fallback, but without compile-time type coverage.
-
-Key finding: proc macro docs are load-bearing for discoverability. Without them, agents reach for runtime patterns.
+E19 tested whether agents can write proc macros. A prompted agent (with docs) wrote a working macro in 2 iterations / 271s. An unprompted agent (no proc macro docs) independently invented runtime data dispatch in 1 iteration / 117s — faster and simpler, but without compile-time type coverage of the generated code. Proc macro docs are load-bearing for discoverability; without them, agents default to runtime patterns.
 
 [E18 Results](experiments/e18-macro-compression/results/RESULTS.md) · [E19 Results](experiments/e19-agent-macro-authoring/results/RESULTS.md)
 
@@ -111,6 +112,12 @@ Key finding: proc macro docs are load-bearing for discoverability. Without them,
 Beagle matches the typed baseline (mypy) on correctness and beats the untyped one (Clojure). mypy edges wall time — the trade Beagle makes is one typed surface across multiple backends, not single-language speed.
 
 [Full methodology](experiments/report.md)
+
+## Known gaps
+
+- **Proc macro body language.** Macro bodies are Racket, not Beagle. This means macro authors need `car`/`cdr`/quasiquote — E19 showed agents can learn this from docs, but the impedance mismatch is real.
+- **Cross-target macro verification.** Proc macros are tested on Clojure and JS. E22 (scoped, not yet run) will verify all 7 targets.
+- **CNF visibility.** E20 (scoped) will test whether query tools see through macro expansions. If they can't, macros create black boxes in multi-agent workflows.
 
 ## Setup
 
