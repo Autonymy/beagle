@@ -92,7 +92,8 @@
     "26-fn-composition.bgl"
     "27-map-operations.bgl"
     "28-recursive-data.bgl"
-    "29-list-processing.bgl"))
+    "29-list-processing.bgl"
+    "30-comprehensive.bgl"))
 
 (for ([name (in-list differential-fixtures)])
   (define bgl-path (build-path fixtures-dir name))
