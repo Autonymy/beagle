@@ -10,11 +10,10 @@ bugs/
     description.md    # What this bug does
     beagle.patch      # Unified diff against golden/beagle/
     python.patch      # Unified diff against golden/python/
-    zero.patch        # Unified diff against golden/zero/
 ```
 
-Not every bug needs all three patches. A bug may only target one or two
-tracks if the relevant code path does not exist in the others.
+Not every bug needs all patches. A bug may only target one track
+if the relevant code path does not exist in the other.
 
 ## Patch format
 

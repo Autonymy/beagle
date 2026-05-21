@@ -15,9 +15,6 @@ on A, so it schedules A first -- exactly the wrong order.
   `graph.reverse` line. (2 lines changed)
 - Beagle `graph.bgl`: swap the `adjacency` and `reverse-adj` arguments in
   the `->DependencyGraph` constructor call. (1 line changed)
-- Zero `graph.0`: swap `graph_set(&mut g, i, ac, dep_idx)` to
-  `graph_set(&mut g, dep_idx, ac, i)` and correspondingly swap the
-  `adj_count` index. (3 lines changed)
 
 **Expected oracle impact:**
 Topological ordering is inverted with respect to dependencies. Tasks that

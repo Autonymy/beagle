@@ -1,5 +1,4 @@
 golden/beagle/_clj/
-golden/zero/.zero/
 golden/python/__pycache__/
 verify/python/__pycache__/
 *-log.txt
