@@ -1227,6 +1227,15 @@ Beagle has two macro systems: ​_template macros_​ for simple
 substitution and ​_procedural macros_​ for computed code generation.
 Both produce forms that go through the full type-checking pipeline.
 
+**When to use which:** Use a template macro when you need simple
+substitution with a fixed output shape (one form in, one form out). Use
+a procedural macro when you need to iterate over data, compute symbol
+names, or generate a variable number of typed top-level forms. If you
+just need data-driven dispatch at runtime (e.g. a lookup table), plain
+functions with `cond` or `map`/`filter` are simpler — reach for proc
+macros when the generated code must participate in the type system
+(typed `defn`, `defrecord`, etc.).
+
 ### Template Macros
 
 Template macros substitute parameters into a fixed template form. The
@@ -1314,8 +1323,11 @@ forms (spliced into the module).
 ```
 
 * Body has access to `racket/base`, `racket/list`, `racket/string`,
-  `racket/format`, plus helpers: `br` (bracket tag), `mp` (map tag),
-  `st` (set tag), `sym->kw` (symbol→keyword)
+  `racket/format`, plus helper `sym->kw` (symbol→keyword)
+
+* Inputs are auto-cleaned: reader tags (`#%brackets`, `#%map`, `#%set`)
+  are stripped before the body receives them — `(Vec Syntax)` args
+  arrive as plain lists, not tagged forms
 
 * Use quasiquote (`‘`) and unquote (`,`) to build output forms
 

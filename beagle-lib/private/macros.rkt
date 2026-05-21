@@ -207,7 +207,8 @@
     (error 'beagle
            "macro ~a: expected ~a arg(s), got ~a"
            name (length params) (length args)))
-  (for ([arg (in-list args)]
+  (define clean-args (map strip-reader-tags args))
+  (for ([arg (in-list clean-args)]
         [contract (in-list input-contracts)]
         [pname (in-list params)])
     (check-datum-contract arg contract name (format "arg ~a" pname)))
@@ -218,7 +219,7 @@
           (error 'beagle
                  "macro ~a: body raised an error:\n  ~a"
                  name (exn-message e)))])
-      (apply (proc-macro-def-proc m) args)))
+      (apply (proc-macro-def-proc m) clean-args)))
   (check-datum-contract result output-contract name "output")
   (cond
     [(and (pair? output-contract) (eq? (car output-contract) 'Vec))

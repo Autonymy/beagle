@@ -6,6 +6,15 @@ Beagle has two macro systems: @emph{template macros} for simple substitution
 and @emph{procedural macros} for computed code generation. Both produce forms
 that go through the full type-checking pipeline.
 
+@bold{When to use which:} Use a template macro when you need simple
+substitution with a fixed output shape (one form in, one form out). Use a
+procedural macro when you need to iterate over data, compute symbol names,
+or generate a variable number of typed top-level forms. If you just need
+data-driven dispatch at runtime (e.g. a lookup table), plain functions with
+@tt{cond} or @tt{map}/@tt{filter} are simpler — reach for proc macros when
+the generated code must participate in the type system (typed @tt{defn},
+@tt{defrecord}, etc.).
+
 @section[#:tag "template-macros"]{Template Macros}
 
 Template macros substitute parameters into a fixed template form.
@@ -83,8 +92,10 @@ forms (spliced into the module).
 
 @itemlist[
   @item{Body has access to @tt{racket/base}, @tt{racket/list}, @tt{racket/string},
-        @tt{racket/format}, plus helpers: @tt{br} (bracket tag), @tt{mp} (map tag),
-        @tt{st} (set tag), @tt{sym->kw} (symbol→keyword)}
+        @tt{racket/format}, plus helper @tt{sym->kw} (symbol→keyword)}
+  @item{Inputs are auto-cleaned: reader tags (@tt{#%brackets}, @tt{#%map},
+        @tt{#%set}) are stripped before the body receives them — @tt{(Vec Syntax)}
+        args arrive as plain lists, not tagged forms}
   @item{Use quasiquote (@tt{`}) and unquote (@tt{,}) to build output forms}
   @item{@tt{(Vec Form)} output is spliced — each form becomes a separate top-level definition}
   @item{Input contracts reject bad arguments at expansion time with clear error messages}
