@@ -1271,7 +1271,14 @@
     [(list 'defunion (? symbol? name) members ...)
      (define raw (map ->datum (or (stx-tail subs 2) members)))
      (define mnames (map (lambda (m) (if (pair? m) (car m) m)) raw))
-     (defunion-form name mnames '() #f)]
+     (define mf-hash (make-hasheq))
+     (for ([m (in-list raw)])
+       (when (and (pair? m) (>= (length m) 2))
+         (define mname (car m))
+         (define fields-datum (cadr m))
+         (when (and (pair? fields-datum) (eq? (car fields-datum) BRACKET-TAG))
+           (hash-set! mf-hash mname (parse-record-fields fields-datum)))))
+     (defunion-form name mnames '() (if (hash-empty? mf-hash) #f mf-hash))]
 
     [(list 'defunion (list (? symbol? name) type-vars ...) member-defs ...)
      (parse-parametric-defunion name type-vars member-defs subs)]
