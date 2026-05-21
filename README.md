@@ -1,17 +1,17 @@
 # Beagle
 
-A typed Lisp authoring layer for agent-written dynamic code. Agents write typed, structural source. Beagle checks it, repairs it, and emits ordinary Clojure / JavaScript / Nix / SQL.
+A typed Lisp authoring layer for agent-written code. Agents write typed, structural source. Beagle checks it, repairs it, and emits ordinary Clojure / JavaScript / Nix / Python / SQL — or Typed Racket for independent type verification.
 
 **The types are scaffolding. The emitted code is the building.**
 
 Beagle checks *generation*, not runtime — emitted code carries no type guards by design. The goal is to catch the mechanical errors agents make while writing (wrong fields, missing cases, invalid interop), then get out of the way.
 
 ```text
-source.bclj/.bjs/.bnix → parse → check → emit → output.clj / .js / .nix
-                       ↑
-              repair compiler
-                       ↑
-                daemon + AST cache
+source.bclj/.bjs/.bnix/.bpy → parse → check → emit → .clj / .js / .nix / .py
+                             ↑
+                    repair compiler
+                             ↑
+                      daemon + AST cache
 ```
 
 ## Core ideas
@@ -27,7 +27,9 @@ source.bclj/.bjs/.bnix → parse → check → emit → output.clj / .js / .nix
 - `#lang beagle/cljs` — ClojureScript
 - `#lang beagle/js` — JavaScript
 - `#lang beagle/nix` — Nix
+- `#lang beagle/py` — Python
 - `#lang beagle/sql` — SQL *(experimental)*
+- `#lang beagle/rkt` — Typed Racket *(oracle — validates type promises via `raco make`)*
 
 ## A program
 
@@ -49,6 +51,28 @@ source.bclj/.bjs/.bnix → parse → check → emit → output.clj / .js / .nix
       0))
 ```
 
+## Procedural macros
+
+Compile-time code generation with typed AST contracts. The macro body is Racket; inputs and outputs are contract-checked; the expansion goes through the full type-checking pipeline.
+
+```racket
+#lang beagle
+(define-macro proc defentity
+  [(name : Symbol) (fields : (Vec Syntax))] : (Vec Form)
+  (cons
+    `(defrecord ,name ,(map (lambda (f) (list (car f) ': (caddr f))) fields))
+    (map (lambda (f)
+           `(defn ,(string->symbol (format "~a-~a" name (car f)))
+              ((r : ,name)) : ,(caddr f)
+              (get r ,(string->symbol (format ":~a" (car f))))))
+         fields)))
+
+(defentity User ((name : String) (email : String) (age : Int)))
+;; → defrecord User + typed getters User-name, User-email, User-age
+```
+
+Template macros can't express this — they can't iterate over data to generate variable numbers of forms. Proc macros compress 2-3× at realistic scale (E18).
+
 ## Experiments
 
 ### E16: Does the type checker make agents faster?
@@ -66,6 +90,16 @@ Types didn't move correctness at this scale — they moved how fast the agent go
 The load-bearing finding is about *integration*, not the checker itself: the same checker, poorly wired into the agent loop (noisy output, wrong workflow position, vague framing), imposed a 76% penalty. Three non-code fixes swung the outcome by 100 percentage points. The contribution is as much *how* the checker reaches the agent as the checker.
 
 [Results](experiments/e16-workflow-scheduler/results/type/RESULTS.md) · [Devlog](docs/devlog/018-e16-type-surface.md)
+
+### E18–E19: Procedural macros
+
+E18 measured compression: proc macros compress 2-3× at realistic scale (crossover at 2-4 instances). Template macros can't express any of the three test patterns — all require iterating over data.
+
+E19 tested agent authoring: a prompted agent (with proc macro docs) wrote a working macro in 2 iterations / 271s. An unprompted agent (no docs) independently invented runtime data dispatch in 1 iteration / 117s — the structurally correct fallback, but without compile-time type coverage.
+
+Key finding: proc macro docs are load-bearing for discoverability. Without them, agents reach for runtime patterns.
+
+[E18 Results](experiments/e18-macro-compression/results/RESULTS.md) · [E19 Results](experiments/e19-agent-macro-authoring/results/RESULTS.md)
 
 ### E1–E15: Cross-language comparison
 
