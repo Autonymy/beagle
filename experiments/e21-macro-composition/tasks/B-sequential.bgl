@@ -1,0 +1,52 @@
+#lang beagle
+
+;; E21 Condition B: single macro generates both entity + API from one spec
+
+(define-macro proc defentity-api
+  [(name : Symbol) (path : String) (fields : (Vec Syntax))] : (Vec Form)
+  (let ((ns (list->string (map char-downcase (string->list (symbol->string name))))))
+    (append
+     ;; Entity: defrecord + getters
+     (cons
+       `(defrecord ,name ,(map (lambda (f) (list (car f) ': (caddr f))) fields))
+       (map (lambda (f)
+              (let ((fname (car f)) (ftype (caddr f)))
+                `(defn ,(string->symbol (format "~a-~a" name fname))
+                   ((r : ,name)) : ,ftype
+                   (get r ,(string->symbol (format ":~a" fname))))))
+            fields))
+     ;; API: list, get, create
+     (list
+      `(defn ,(string->symbol (format "list-~as" ns)) () : String
+         (str ,(format "GET ~a" path)))
+      `(defn ,(string->symbol (format "get-~a" ns)) ((id : String)) : String
+         (str ,(format "GET ~a/" path) id))
+      `(defn ,(string->symbol (format "create-~a" ns))
+         ,(map (lambda (f) (list (car f) ': (caddr f))) fields) : String
+         (str ,(format "POST ~a {" path)
+              ,@(let loop ((fs fields) (first? #t))
+                  (if (null? fs) '()
+                      (append
+                       (if first?
+                         (list (format "~a: " (caar fs)) (caar fs))
+                         (list (format ", ~a: " (caar fs)) (caar fs)))
+                       (loop (cdr fs) #f))))
+              "}"))))))
+
+;; One invocation generates the full vertical slice
+(defentity-api User "/api/users"
+  ((name : String) (email : String) (age : Int)))
+
+(defentity-api Product "/api/products"
+  ((sku : String) (title : String) (price : Float)))
+
+;; Test: entity getters work
+(def u : User (->User "alice" "a@co.com" 30))
+(println (User-name u))
+(println (User-email u))
+
+;; Test: API endpoints work
+(println (list-users))
+(println (get-user "42"))
+(println (create-user "alice" "a@co.com" 30))
+(println (get-product "SKU-1"))
