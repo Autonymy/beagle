@@ -1,0 +1,36 @@
+#lang beagle
+
+;; E19 Condition B v2: proc macro router with method matching
+
+(define-macro proc defrouter
+  [(name : Symbol) (routes : (Vec Syntax))] : (Vec Form)
+  (let ((dispatch-name (string->symbol (format "~a-dispatch" name)))
+        (log-name (string->symbol (format "~a-log" name))))
+    (list
+     `(defn ,dispatch-name ((method : String) (path : String)) : String
+        (cond
+          ,@(apply append
+              (map (lambda (r)
+                     (let ((m (car r)) (p (cadr r)) (handler (caddr r)))
+                       (list `(and (= method ,m) (= path ,p))
+                             (symbol->string handler))))
+                   routes))
+          true "404 Not Found"))
+     `(defn ,log-name ((method : String) (path : String)) : String
+        (do
+          (println (str "[LOG] " method " " path))
+          (,dispatch-name method path))))))
+
+(defrouter app
+  (("GET" "/users" handle-users)
+   ("POST" "/users" create-user)
+   ("GET" "/products" handle-products)))
+
+(defn handle-users [] : String "handle-users result")
+(defn create-user [] : String "create-user result")
+(defn handle-products [] : String "handle-products result")
+
+(println (str "GET /users -> " (app-dispatch "GET" "/users")))
+(println (str "POST /users -> " (app-dispatch "POST" "/users")))
+(println (str "DELETE /users -> " (app-dispatch "DELETE" "/users")))
+(println (app-log "POST" "/users"))
