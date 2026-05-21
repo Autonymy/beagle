@@ -280,6 +280,11 @@ Keep entries concise (~30 lines). Link from `docs/devlog/README.md`.
 When an experiment produces surprising or direction-changing results,
 it gets a devlog entry. Routine feature additions do not.
 
+Experiment tasks, results, and data live in `~/code/beagle-lab/` (separate
+repo). Devlog entries here summarize findings and link to beagle-lab for
+full methodology. When running a new experiment, create its directory in
+beagle-lab (e.g. `e23-foo/`), work there, then write the devlog entry here.
+
 ## Reference
 
 - `scribblings/beagle.scrbl` — Racket-native Scribble docs (build with `raco scribble --html scribblings/beagle.scrbl`).

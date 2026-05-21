@@ -164,7 +164,7 @@ Generates a PostToolUse hook, settings, `CLAUDE.md`, and language context. The d
 - [`docs/agent-workflow.md`](docs/agent-workflow.md) — repair tool routing
 - [`docs/tool-reference.md`](docs/tool-reference.md) — CLI and tool catalog
 - [`docs/devlog/`](docs/devlog/) — development journal (21 entries)
-- [`beagle-lab`](https://github.com/tompassarelli/beagle-lab) — experiment archive (E0–E22)
+- [`beagle-lab`](https://github.com/tompassarelli/beagle-lab) — research journal: experiment tasks, results, methodology (E0–E22)
 
 ## How Beagle relates to CNF
 
