@@ -12,15 +12,15 @@
   (set 'str 'println 'print 'pr 'prn
        'nil? 'some? 'true? 'false? 'zero? 'pos? 'neg? 'even? 'odd?
        'count 'empty? 'first 'second 'last 'rest 'nth
-       'conj 'assoc 'inc 'dec 'abs 'max 'min 'rand 'rand-int
+       'conj 'cons 'assoc 'inc 'dec 'abs 'max 'min 'rand 'rand-int
        'vec 'set 'contains? 'keys 'vals
        'map 'filter 'reduce 'reverse 'sort 'into 'concat
        'apply 'identity 'boolean
-       'string? 'number? 'keyword? 'fn? 'integer?
+       'string? 'number? 'keyword? 'symbol? 'fn? 'integer? 'boolean? 'any? 'list? 'infinite?
        'and 'or
        'throw 'ex-info 'ex-message 'ex-data
-       'name 'keyword 'subs 're-find
-       'atom 'deref 'reset! 'swap! 'add-watch 'remove-watch
+       'name 'keyword 'subs 're-find 're-pattern 're-matches 're-seq 're-groups
+       'atom 'deref 'reset! 'swap! 'add-watch 'remove-watch 'compare-and-set!
        'mapv 'filterv 'get 'update 'merge 'dissoc
        'subvec 'pop 'peek 'take 'drop
        'some 'distinct 'flatten 'not-empty 'sort-by
@@ -29,12 +29,32 @@
        'vector? 'map? 'set? 'sequential? 'seq? 'coll?
        'take-last 'drop-last
        'pr-str 'to-array 'aget 'aset 'array-seq 'clj->js 'js->clj
-       'not= 'seq))
+       'not= 'seq
+       ;; batch 2
+       'butlast 'nfirst 'nnext 'fnext 'ffirst 'nthrest 'nthnext
+       'rand-nth 'shuffle 'quot 'rem 'compare
+       'not-any? 'not-every? 'distinct?
+       'run! 'find 'key 'val 'next 'empty
+       'vector 'list 'hash-map 'hash-set
+       'repeat 'repeatedly 'split-at 'newline 'printf
+       'gensym 'random-uuid 'parse-long 'parse-double 'parse-boolean
+       ;; bitwise
+       'bit-and 'bit-or 'bit-xor 'bit-not
+       'bit-shift-left 'bit-shift-right 'unsigned-bit-shift-right
+       'bit-test 'bit-set 'bit-clear 'bit-flip 'bit-and-not))
 
 (define JS-RUNTIME-HELPERS
   (set 'range 'remove 'mapcat 'every? 'keep 'map-indexed
        'assoc-in 'update-in 'select-keys 'merge-with
-       'take-while 'drop-while))
+       'take-while 'drop-while
+       ;; batch 2
+       'memoize 'fnil 'some-fn 'every-pred
+       'rename-keys 'map-keys 'map-vals 'update-keys 'update-vals
+       'disj 'reduce-kv 'dedupe 'interpose
+       'partition-all 'partition-by 'split-with 'zipmap
+       'format 'hash
+       'get-in 'take-nth 'keep-indexed 'reductions 'replace
+       'max-key 'min-key))
 
 (define JS-TRANSLATED
   (set-union JS-INFIX-OPS JS-UNARY-OPS JS-CORE-CALL JS-RUNTIME-HELPERS))
@@ -77,6 +97,15 @@
    'abs       "((_x) => Math.abs(_x))"
    'boolean   "((_x) => Boolean(_x))"
    'name      "((_x) => String(_x))"
+   'cons      "((_x, _xs) => [_x, ..._xs])"
+   'butlast   "((_xs) => _xs.slice(0, -1))"
+   'boolean?  "((_x) => typeof _x === 'boolean')"
+   'symbol?   "((_x) => typeof _x === 'symbol')"
+   'list?     "((_x) => Array.isArray(_x))"
+   'any?      "((_x) => true)"
+   'quot      "((_a, _b) => Math.trunc(_a / _b))"
+   'rem       "((_a, _b) => _a % _b)"
+   'run!      "((_f, _c) => (_c.forEach(_f), null))"
    ))
 
 (provide JS-TRANSLATED JS-INFIX-OPS JS-UNARY-OPS JS-CORE-CALL

@@ -268,6 +268,125 @@
     [(merge-with) (if (>= n 2) (begin (use-runtime!) (format "$$bc.merge_with(~a)" (string-join (map emit-expr args) ", "))) #f)]
     [(take-while) (if (= n 2) (begin (use-runtime!) (format "$$bc.take_while(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
     [(drop-while) (if (= n 2) (begin (use-runtime!) (format "$$bc.drop_while(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
+    ;; --- batch 2: collection ops -----------------------------------------------
+    [(cons) (if (= n 2) (format "[~a, ...~a]" (emit-expr (car args)) (emit-expr (cadr args))) #f)]
+    [(butlast) (if (= n 1) (format "~a.slice(0, -1)" (emit-expr (car args))) #f)]
+    [(nfirst) (if (= n 1) (format "~a[0]?.slice(1) ?? null" (emit-expr (car args))) #f)]
+    [(nnext) (if (= n 1) (format "(() => { const _s = ~a.slice(1); return _s.length > 1 ? _s.slice(1) : null; })()" (emit-expr (car args))) #f)]
+    [(fnext) (if (= n 1) (format "~a.slice(1)[0]" (emit-expr (car args))) #f)]
+    [(ffirst) (if (= n 1) (format "~a[0]?.[0]" (emit-expr (car args))) #f)]
+    [(nthrest) (if (= n 2) (format "~a.slice(~a)" (emit-expr (car args)) (emit-expr (cadr args))) #f)]
+    [(nthnext) (if (= n 2) (format "(() => { const _s = ~a.slice(~a); return _s.length > 0 ? _s : null; })()" (emit-expr (car args)) (emit-expr (cadr args))) #f)]
+    [(rand-nth) (if (= n 1) (format "~a[Math.floor(Math.random() * ~a.length)]" (emit-expr (car args)) (emit-expr (car args))) #f)]
+    [(shuffle) (if (= n 1) (format "[...~a].sort(() => Math.random() - 0.5)" (emit-expr (car args))) #f)]
+    [(list?) (if (= n 1) (format "Array.isArray(~a)" (emit-expr (car args))) #f)]
+    [(boolean?) (if (= n 1) (format "(typeof ~a === 'boolean')" (emit-expr (car args))) #f)]
+    [(any?) (if (= n 1) "true" #f)]
+    [(symbol?) (if (= n 1) (format "(typeof ~a === 'symbol')" (emit-expr (car args))) #f)]
+    ;; --- math / numeric --------------------------------------------------------
+    [(quot) (if (= n 2) (format "Math.trunc(~a / ~a)" (emit-expr (car args)) (emit-expr (cadr args))) #f)]
+    [(rem) (if (= n 2) (format "(~a % ~a)" (emit-expr (car args)) (emit-expr (cadr args))) #f)]
+    [(compare) (if (= n 2) (format "(~a < ~a ? -1 : ~a > ~a ? 1 : 0)"
+                                   (emit-expr (car args)) (emit-expr (cadr args))
+                                   (emit-expr (car args)) (emit-expr (cadr args))) #f)]
+    [(infinite?) (if (= n 1) (format "(!Number.isFinite(~a))" (emit-expr (car args))) #f)]
+    ;; --- predicates ------------------------------------------------------------
+    [(not-any?) (if (= n 2) (format "(!~a.some(~a))" (emit-expr (cadr args)) (emit-expr (car args))) #f)]
+    [(not-every?) (if (= n 2) (format "(!~a.every(~a))" (emit-expr (cadr args)) (emit-expr (car args))) #f)]
+    [(distinct?) (if (>= n 2) (format "(new Set([~a]).size === ~a)"
+                                      (string-join (map emit-expr args) ", ") (number->string n)) #f)]
+    ;; --- string / regex --------------------------------------------------------
+    [(re-pattern) (if (= n 1) (format "new RegExp(~a)" (emit-expr (car args))) #f)]
+    [(re-matches) (if (= n 2) (format "~a.match(~a)" (emit-expr (cadr args)) (emit-expr (car args))) #f)]
+    [(re-seq) (if (= n 2) (format "[...~a.matchAll(~a)].map(m => m[0])"
+                                  (emit-expr (cadr args)) (emit-expr (car args))) #f)]
+    [(re-groups) (if (= n 1) (format "~a" (emit-expr (car args))) #f)]
+    [(format) (if (>= n 1) (begin (use-runtime!) (format "$$bc.format(~a)" (string-join (map emit-expr args) ", "))) #f)]
+    ;; --- type coercion (int/double/char omitted — shadow user names too easily)
+    ;; --- higher-order ----------------------------------------------------------
+    [(memoize) (if (= n 1) (begin (use-runtime!) (format "$$bc.memoize(~a)" (emit-expr (car args)))) #f)]
+    [(fnil) (if (>= n 2) (begin (use-runtime!) (format "$$bc.fnil(~a)" (string-join (map emit-expr args) ", "))) #f)]
+    [(some-fn) (if (>= n 1) (begin (use-runtime!) (format "$$bc.some_fn(~a)" (string-join (map emit-expr args) ", "))) #f)]
+    [(every-pred) (if (>= n 1) (begin (use-runtime!) (format "$$bc.every_pred(~a)" (string-join (map emit-expr args) ", "))) #f)]
+    [(run!) (if (= n 2) (format "(~a.forEach(~a), null)" (emit-expr (cadr args)) (emit-expr (car args))) #f)]
+    ;; --- map / set ops ---------------------------------------------------------
+    [(rename-keys) (if (= n 2) (begin (use-runtime!) (format "$$bc.rename_keys(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
+    [(map-keys) (if (= n 2) (begin (use-runtime!) (format "$$bc.map_keys(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
+    [(map-vals) (if (= n 2) (begin (use-runtime!) (format "$$bc.map_vals(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
+    [(update-keys) (if (= n 2) (begin (use-runtime!) (format "$$bc.map_keys(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
+    [(update-vals) (if (= n 2) (begin (use-runtime!) (format "$$bc.map_vals(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
+    [(disj) (if (>= n 2) (begin (use-runtime!) (format "$$bc.disj(~a)" (string-join (map emit-expr args) ", "))) #f)]
+    [(find) (if (= n 2) (format "(() => { const _m = ~a, _k = ~a; return _k in _m ? [_k, _m[_k]] : null; })()"
+                                (emit-expr (car args)) (emit-expr (cadr args))) #f)]
+    [(key) (if (= n 1) (format "~a[0]" (emit-expr (car args))) #f)]
+    [(val) (if (= n 1) (format "~a[1]" (emit-expr (car args))) #f)]
+    [(reduce-kv) (if (= n 3) (begin (use-runtime!) (format "$$bc.reduce_kv(~a, ~a, ~a)"
+                                                           (emit-expr (car args)) (emit-expr (cadr args)) (emit-expr (caddr args)))) #f)]
+    ;; --- sequence generation ---------------------------------------------------
+    [(repeat) (cond
+                [(= n 2) (format "Array.from({length: ~a}, () => ~a)" (emit-expr (car args)) (emit-expr (cadr args)))]
+                [else #f])]
+    [(repeatedly) (if (= n 2) (format "Array.from({length: ~a}, ~a)" (emit-expr (car args)) (emit-expr (cadr args))) #f)]
+    [(dedupe) (if (= n 1) (begin (use-runtime!) (format "$$bc.dedupe(~a)" (emit-expr (car args)))) #f)]
+    [(interpose) (if (= n 2) (begin (use-runtime!) (format "$$bc.interpose(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
+    [(partition-all) (if (= n 2) (begin (use-runtime!) (format "$$bc.partition_all(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
+    [(partition-by) (if (= n 2) (begin (use-runtime!) (format "$$bc.partition_by(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
+    [(split-at) (if (= n 2) (format "[~a.slice(0, ~a), ~a.slice(~a)]"
+                                    (emit-expr (cadr args)) (emit-expr (car args))
+                                    (emit-expr (cadr args)) (emit-expr (car args))) #f)]
+    [(split-with) (if (= n 2) (begin (use-runtime!) (format "$$bc.split_with(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
+    [(zipmap) (if (= n 2) (begin (use-runtime!) (format "$$bc.zipmap(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
+    ;; --- bitwise ---------------------------------------------------------------
+    [(bit-and) (if (= n 2) (format "(~a & ~a)" (emit-expr (car args)) (emit-expr (cadr args))) #f)]
+    [(bit-or) (if (= n 2) (format "(~a | ~a)" (emit-expr (car args)) (emit-expr (cadr args))) #f)]
+    [(bit-xor) (if (= n 2) (format "(~a ^ ~a)" (emit-expr (car args)) (emit-expr (cadr args))) #f)]
+    [(bit-not) (if (= n 1) (format "(~~~a)" (emit-expr (car args))) #f)]
+    [(bit-shift-left) (if (= n 2) (format "(~a << ~a)" (emit-expr (car args)) (emit-expr (cadr args))) #f)]
+    [(bit-shift-right) (if (= n 2) (format "(~a >> ~a)" (emit-expr (car args)) (emit-expr (cadr args))) #f)]
+    [(unsigned-bit-shift-right) (if (= n 2) (format "(~a >>> ~a)" (emit-expr (car args)) (emit-expr (cadr args))) #f)]
+    [(bit-test) (if (= n 2) (format "((~a & (1 << ~a)) !== 0)" (emit-expr (car args)) (emit-expr (cadr args))) #f)]
+    [(bit-set) (if (= n 2) (format "(~a | (1 << ~a))" (emit-expr (car args)) (emit-expr (cadr args))) #f)]
+    [(bit-clear) (if (= n 2) (format "(~a & ~~(1 << ~a))" (emit-expr (car args)) (emit-expr (cadr args))) #f)]
+    [(bit-flip) (if (= n 2) (format "(~a ^ (1 << ~a))" (emit-expr (car args)) (emit-expr (cadr args))) #f)]
+    [(bit-and-not) (if (= n 2) (format "(~a & ~~~a)" (emit-expr (car args)) (emit-expr (cadr args))) #f)]
+    ;; --- more collection ops ---------------------------------------------------
+    [(get-in) (if (= n 2) (begin (use-runtime!) (format "$$bc.get_in(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
+    [(vector) (format "[~a]" (string-join (map emit-expr args) ", "))]
+    [(list) (format "[~a]" (string-join (map emit-expr args) ", "))]
+    [(hash-map) (if (even? n)
+                  (format "{~a}"
+                          (string-join
+                           (let loop ([rest args] [acc '()])
+                             (if (< (length rest) 2)
+                               (reverse acc)
+                               (loop (cddr rest)
+                                     (cons (format "[~a]: ~a" (emit-expr (car rest)) (emit-expr (cadr rest)))
+                                           acc))))
+                           ", "))
+                  #f)]
+    [(hash-set) (format "new Set([~a])" (string-join (map emit-expr args) ", "))]
+    [(take-nth) (if (= n 2) (begin (use-runtime!) (format "$$bc.take_nth(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
+    [(keep-indexed) (if (= n 2) (begin (use-runtime!) (format "$$bc.keep_indexed(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
+    [(reductions) (if (>= n 2) (begin (use-runtime!) (format "$$bc.reductions(~a)" (string-join (map emit-expr args) ", "))) #f)]
+    [(replace) (if (= n 2) (begin (use-runtime!) (format "$$bc.replace(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
+    [(max-key) (if (>= n 2) (begin (use-runtime!) (format "$$bc.max_key(~a)" (string-join (map emit-expr args) ", "))) #f)]
+    [(min-key) (if (>= n 2) (begin (use-runtime!) (format "$$bc.min_key(~a)" (string-join (map emit-expr args) ", "))) #f)]
+    [(next) (if (= n 1) (format "(() => { const _s = ~a.slice(1); return _s.length > 0 ? _s : null; })()" (emit-expr (car args))) #f)]
+    [(empty) (if (= n 1) (format "(Array.isArray(~a) ? [] : {})" (emit-expr (car args))) #f)]
+    ;; --- IO / formatting -------------------------------------------------------
+    [(newline) (if (= n 0) "console.log()" #f)]
+    [(printf) (if (>= n 1) (begin (use-runtime!) (format "process.stdout.write($$bc.format(~a))"
+                                                         (string-join (map emit-expr args) ", "))) #f)]
+    [(compare-and-set!) (if (= n 3)
+                          (format "(() => { const _a = ~a; if (_a.value === ~a) { _a.value = ~a; return true; } return false; })()"
+                                  (emit-expr (car args)) (emit-expr (cadr args)) (emit-expr (caddr args)))
+                          #f)]
+    [(gensym) (format "Symbol(~a)" (if (= n 0) "" (emit-expr (car args))))]
+    [(hash) (if (= n 1) (begin (use-runtime!) (format "$$bc.hash(~a)" (emit-expr (car args)))) #f)]
+    [(random-uuid) (if (= n 0) "crypto.randomUUID()" #f)]
+    [(parse-long) (if (= n 1) (format "parseInt(~a, 10)" (emit-expr (car args))) #f)]
+    [(parse-double) (if (= n 1) (format "parseFloat(~a)" (emit-expr (car args))) #f)]
+    [(parse-boolean) (if (= n 1) (format "(~a === 'true')" (emit-expr (car args))) #f)]
     [else #f]))
 
 ;; --- async detection -------------------------------------------------------

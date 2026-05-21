@@ -1,10 +1,8 @@
 # Beagle
 
-Beagle is a typed authoring IR for agent-written programs.
+Beagle is a typed authoring layer for agent-written software.
 
-Agents write compact typed source. Beagle catches mechanical mistakes — wrong fields, missing cases, invalid interop, bad generated forms — then emits ordinary Clojure, JavaScript, Python, or Nix. The types exist at authoring time and disappear at runtime.
-
-Beagle's unusual property is that expansion, checking, and emission share one AST and one diagnostic path. Generated forms are checked the same way as hand-written forms, so procedural macros can have typed input/output contracts and still emit ordinary target code.
+Agents write compact source. Beagle expands it, checks it, and emits ordinary target code. The types exist at authoring time and disappear at runtime.
 
 ```text
 .bclj/.bjs/.bnix/.bpy → parse → check → emit → .clj / .js / .nix / .py
@@ -13,7 +11,15 @@ Beagle's unusual property is that expansion, checking, and emission share one AS
                   share one AST + diagnostic path
 ```
 
-This is an architectural consequence of being a transpiler, not a design goal we started with. We discovered it while building procedural macros and confirmed it experimentally (E18, E19).
+This is an architectural consequence of being a transpiler, not a design goal we started with. We discovered it while building procedural macros and confirmed it experimentally (E18, E19). It means generated code is checked the same way as hand-written code — procedural macros get typed input/output contracts for free.
+
+```text
+target language  =  deployment format
+Beagle AST       =  authoring format
+CNF graph        =  reasoning format
+```
+
+Beagle emits code for runtimes. It also emits [claims](https://github.com/tompassarelli/claim-normal-form) for agents. The same program can be executed by ordinary tools and reasoned about structurally by agent tools.
 
 ## A program
 
@@ -120,11 +126,11 @@ Beagle matches the typed baseline (mypy) on correctness and beats the untyped on
 
 [Full methodology](https://github.com/tompassarelli/beagle-lab)
 
-## Known gaps
+## Things we had to prove
 
-- ~~**Proc macro body language.**~~ Resolved: `define-macro beagle` evaluates macro bodies as Beagle using syntax constructors (`make-defrecord`, `make-defn`, `syntax-name`, etc.). No context-switch to Racket.
-- ~~**Cross-target macro verification.**~~ Resolved (E22): same proc macro compiles and runs identically on all 6 non-SQL targets (Clojure, CLJS, JS, Nix, Python, Typed Racket).
-- ~~**CNF visibility.**~~ Resolved (E20): query tools now expand macros before extracting definitions. `beagle-sig`, `beagle-fields`, and `beagle-provides` all see through macro expansions.
+- ~~**Proc macro body language.**~~ Resolved: `define-macro beagle` evaluates macro bodies as Beagle using syntax constructors. No context-switch to Racket.
+- ~~**Cross-target macro verification.**~~ Resolved (E22): same proc macro compiles and runs identically on all 6 non-SQL targets.
+- ~~**CNF visibility.**~~ Resolved (E20): query tools expand macros before extracting definitions.
 
 ## Setup
 
@@ -166,6 +172,3 @@ Generates a PostToolUse hook, settings, `CLAUDE.md`, and language context. The d
 - [`docs/devlog/`](docs/devlog/) — development journal (21 entries)
 - [`beagle-lab`](https://github.com/tompassarelli/beagle-lab) — research journal: experiment tasks, results, methodology (E0–E22)
 
-## How Beagle relates to CNF
-
-Beagle is the typed authoring layer. [Claim Normal Form](https://github.com/tompassarelli/claim-normal-form) is the semantic graph layer. A Beagle program can emit ordinary source code, but its typed forms also map into CNF claims so agents can query, validate, and eventually execute program structure directly.
