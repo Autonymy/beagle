@@ -12,7 +12,6 @@ begins. These should be non-overlapping under half-open semantics.
 **Mutation:**
 - Python `matcher.py`: `start1 < end2` changed to `start1 <= end2`
 - Beagle `matcher.bgl`: `(< start1 end2)` changed to `(<= start1 end2)`
-- Zero `matcher.0`: `ws < end` changed to `ws <= end`
 
 **Expected oracle impact:**
 Workers are incorrectly marked as unavailable when a task starts exactly when an

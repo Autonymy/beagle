@@ -17,8 +17,6 @@ still respected), but the tie-breaking among ready tasks is reversed.
 - Beagle `graph.bgl`: change `[(task-priority task) tid]` to
   `[(- 0 (task-priority task)) tid]` in both sort-by keys in
   `topological-order`.
-- Zero `graph.0`: change `pri < best_pri` to `pri > best_pri` in
-  the tie-breaking selection loop.
 
 **Expected oracle impact:**
 Tasks are scheduled in the wrong priority order. A priority-1 task that

@@ -16,15 +16,12 @@ unexpected code paths.
   guard (2 lines removed).
 - Beagle `scheduler.bgl`: remove the `(if (empty? tasks) (->ScheduleOk [])` branch
   and its matching closing paren (3 lines changed).
-- Zero `scheduler.0`: remove the `if input.task_count == 0 { return output }`
-  guard (3 lines removed).
 
 **Expected oracle impact:**
 When called with an empty task list, the scheduler no longer returns a
 clean `ScheduleOk(assignments=[])`. Instead it enters the main scheduling
 path with no tasks. In Python, `build_dependency_graph([])` produces an
 empty graph and `topological_order` returns `[]`, so `schedule` may still
-return `ScheduleOk([])` by coincidence. In Beagle and Zero the fallthrough
-behavior differs: Beagle may hit the empty-workers check first (returning
-an error), and Zero processes zero iterations of the scheduling loop but
-skips the early clean return.
+return `ScheduleOk([])` by coincidence. In Beagle the fallthrough
+behavior differs: it may hit the empty-workers check first (returning
+an error).

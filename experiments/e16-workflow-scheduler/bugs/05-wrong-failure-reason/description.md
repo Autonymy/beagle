@@ -20,9 +20,6 @@ two conditions: when no worker has the right capabilities, it reports
   branch now returns `->WorkerUnavailable` instead of `->NoCapableWorker`,
   and the `(empty? avail)` branch returns `->NoCapableWorker` instead of
   `->WorkerUnavailable`.
-- Zero `scheduler.0`: in `schedule_task`, the `cap_list.count == 0` branch
-  sets `FailureReason.worker_unavailable` instead of
-  `FailureReason.no_capable_worker`, and vice versa.
 
 **Expected oracle impact:**
 The schedule output is structurally the same (same tasks fail), but the
