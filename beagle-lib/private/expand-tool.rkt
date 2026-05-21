@@ -184,4 +184,41 @@
     [(null? (cdr xs)) (car xs)]
     [else (string-append (car xs) sep (string-join (cdr xs) sep))]))
 
-(provide expand-file)
+(define (expand-datums path)
+  (define datums (read-file-datums path))
+  (define registry (make-macro-registry))
+  (for ([d (in-list datums)])
+    (match d
+      [(list 'define-macro 'proc (? symbol? name) typed-params ': ret-type body)
+       (define raw-params
+         (cond
+           [(bracketed? typed-params) (bracket-body typed-params)]
+           [(list? typed-params)      typed-params]
+           [else '()]))
+       (define-values (param-names input-contracts)
+         (for/lists (names contracts)
+                    ([p (in-list raw-params)])
+           (cond
+             [(and (list? p) (= (length p) 3) (symbol? (car p)) (eq? (cadr p) ':))
+              (values (car p) (caddr p))]
+             [(symbol? p)
+              (values p 'Syntax)]
+             [else (values (gensym) 'Syntax)])))
+       (register-proc-macro! registry name param-names input-contracts ret-type body)]
+      [(list 'define-macro (? symbol? kind) (? symbol? name) params template)
+       (define ps (cond
+                    [(bracketed? params) (bracket-body params)]
+                    [(list? params) params]
+                    [else '()]))
+       (register-macro! registry name kind ps template)]
+      [_ (void)]))
+  (apply append
+    (for/list ([d (in-list datums)])
+      (if (and (pair? d) (memq (car d) '(define-macro import)))
+        '()
+        (let ([expanded (expand-fully registry d)])
+          (if (and (pair? expanded) (eq? (car expanded) '#%splice-forms))
+            (cdr expanded)
+            (list expanded)))))))
+
+(provide expand-file expand-datums)

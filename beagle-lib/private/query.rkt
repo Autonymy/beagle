@@ -4,9 +4,14 @@
          racket/format
          "parse.rkt"
          "types.rkt"
-         "extensions.rkt")
+         "extensions.rkt"
+         "expand-tool.rkt")
 
 (define (annotation-marker? sym) (eq? sym ':))
+
+(define (read-expanded-datums f)
+  (with-handlers ([exn:fail? (lambda (e) (read-beagle-datums f))])
+    (expand-datums f)))
 
 (define (str-downcase s)
   (list->string (map char-downcase (string->list s))))
@@ -62,7 +67,7 @@
   (define target (if (string? name) (string->symbol name) name))
   (for ([f (in-list files)])
     (with-handlers ([exn:fail? (lambda (e) (void))])
-      (define datums (read-beagle-datums f))
+      (define datums (read-expanded-datums f))
       (for ([d (in-list datums)])
         (define entry (extract-defn-entry d))
         (when (and entry (eq? (car entry) target))
@@ -84,7 +89,7 @@
   (define target (if (string? rec-name) (string->symbol rec-name) rec-name))
   (for ([f (in-list files)])
     (with-handlers ([exn:fail? (lambda (e) (void))])
-      (define datums (read-beagle-datums f))
+      (define datums (read-expanded-datums f))
       (for ([d (in-list datums)])
         (define entry (extract-record-entry d))
         (when (and entry (eq? (car entry) target))
@@ -110,7 +115,7 @@
   (define target (if (string? target-name) (string->symbol target-name) target-name))
   (for ([f (in-list files)])
     (with-handlers ([exn:fail? (lambda (e) (void))])
-      (define datums (read-beagle-datums f))
+      (define datums (read-expanded-datums f))
       (define ns-name #f)
       (for ([d (in-list datums)])
         (define ns (extract-ns d))
@@ -153,7 +158,7 @@
   (with-handlers ([exn:fail? (lambda (e)
                                 (fprintf (current-error-port)
                                          "error reading ~a: ~a\n" file (exn-message e)))])
-    (define datums (read-beagle-datums file))
+    (define datums (read-expanded-datums file))
     (define ns-name #f)
     (for ([d (in-list datums)])
       (define ns (extract-ns d))
@@ -214,7 +219,7 @@
   (define def-file #f)
   (for ([f (in-list files)])
     (with-handlers ([exn:fail? (lambda (e) (void))])
-      (define datums (read-beagle-datums f))
+      (define datums (read-expanded-datums f))
       (for ([d (in-list datums)])
         (define entry (extract-defn-entry d))
         (when (and entry (eq? (car entry) target))
@@ -238,7 +243,7 @@
      (printf "callers:\n")
      (for ([f (in-list files)])
        (with-handlers ([exn:fail? (lambda (e) (void))])
-         (define datums (read-beagle-datums f))
+         (define datums (read-expanded-datums f))
          (for ([d (in-list datums)])
            (define defn-entry (extract-defn-entry d))
            (when defn-entry

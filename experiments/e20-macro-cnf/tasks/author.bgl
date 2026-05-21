@@ -1,0 +1,18 @@
+#lang beagle
+
+(ns e20.author)
+
+(define-macro proc defentity
+  [(name : Symbol) (fields : (Vec Syntax))] : (Vec Form)
+  (cons
+    `(defrecord ,name ,(map (lambda (f) (list (car f) ': (caddr f))) fields))
+    (map (lambda (f)
+           (let ((fname (car f)) (ftype (caddr f)))
+             `(defn ,(string->symbol (format "~a-~a" name fname))
+                ((r : ,name)) : ,ftype
+                (get r ,(string->symbol (format ":~a" fname))))))
+         fields)))
+
+(defentity User ((name : String) (email : String) (age : Int)))
+(defentity Product ((sku : String) (title : String) (price : Float)))
+(defentity Order ((user-id : String) (total : Float) (status : String)))
