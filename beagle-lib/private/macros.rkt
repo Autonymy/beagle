@@ -28,6 +28,42 @@
 ;; template: datum tree (safe/unsafe) or #f (proc)
 
 (struct proc-macro-def macro-def (proc input-contracts output-contract) #:transparent)
+
+;; Expansion provenance: tracks macro name chain through recursive expansion.
+(struct expansion-ctx (macro-name depth parent) #:transparent)
+;; macro-name: symbol — which macro is being expanded
+;; depth: integer — current expansion depth
+;; parent: expansion-ctx or #f
+
+(define (make-root-ctx name)
+  (expansion-ctx name 0 #f))
+
+(define (push-ctx parent name)
+  (expansion-ctx name (+ 1 (expansion-ctx-depth parent)) parent))
+
+(define (format-expansion-chain ctx [max-lines 10])
+  (define all-lines
+    (let loop ([c ctx] [lines '()])
+      (if (not c)
+        (reverse lines)
+        (loop (expansion-ctx-parent c)
+              (cons (format "  in macro: ~a (depth ~a)"
+                            (expansion-ctx-macro-name c)
+                            (expansion-ctx-depth c))
+                    lines)))))
+  (define n (length all-lines))
+  (cond
+    [(<= n max-lines) (string-join all-lines "\n")]
+    [else
+     (define top (take all-lines 4))
+     (define bot (drop all-lines (- n 4)))
+     (string-join (append top (list (format "  ... (~a more)" (- n 8))) bot) "\n")]))
+
+(define (truncate-datum datum [max-len 80])
+  (define s (format "~v" datum))
+  (if (> (string-length s) max-len)
+    (string-append (substring s 0 (- max-len 3)) "...")
+    s))
 ;; proc: Racket procedure (lambda over raw datums)
 ;; input-contracts: list of contract type symbols (Symbol, Expr, Form, Syntax, ...)
 ;; output-contract: contract type symbol or (Vec Form) etc.
@@ -194,19 +230,19 @@
 ;; Expand a single macro application. `args` are raw datums.
 ;; Safe macros get hygienic renaming of template-introduced binders.
 ;; Proc macros call a Racket lambda and validate the output contract.
-(define (expand-macro reg name args)
+(define (expand-macro reg name args [ctx #f])
   (define m (lookup-macro reg name))
   (unless m
     (error 'beagle "no macro named ~a" name))
   (cond
     [(beagle-macro-def? m)
-     (expand-beagle-macro m name args)]
+     (expand-beagle-macro m name args ctx)]
     [(proc-macro-def? m)
-     (expand-proc-macro m name args)]
+     (expand-proc-macro m name args ctx)]
     [else
      (expand-template-macro m name args)]))
 
-(define (expand-proc-macro m name args)
+(define (expand-proc-macro m name args [ctx #f])
   (define params (macro-def-fixed-params m))
   (define input-contracts (proc-macro-def-input-contracts m))
   (define output-contract (proc-macro-def-output-contract m))
@@ -223,9 +259,10 @@
     (with-handlers
       ([exn:fail?
         (lambda (e)
+          (define chain (if ctx (format "\n~a" (format-expansion-chain ctx)) ""))
           (error 'beagle
-                 "macro ~a: body raised an error:\n  ~a"
-                 name (exn-message e)))])
+                 "macro ~a: body raised an error:\n  ~a\n  input: ~a~a"
+                 name (exn-message e) (truncate-datum (cons name args)) chain))])
       (apply (proc-macro-def-proc m) clean-args)))
   (check-datum-contract result output-contract name "output")
   (cond
@@ -233,7 +270,7 @@
      (cons '#%splice-forms result)]
     [else result]))
 
-(define (expand-beagle-macro m name args)
+(define (expand-beagle-macro m name args [ctx #f])
   (define param-names (beagle-macro-def-param-names m))
   (define input-contracts (beagle-macro-def-input-contracts m))
   (define output-contract (beagle-macro-def-output-contract m))
@@ -256,9 +293,10 @@
     (with-handlers
       ([exn:fail?
         (lambda (e)
+          (define chain (if ctx (format "\n~a" (format-expansion-chain ctx)) ""))
           (error 'beagle
-                 "macro ~a: body raised an error:\n  ~a"
-                 name (exn-message e)))])
+                 "macro ~a: body raised an error:\n  ~a\n  input: ~a~a"
+                 name (exn-message e) (truncate-datum (cons name args)) chain))])
       (macro-eval body-datum env)))
   (check-datum-contract result output-contract name "output")
   (cond
@@ -351,37 +389,43 @@
 
 (define MAX-EXPANSION-DEPTH 64)
 
-(define (expand-fully reg datum [depth 0])
+(define (expand-fully reg datum [depth 0] [ctx #f])
   (when (>= depth MAX-EXPANSION-DEPTH)
+    (define chain (if ctx (format "\n~a" (format-expansion-chain ctx)) ""))
     (error 'beagle
-           "macro expansion exceeded depth ~a (possible infinite recursion)"
-           MAX-EXPANSION-DEPTH))
+           "macro expansion exceeded depth ~a (possible infinite recursion)~a"
+           MAX-EXPANSION-DEPTH chain))
   (cond
     [(macro-application? reg datum)
-     (define m (lookup-macro reg (car datum)))
-     (define expanded (expand-macro reg (car datum) (cdr datum)))
+     (define name (car datum))
+     (define next-ctx (if ctx (push-ctx ctx name) (make-root-ctx name)))
+     (define m (lookup-macro reg name))
+     (define expanded (expand-macro reg name (cdr datum) next-ctx))
      (cond
        [(eq? (macro-def-kind m) 'unsafe)
-        (list 'unsafe-expr (expand-fully-no-marker reg expanded (+ depth 1)))]
+        (list 'unsafe-expr (expand-fully-no-marker reg expanded (+ depth 1) next-ctx))]
        [else
-        (expand-fully reg expanded (+ depth 1))])]
+        (expand-fully reg expanded (+ depth 1) next-ctx)])]
     [(pair? datum)
-     (cons (expand-fully reg (car datum) depth)
-           (expand-fully reg (cdr datum) depth))]
+     (cons (expand-fully reg (car datum) depth ctx)
+           (expand-fully reg (cdr datum) depth ctx))]
     [else datum]))
 
-(define (expand-fully-no-marker reg datum [depth 0])
+(define (expand-fully-no-marker reg datum [depth 0] [ctx #f])
   (when (>= depth MAX-EXPANSION-DEPTH)
+    (define chain (if ctx (format "\n~a" (format-expansion-chain ctx)) ""))
     (error 'beagle
-           "macro expansion exceeded depth ~a (possible infinite recursion)"
-           MAX-EXPANSION-DEPTH))
+           "macro expansion exceeded depth ~a (possible infinite recursion)~a"
+           MAX-EXPANSION-DEPTH chain))
   (cond
     [(macro-application? reg datum)
-     (define expanded (expand-macro reg (car datum) (cdr datum)))
-     (expand-fully-no-marker reg expanded (+ depth 1))]
+     (define name (car datum))
+     (define next-ctx (if ctx (push-ctx ctx name) (make-root-ctx name)))
+     (define expanded (expand-macro reg name (cdr datum) next-ctx))
+     (expand-fully-no-marker reg expanded (+ depth 1) next-ctx)]
     [(pair? datum)
-     (cons (expand-fully-no-marker reg (car datum) depth)
-           (expand-fully-no-marker reg (cdr datum) depth))]
+     (cons (expand-fully-no-marker reg (car datum) depth ctx)
+           (expand-fully-no-marker reg (cdr datum) depth ctx))]
     [else datum]))
 
 ;; --- hygiene (safe macros only) -------------------------------------------
@@ -471,6 +515,7 @@
  (struct-out macro-def)
  (struct-out proc-macro-def)
  (struct-out beagle-macro-def)
+ (struct-out expansion-ctx)
  make-macro-registry
  register-macro!
  register-proc-macro!
@@ -480,5 +525,6 @@
  macro-application?
  expand-macro
  expand-fully
+ format-expansion-chain
  check-datum-contract
  strip-reader-tags)
