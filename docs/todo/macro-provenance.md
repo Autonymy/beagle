@@ -27,17 +27,22 @@ expander (`private/macros.rkt`) both lack provenance threading.
 Retrofitting gets harder as more code depends on current expander
 internals. Better to land this before more proc macros are written.
 
-## Design sketch
+## Done (Racket expander)
 
-- [ ] Expansion context struct: `{macro-name, source-loc, parent-ctx, depth}`
-- [ ] Thread context through `expand-macros` / `apply-macro` / `macro-eval`
-- [ ] Depth-cap error includes macro name + chain: "in foo, called from bar at line 12"
-- [ ] Body errors include input form summary (first ~80 chars)
+- [x] Expansion context struct: `expansion-ctx` (macro-name, depth, parent)
+- [x] Thread context through `expand-fully` → `expand-macro` → `expand-{beagle,proc}-macro`
+- [x] Depth-cap error includes full macro chain (truncated to 10 lines for deep recursion)
+- [x] Body errors include input form summary (truncated to 80 chars)
+
+## Remaining
+
+- [ ] Source location in expansion-ctx (currently has macro name + depth but not line:col)
 - [ ] `beagle-expand --trace` shows expansion steps, not just final output
-- [ ] Mirror changes in both Racket and self-hosted expanders
+- [ ] Mirror provenance changes in self-hosted expander (`self-host/macros.bjs`)
+- [ ] Thread provenance through template macro expansion (currently only proc/beagle macros)
 
 ## Validation
 
-- [ ] Test: recursive macro hitting depth cap shows full chain
-- [ ] Test: contract violation 2 expansions deep shows both macro names
+- [x] Recursive macro hitting depth cap shows full chain (verified manually)
+- [ ] Test: contract violation 2 expansions deep shows both macro names (raco test case)
 - [ ] Test: `beagle-expand --trace` on nested macro shows intermediate forms

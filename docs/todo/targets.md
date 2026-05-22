@@ -7,18 +7,18 @@ priority: 1
 
 ## Nix: multi-arity must fail loudly
 
-- [ ] `emit-nix.rkt`: multi-arity `defn` silently drops all but the first arity.
-      Must error at emit time: "multi-arity not supported for Nix target."
-      Silent incorrect output is worse than a missing feature.
+- [x] `emit-nix.rkt`: multi-arity `defn` errors at emit time (both Racket + Bun emitters).
 
 ## Clojure emitter: test backfill
 
-- [ ] Create emit-clj test suite — the emitter has **zero behavioral tests**.
-      414 stdlib entries, original target, largest blast radius, no mechanical
-      regression detection. JS has 11 suites, Python 63 cases, Nix 53 cases.
-      The 11/11 emission parity proof covers JS, not CLJ.
-- [ ] Fixture suite comparable to Nix/Python: core forms, defrecord, match,
-      threading, interop, destructuring, ns/require emission.
+- [x] Create emit-clj-behavioral.rkt — 51 end-to-end tests (compile → bb → verify output).
+      Covers: def, defn, defrecord, defunion, let, destructuring, cond/if/when/case,
+      loop/recur, for/doseq/dotimes, try/catch, threading, higher-order, atoms, letfn,
+      defmulti/defmethod, collections, strings.
+- [x] defenum keyword emission fix (emitted symbols instead of keywords).
+- [x] defmethod return type annotation leak fix.
+- [ ] Expand: add multi-module tests (ns + require round-trip via bb classpath).
+- [ ] Expand: add defprotocol/deftype/extend-type behavioral tests.
 
 ## Oracle CI
 
