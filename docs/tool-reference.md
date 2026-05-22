@@ -133,8 +133,10 @@ beagle-impact <fn-name> <file-or-dir> ...
 Show source after macro expansion.
 
 ```
-beagle-expand <source.bclj|.bjs|.bnix|.bcljs>
+beagle-expand [--trace] <source.bclj|.bjs|.bnix|.bcljs>
 ```
+
+`--trace` prints each expansion step to stderr (input + output per step, depth-indented for nested macros). Stdout still contains the final expanded source.
 
 ## Daemon
 

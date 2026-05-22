@@ -1432,7 +1432,7 @@ checking, mutation testing, and distributed tracing:
 
 * `beagle-check-all FILES` — batch type check (10x vs sequential)
 
-* `beagle-expand SOURCE.rkt` — show post-macro expansion
+* `beagle-expand [--trace] SOURCE` — show post-macro expansion (`--trace` shows each step to stderr)
 
 * `beagle-syntax FILES` — fast paren/bracket balance check (<200ms)
 
