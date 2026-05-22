@@ -861,6 +861,12 @@
     [(list 'defmulti (? symbol? name) dispatch-expr)
      (defmulti-form name (parse-expr (or (stx-ref subs 2) dispatch-expr)))]
 
+    [(list 'defmethod (? symbol? name) dispatch-val params-form ': _ret-type body ...)
+     (let-values ([(parsed _rest-p) (parse-params (or (stx-ref subs 3) params-form))])
+       (defmethod-form name (parse-expr (or (stx-ref subs 2) dispatch-val))
+                       parsed
+                       (parse-body (or (stx-tail subs 6) body))))]
+
     [(list 'defmethod (? symbol? name) dispatch-val params-form body ...)
      (let-values ([(parsed _rest-p) (parse-params (or (stx-ref subs 3) params-form))])
        (defmethod-form name (parse-expr (or (stx-ref subs 2) dispatch-val))

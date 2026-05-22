@@ -523,7 +523,7 @@
 (define (emit-defenum f)
   (define name (defenum-form-name f))
   (define vals (defenum-form-values f))
-  (define val-strs (map (lambda (v) (symbol->string v)) vals))
+  (define val-strs (map (lambda (v) (format ":~a" v)) vals))
   (format "(def ~a-values #{~a})" name (string-join val-strs " ")))
 
 (define (emit-defunion f)

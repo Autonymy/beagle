@@ -134,9 +134,13 @@
 
    ;; --- defenum + case ------------------------------------------------------
 
-   ;; NOTE: defenum emits #{red green blue} (symbols) instead of
-   ;; #{:red :green :blue} (keywords) — a real emitter bug.
-   ;; Test case dispatch without defenum for now.
+   (check-clj-output "defenum emits keywords"
+     (list '(defenum Color red green blue))
+     "(println (contains? Color-values :red))
+      (println (contains? Color-values :blue))
+      (println (count Color-values))"
+     "true\ntrue\n3")
+
    (check-clj-output "case dispatch on keywords"
      (list '(defn color-name [(c : Keyword)] : String
               (case c :red "Red" :green "Green" :blue "Blue" "unknown")))
@@ -341,13 +345,11 @@
 
    ;; --- defmulti / defmethod ------------------------------------------------
 
-   ;; defmethod return type annotation leaks into CLJ output — real emitter bug.
-   ;; Test the compilation path without return type to confirm runtime works.
-   (check-clj-output "defmulti + defmethod dispatch"
+   (check-clj-output "defmulti + defmethod with return type"
      (list '(defmulti area :shape)
-           '(defmethod area :circle [(m : (Map Keyword Any))]
+           '(defmethod area :circle [(m : (Map Keyword Any))] : Any
               (* 3 (* (:radius m) (:radius m))))
-           '(defmethod area :rect [(m : (Map Keyword Any))]
+           '(defmethod area :rect [(m : (Map Keyword Any))] : Any
               (* (:w m) (:h m))))
      "(println (area {:shape :circle :radius 5}))
       (println (area {:shape :rect :w 3 :h 4}))"
