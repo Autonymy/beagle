@@ -441,4 +441,70 @@
      "(f 42)"
      "got: 42")
 
+   ;; --- defprotocol / deftype ------------------------------------------------
+
+   (check-clj-output "defprotocol + deftype"
+     (list `(defprotocol Greetable
+              (greet ,(br '(self : Greetable)) : String))
+           `(deftype Person ,(br '(name : String))
+              Greetable
+              (greet ,(br '(self : Person)) : String
+                (str "Hello, " (.-name self)))))
+     "(println (greet (->Person \"Alice\")))"
+     "Hello, Alice")
+
+   (check-clj-output "deftype with multiple methods"
+     (list `(defprotocol Shape
+              (area ,(br '(self : Shape)) : Int)
+              (perimeter ,(br '(self : Shape)) : Int))
+           `(deftype Rect ,(br '(w : Int) '(h : Int))
+              Shape
+              (area ,(br '(self : Rect)) : Int
+                (* (.-w self) (.-h self)))
+              (perimeter ,(br '(self : Rect)) : Int
+                (* 2 (+ (.-w self) (.-h self))))))
+     "(let [r (->Rect 3 4)]
+        (println (area r))
+        (println (perimeter r)))"
+     "12\n14")
+
+   ;; --- extend-type ----------------------------------------------------------
+
+   (check-clj-output "extend-type on defrecord"
+     (list '(defrecord Circle [(radius : Int)])
+           `(defprotocol Describable
+              (describe ,(br '(self : Describable)) : String))
+           `(extend-type Circle
+              Describable
+              (describe ,(br '(self : Circle)) : String
+                (str "circle r=" (:radius self)))))
+     "(println (describe (->Circle 5)))"
+     "circle r=5")
+
+   (check-clj-output "extend-type multiple types"
+     (list '(defrecord Dog [(name : String)])
+           '(defrecord Cat [(name : String)])
+           `(defprotocol Speaker
+              (speak ,(br '(self : Speaker)) : String))
+           `(extend-type Dog
+              Speaker
+              (speak ,(br '(self : Dog)) : String
+                (str (:name self) " says woof")))
+           `(extend-type Cat
+              Speaker
+              (speak ,(br '(self : Cat)) : String
+                (str (:name self) " says meow"))))
+     "(println (speak (->Dog \"Rex\")))
+      (println (speak (->Cat \"Mia\")))"
+     "Rex says woof\nMia says meow")
+
+   ;; --- ns + require (multi-module) ------------------------------------------
+
+   (check-clj-output "require clojure.set"
+     '()
+     "(require '[clojure.set :as cset])
+      (println (count (cset/union #{1 2} #{2 3})))
+      (println (into [] (sort (cset/intersection #{1 2 3} #{2 3 4}))))"
+     "3\n[2 3]")
+
 )))

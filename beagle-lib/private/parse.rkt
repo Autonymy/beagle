@@ -1811,6 +1811,10 @@
   (define d (->datum x))
   (define subs (stx-subs x))
   (match d
+    [(list (? symbol? name) params-form ': _ret-type body ...)
+     (let-values ([(parsed _rp) (parse-params (or (stx-ref subs 1) params-form))])
+       (impl-method name parsed
+                    (parse-body (or (stx-tail subs 4) body))))]
     [(list (? symbol? name) params-form body ...)
      (let-values ([(parsed _rp) (parse-params (or (stx-ref subs 1) params-form))])
        (impl-method name parsed
