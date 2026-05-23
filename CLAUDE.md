@@ -11,7 +11,7 @@ syntactic surface area, structured errors. One canonical idiom per concept.
 
 ## Status
 
-`#lang beagle` v0.14.0 — 1386 tests passing (+ oracle/differential/bun-parity via `BEAGLE_ORACLE=1`).
+`#lang beagle` v0.14.0 — 1387 tests passing (+ oracle/differential/bun-parity via `BEAGLE_ORACLE=1`).
 
 - **Targets:** `beagle/clj` (default), `beagle/cljs`, `beagle/js`, `beagle/nix`, `beagle/sql`, `beagle/py`, `beagle/rkt`
 - **Forms:** ~78 forms — ~50 cross-target (definitions, control flow, data structures, pattern matching, threading, interop) + 28 typed JS target forms (`js/*`).
@@ -274,8 +274,27 @@ Host-language idioms whose cost > benefit for beagle's goals:
 
 - **`#(...)` anonymous fn shorthand** — alternate idiom for `fn`, more
   LLM confusion than value
-- **`@deref`, `#'var-quote`** — Clojure-runtime concepts; use `unsafe`
+- **`@deref`, `#'var-quote`** — Clojure-runtime concepts; not needed
 - **Exotic reader macros (`#=`, `#_`, `#?`)** — Clojure-reader-specific
+
+### Dropped (surface redesign, 2026-05)
+
+Forms removed because they were sugar/redundant or had ~zero real
+usage. See `lab/journal/log/024-surface-friction-observation.md` for
+the empirical basis.
+
+- **`defmulti` / `defmethod`** — 0 corpus usage. Use defprotocol + extend-type.
+- **`as->` / `cond->` / `cond->>` / `some->` / `some->>`** — 0 corpus
+  usage. Threading-macro family narrowed to `->` and `->>` only.
+- **`when-not` / `if-not`** — sugar. Use `(when (not c) ...)` /
+  `(if (not c) t e)`.
+- **`inc` / `dec`** — sugar. Use `(+ x 1)` / `(- x 1)`.
+- **`not=`** — sugar. Use `(not (= a b))`.
+
+Kept after empirical re-evaluation (Day 0 friction-list verdict
+reversed): `loop`/`recur` (agent reflexively reaches for it — that's
+the canonical signal), `->Name` constructor (beagle has no `(Name ...)`
+alternative; no redundancy to drop).
 
 ## Setup (one-time)
 
@@ -286,5 +305,8 @@ raco pkg install --link beagle-lib/ beagle-test/ beagle-doc/ beagle/
 ## Reference
 
 - `beagle-doc/scribblings/*.scrbl` — canonical language reference (Scribble source of truth)
-- `devlog/` — development journal (discoveries + experiments)
-- `~/code/beagle-lab/` — experiment archive (E0–E22, benchmark framework, all results)
+- `lab/journal/log/` — development journal (chronological discoveries + experiments)
+- `lab/journal/synthesis/` — analytical/atemporal notes (audits, design rationale snapshots)
+- `lab/plans/` — workstream plans (active + done, with frontmatter status)
+- `lab/experiments/` — experiment archive (mirrors `~/code/beagle-lab/`)
+- `~/code/beagle-lab/` — historical experiment archive (E0–E22, benchmark framework, results)
