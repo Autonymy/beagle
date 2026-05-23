@@ -161,10 +161,10 @@
   '(def y (let [(x : Int) "hi"] x)))
 
 (check-err "call to typed builtin with wrong arg type errors"
-  '(def x : Int (inc "not a number")))
+  '(def x : Bool (zero? "not a number")))   ; zero? expects Int, not String
 
 (check-err "call with wrong arity errors"
-  '(def x : Int (inc 1 2)))
+  '(def x : Bool (zero? 1 2)))   ; zero? is single-arg
 
 ;; =============================================================================
 ;; Tests — dynamic mode
@@ -547,15 +547,7 @@
 (check-fixture-err "defprotocol method arity checked"
   "protocol-arity-err.bclj")
 
-;; =============================================================================
-;; Tests — defmulti / defmethod
-;; =============================================================================
-
-(check-ok "defmulti passes type check"
-  '(defmulti greeting :lang))
-
-(check-fixture-ok "defmethod body is type-checked"
-  "defmethod-ok.bclj")
+;; defmulti / defmethod removed (zero corpus usage).
 
 ;; =============================================================================
 ;; Tests — destructuring (fixtures)

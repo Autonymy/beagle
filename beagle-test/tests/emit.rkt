@@ -353,17 +353,7 @@
   (check-true (matches? #rx"defprotocol Greetable" out))
   (check-true (matches? #rx"\\(greet \\[self\\]\\)" out)))
 
-;; --- defmulti / defmethod ---------------------------------------------------
-
-(test-case "defmulti emits"
-  (define out (compile '(defmulti greeting :lang)))
-  (check-true (matches? #rx"\\(defmulti greeting :lang\\)" out)))
-
-(test-case "defmethod emits"
-  (define out (compile `(defmulti greeting :lang)
-                       `(defmethod greeting :en ,(br 'x) "hello")))
-  (check-true (matches? #rx"\\(defmethod greeting :en \\[x\\]" out))
-  (check-true (matches? #rx"\"hello\"" out)))
+;; defmulti / defmethod removed (zero corpus usage).
 
 ;; --- destructuring ----------------------------------------------------------
 
@@ -572,15 +562,7 @@
   (define out (compile `(def x : (Vec String) (for ,(br 'i '(range 3) ':let (br 's '(str i))) s))))
   (check-true (matches? #rx":let \\[s" out)))
 
-;; --- when-not, if-not ---
-
-(test-case "when-not emits when with not"
-  (define out (compile '(defn f [] (when-not true 42))))
-  (check-true (matches? #rx"\\(when \\(not" out)))
-
-(test-case "if-not emits if with not"
-  (define out (compile '(defn f [] (if-not true "a" "b"))))
-  (check-true (matches? #rx"\\(if \\(not" out)))
+;; when-not / if-not removed — use (when (not ...)) / (if (not ...) ...).
 
 ;; --- comment ---
 
@@ -723,12 +705,6 @@
                 (with p ,(br ':x '(+ (p-x p) 1)) ,(br ':y '(+ (p-y p) 1))))))
   (check-true (matches? #rx"\\(assoc p :x" out))
   (check-true (matches? #rx":y \\(\\+ \\(p-y p\\)" out)))
-
-;; --- defmulti ---------------------------------------------------------------
-
-(test-case "defmulti emits dispatch fn inline"
-  (define out (compile '(defmulti area :shape)))
-  (check-true (matches? #rx"\\(defmulti area :shape\\)" out)))
 
 ;; --- defenum ---------------------------------------------------------------
 

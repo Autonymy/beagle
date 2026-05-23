@@ -9,7 +9,7 @@
 ;;   .bnix  → #lang beagle/nix
 ;;   .bsql  → #lang beagle/sql
 ;;   .bpy   → #lang beagle/py
-;;   .bgl   → target-neutral (requires explicit #lang or define-target)
+;;   .bgl   → target-neutral (default Scheme planned once Cyclone runtime lands)
 ;;   .rkt   → legacy (no validation)
 ;;
 ;; Extension/header mismatch is a hard compile error.
@@ -30,7 +30,7 @@
     (".bnix"  . nix)
     (".bsql"  . sql)
     (".bpy"   . py)
-    (".bgl"   . #f)     ; portable — no specific target
+    (".bgl"   . #f)     ; target-neutral; default-to-scheme deferred until Cyclone runtime
     (".rkt"   . #f)))   ; legacy — no validation
 
 (define (expected-target-for-extension path-str)
@@ -40,7 +40,7 @@
   (and match (cdr match)))
 
 ;; Regex matching all beagle source extensions (for directory scanning).
-(define BEAGLE-FILE-RX #rx"\\.(bclj|bcljs|bjs|bnix|bsql|bpy|bgl|rkt)$")
+(define BEAGLE-FILE-RX #rx"\\.(bclj|bcljs|bjs|bnix|bsql|bpy|brkt|bgl|rkt)$")
 
 (provide BEAGLE-EXTENSIONS
          beagle-source-file?

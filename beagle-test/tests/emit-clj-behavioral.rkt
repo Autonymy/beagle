@@ -344,17 +344,7 @@
      "(println (mutual-test))"
      "true")
 
-   ;; --- defmulti / defmethod ------------------------------------------------
-
-   (check-clj-output "defmulti + defmethod with return type"
-     (list '(defmulti area :shape)
-           '(defmethod area :circle [(m : (Map Keyword Any))] : Any
-              (* 3 (* (:radius m) (:radius m))))
-           '(defmethod area :rect [(m : (Map Keyword Any))] : Any
-              (* (:w m) (:h m))))
-     "(println (area {:shape :circle :radius 5}))
-      (println (area {:shape :rect :w 3 :h 4}))"
-     "75\n12")
+   ;; defmulti / defmethod removed (zero corpus usage; use defprotocol).
 
    ;; --- collections ---------------------------------------------------------
 

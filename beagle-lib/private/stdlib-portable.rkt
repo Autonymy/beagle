@@ -72,8 +72,7 @@
    'mod        (fn-of '(Int Int) 'Int)
    'quot       (fn-of '(Int Int) 'Int)
    'rem        (fn-of '(Int Int) 'Int)
-   'inc        (fn-of '(Int) 'Int)
-   'dec        (fn-of '(Int) 'Int)
+   ;; inc/dec removed — use (+ x 1) and (- x 1) directly.
    'min        (fn-of '(Int) 'Int #:rest 'Int)
    'max        (fn-of '(Int) 'Int #:rest 'Int)
    'abs        (fn-of '(Int) 'Int)
@@ -84,7 +83,7 @@
    'odd?       (fn-of '(Int) 'Bool)
    ;; --- equality / ordering ------------------------------------------------
    '=          (fn-of '(Any Any) 'Bool)
-   'not=       (fn-of '(Any Any) 'Bool)
+   ;; not= removed — use (not (= a b)).
    '<          (fn-of '(Int Int) 'Bool)
    '>          (fn-of '(Int Int) 'Bool)
    '<=         (fn-of '(Int Int) 'Bool)

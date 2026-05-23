@@ -1,2 +1,0 @@
-(defmulti greeting :lang)
-(defmethod greeting :en [x] "hello")

@@ -81,9 +81,43 @@ should mean "Cyclone."
 
 ## Phasing
 
+### Phase 0 — beagle runtime library (NEW, blocks Phase 1)
+
+Status: queued.
+
+Insight from a late-night review: beagle's stdlib should be the
+abstraction boundary between user programs and the underlying Scheme
+ecosystem. Users reach for `first`/`count`/`empty?`/etc. (beagle
+stdlib names). Beagle's runtime library — implemented in beagle,
+compiled to Cyclone — provides those names. The runtime navigates
+Cyclone's SRFI ecosystem so user programs never see SRFI imports.
+
+Why this matters: R7RS-small itself is tiny. Real-language features
+(hash tables, format strings, generators, exception handling beyond
+the minimal) live in SRFIs. Different Schemes implement different
+subsets. Picking SRFIs per-form makes user programs depend on Cyclone-
+specific SRFI availability. Wrapping them in a beagle runtime turns
+that dependency into "user → beagle/base", a single stable boundary.
+
+Deliverables for Phase 0:
+- `beagle-lib/runtime/base.bgl` — beagle source for `first`/`rest`/
+  `count`/`empty?`/`nil?`/`get`/`assoc`/`update`/`map`/`filter`/
+  `reduce`/`for-each`/string ops/hash ops/etc.
+- Bootstrap path: Racket-beagle compiles `base.bgl` → Scheme. The
+  Scheme output is shipped with beagle as `runtime/base.scm`.
+- Cyclone `(import (beagle base))` brings in the runtime.
+- emit-scheme.rkt emits user code as `(import (beagle base)) ...
+  (first xs) ...` — referring to beagle's runtime, not raw Scheme.
+
+This phase changes emit-scheme.rkt's design: it produces beagle-runtime
+references, not raw Scheme primitives. The stdlib-scheme.rkt is the
+catalog mapping beagle names → `(beagle base)` exports.
+
 ### Phase 1 — emit-scheme + minimal stdlib + fixtures
 
-Status: in progress.
+Status: in progress (but blocked on Phase 0 architecture; current
+emit-scheme.rkt is a sketch that produces raw Scheme primitive calls,
+which is the wrong layering — needs rewrite to call into runtime).
 
 - Add `emit-scheme.rkt` covering: `def`, `defn`, `defrecord`, `defunion`,
   `let`, `if`, `cond`, `fn`, `for`, `match`, `case`, primitive arithmetic,

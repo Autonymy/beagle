@@ -153,13 +153,15 @@
 
 (define (lang-line->target lang-line)
   (cond
-    [(regexp-match? #rx"beagle/sql"  lang-line) 'sql]
-    [(regexp-match? #rx"beagle/nix"  lang-line) 'nix]
-    [(regexp-match? #rx"beagle/cljs" lang-line) 'cljs]
-    [(regexp-match? #rx"beagle/clj"  lang-line) 'clj]
-    [(regexp-match? #rx"beagle/js"   lang-line) 'js]
-    [(regexp-match? #rx"beagle/py"   lang-line) 'py]
-    [(regexp-match? #rx"beagle/rkt"  lang-line) 'rkt]
+    [(regexp-match? #rx"beagle/sql"    lang-line) 'sql]
+    [(regexp-match? #rx"beagle/nix"    lang-line) 'nix]
+    [(regexp-match? #rx"beagle/cljs"   lang-line) 'cljs]
+    [(regexp-match? #rx"beagle/clj"    lang-line) 'clj]
+    [(regexp-match? #rx"beagle/js"     lang-line) 'js]
+    [(regexp-match? #rx"beagle/py"     lang-line) 'py]
+    [(regexp-match? #rx"beagle/rkt"    lang-line) 'rkt]
+    ;; beagle/scheme — Cyclone target, deferred pending Phase 0 runtime lib
+    [(regexp-match? #rx"beagle/scheme" lang-line) 'scheme]
     [else #f]))
 
 (define (read-beagle-syntax path)
@@ -704,38 +706,10 @@
   (foldl (lambda (step acc) (thread-step-insert acc step 'last))
          init steps))
 
-(define (expand-cond-thread kind init clauses)
-  (define pairs
-    (let loop ([cs clauses])
-      (if (or (null? cs) (null? (cdr cs))) '()
-          (cons (list (car cs) (cadr cs)) (loop (cddr cs))))))
-  (define sym (gensym 'ct))
-  (define body
-    (foldl (lambda (pair acc)
-             (define test (car pair))
-             (define step (cadr pair))
-             (define pos (if (eq? kind 'cond->) 'first 'last))
-             `(let [,sym (if ,test ,(thread-step-insert sym step pos) ,sym)]
-                ,acc))
-           sym (reverse pairs)))
-  `(let [,sym ,init] ,body))
-
-(define (expand-some-thread kind init steps)
-  (define pos (if (eq? kind 'some->) 'first 'last))
-  (define sym (gensym 'st))
-  (define body
-    (foldl (lambda (step acc)
-             `(let [,sym ,acc]
-                (if (some? ,sym)
-                    ,(thread-step-insert sym step pos)
-                    nil)))
-           init steps))
-  body)
-
-(define (expand-as-thread init name steps)
-  (foldl (lambda (step acc)
-           `(let [,name ,acc] ,step))
-         init steps))
+;; expand-cond-thread, expand-some-thread, expand-as-thread removed —
+;; the cond->/some->/as-> forms they implemented are dropped from
+;; beagle's surface. Use explicit let-chains for conditional or short-
+;; circuiting accumulation; use let-bindings for named intermediates.
 
 (define (parse-cond-let-binding b)
   (define d (->datum b))
@@ -846,20 +820,9 @@
     [(list 'defprotocol (? symbol? name) sigs ...)
      (protocol-form name (map parse-protocol-method (or (stx-tail subs 2) sigs)))]
 
-    [(list 'defmulti (? symbol? name) dispatch-expr)
-     (defmulti-form name (parse-expr (or (stx-ref subs 2) dispatch-expr)))]
-
-    [(list 'defmethod (? symbol? name) dispatch-val params-form ': _ret-type body ...)
-     (let-values ([(parsed _rest-p) (parse-params (or (stx-ref subs 3) params-form))])
-       (defmethod-form name (parse-expr (or (stx-ref subs 2) dispatch-val))
-                       parsed
-                       (parse-body (or (stx-tail subs 6) body))))]
-
-    [(list 'defmethod (? symbol? name) dispatch-val params-form body ...)
-     (let-values ([(parsed _rest-p) (parse-params (or (stx-ref subs 3) params-form))])
-       (defmethod-form name (parse-expr (or (stx-ref subs 2) dispatch-val))
-                       parsed
-                       (parse-body (or (stx-tail subs 4) body))))]
+    ;; defmulti / defmethod removed — multimethods had ~zero usage in the
+    ;; corpus (one fixture file). Use defprotocol + extend-type for
+    ;; type-based dispatch instead.
 
     [(list 'deftype (? symbol? name) fields-form rest ...)
      (deftype-form name (parse-record-fields (or (stx-ref subs 2) fields-form))
@@ -1182,17 +1145,7 @@
     [(list 'when c body ...)
      (when-form (parse-expr (or (stx-ref subs 1) c))
                 (parse-body (or (stx-tail subs 2) body)))]
-    [(list 'when-not c body ...)
-     (when-form (call-form 'not (list (parse-expr (or (stx-ref subs 1) c))))
-                (parse-body (or (stx-tail subs 2) body)))]
-    [(list 'if-not c t e)
-     (if-form (call-form 'not (list (parse-expr (or (stx-ref subs 1) c))))
-              (parse-expr (or (stx-ref subs 2) t))
-              (parse-expr (or (stx-ref subs 3) e)))]
-    [(list 'if-not c t)
-     (if-form (call-form 'not (list (parse-expr (or (stx-ref subs 1) c))))
-              (parse-expr (or (stx-ref subs 2) t))
-              #f)]
+    ;; when-not / if-not / unless removed — use (when (not ...)) / (if (not ...) ...) directly.
 
     [(list 'when-let bindings-form body ...)
      (define-values (name expr) (parse-cond-let-binding (or (stx-ref subs 1) bindings-form)))
@@ -1346,16 +1299,8 @@
      (parse-expr (expand-thread-first init steps))]
     [(list '->> init steps ...)
      (parse-expr (expand-thread-last init steps))]
-    [(list 'cond-> init clauses ...)
-     (parse-expr (expand-cond-thread 'cond-> init clauses))]
-    [(list 'cond->> init clauses ...)
-     (parse-expr (expand-cond-thread 'cond->> init clauses))]
-    [(list 'some-> init steps ...)
-     (parse-expr (expand-some-thread 'some-> init steps))]
-    [(list 'some->> init steps ...)
-     (parse-expr (expand-some-thread 'some->> init steps))]
-    [(list 'as-> init name steps ...)
-     (parse-expr (expand-as-thread init name steps))]
+    ;; cond->/cond->>/some->/some->>/as-> removed — use let-chains for
+    ;; conditional or short-circuiting pipelines.
 
     [(list (? symbol? f) args ...)
      (call-form f (map parse-expr (or (stx-tail subs 1) args)))]

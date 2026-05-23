@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# beagle-bun: standalone beagle compiler — no Racket dependency.
+#
+# Usage:
+#   bin/beagle-bun <source.bjs>        Compile to target source
+#   bin/beagle-bun <source.bjs> --ast  Emit JSON AST (like beagle-ast)
+#
+# Pipeline (all Bun, zero Racket):
+#   source → reader → parser → checker → emitter → target source
+
+set -euo pipefail
+
+BEAGLE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+COMPILER="$BEAGLE_ROOT/self-host/dist/compiler.cjs"
+
+if [[ ! -f "$COMPILER" ]]; then
+    echo "beagle-bun: compiler not built. Run: bash self-host/bundle-compiler.sh" >&2
+    exit 1
+fi
+
+exec bun "$COMPILER" "$@"

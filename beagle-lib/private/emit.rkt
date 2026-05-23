@@ -11,6 +11,8 @@
          "emit-sql.rkt"
          "emit-py.rkt"
          "emit-rkt.rkt")
+;; emit-scheme.rkt — Cyclone target, deferred pending Phase 0
+;; runtime-library architecture decision (see lab/plans/cyclone-self-host.md)
 
 (define (emit-program prog)
   (define backend (resolve-backend (program-target prog)))

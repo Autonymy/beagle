@@ -656,17 +656,8 @@
                                (perimeter ,(br '(self : Any)) : Float)))))
   (check-equal? (length (protocol-form-methods f)) 2))
 
-;; --- defmulti / defmethod ---------------------------------------------------
-
-(test-case "defmulti parses"
-  (define f (car (parse-one '(defmulti greeting :lang))))
-  (check-true (defmulti-form? f))
-  (check-eq? (defmulti-form-name f) 'greeting))
-
-(test-case "defmethod parses"
-  (define f (car (parse-one `(defmethod greeting :en ,(br 'x) "hello"))))
-  (check-true (defmethod-form? f))
-  (check-eq? (defmethod-form-name f) 'greeting))
+;; defmulti / defmethod removed — multimethods had ~zero usage in the
+;; corpus. Use defprotocol + extend-type for type-based dispatch.
 
 ;; --- destructuring ----------------------------------------------------------
 
@@ -940,11 +931,8 @@
   (check-true (doto-form? f))
   (check-equal? (length (doto-form-forms f)) 1))
 
-;; --- as-> expands at parse time ----------------------------------------------
-
-(test-case "as-> expands to nested lets"
-  (define f (car (parse-one '(as-> 1 x (+ x 1) (str x)))))
-  (check-true (let-form? f)))
+;; as->/cond->/some-> removed — use explicit let-chains for conditional
+;; or short-circuiting accumulation.
 
 ;; --- for :let clause ---------------------------------------------------------
 
@@ -954,24 +942,7 @@
   (check-equal? (length (for-form-clauses f)) 2)
   (check-true (for-let? (cadr (for-form-clauses f)))))
 
-;; --- when-not, if-not (parse-time expansion) ---
-
-(test-case "when-not parses to when + not"
-  (define f (car (parse-one '(when-not (empty? xs) (first xs)))))
-  (check-true (when-form? f))
-  (check-true (call-form? (when-form-cond-expr f)))
-  (check-equal? (call-form-fn (when-form-cond-expr f)) 'not))
-
-(test-case "if-not parses to if + not"
-  (define f (car (parse-one '(if-not done? "pending" "done"))))
-  (check-true (if-form? f))
-  (check-true (call-form? (if-form-cond-expr f)))
-  (check-equal? (call-form-fn (if-form-cond-expr f)) 'not))
-
-(test-case "if-not without else"
-  (define f (car (parse-one '(if-not done? "pending"))))
-  (check-true (if-form? f))
-  (check-false (if-form-else-expr f)))
+;; when-not / if-not removed — use (when (not ...)) / (if (not ...) ...).
 
 ;; --- comment ---
 
