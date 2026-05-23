@@ -150,7 +150,7 @@ nix-instantiate --eval hello.nix # → "hello, world"
 
 ## Tooling
 
-- **LSP server** — hover (target-aware completion against stdlib + schema), diagnostics, symbols, jump-to-definition. `nvim-lspconfig` and Doom Emacs entries forthcoming.
+- **LSP server** — hover (target-aware completion against stdlib + schema), diagnostics, symbols, jump-to-definition. Neovim users: ready-to-drop stanza at [`contrib/nvim-lspconfig/`](contrib/nvim-lspconfig/) (upstream PR pending). Tree-sitter grammar: [`tree-sitter-beagle`](https://github.com/tompassarelli/tree-sitter-beagle) (separate repo).
 - **Typed REPL** — persistent environment, parse → check → emit per input
 - **Reactive daemon** — AST cache, inotify file watching, ~100ms re-check
 - **Property testing** — record generators, return-type inference, differential testing
@@ -182,13 +182,13 @@ Generates a PostToolUse hook, settings, `CLAUDE.md`, and language context. The d
 
 `#lang beagle` v0.14.0 — 1343 tests passing. **No v1.0 until others have used it in anger.** The author dogfoods on a 220-file NixOS config ([firnos](https://github.com/tompassarelli/firnos)) — schema-typed end-to-end, system builds from `flake.bnix` directly. Production-grade for one user, ready-for-adventure for others.
 
-If you're a NixOS user who wants to try it: the [nixos-starter template](#) (forthcoming) gets you running in 60 seconds.
+If you're a NixOS user who wants to try it: clone [firnos](https://github.com/tompassarelli/firnos) for a real working example, or scaffold from scratch — `beagle init`, then `beagle module add <name>` for a minimal first module.
 
 ## Documentation
 
-- [`docs/cheatsheet.md`](docs/cheatsheet.md) — language summary (single page, designed as LLM context)
 - [`beagle-doc/scribblings/nix-target.scrbl`](beagle-doc/scribblings/nix-target.scrbl) — Scribble reference for the Nix target
 - [`beagle-doc/scribblings/`](beagle-doc/scribblings/) — Scribble docs (`raco docs beagle` after install)
+- [`CLAUDE.md`](CLAUDE.md) — session anchor + design rules (load as LLM context)
 - [`beagle-lab`](https://github.com/tompassarelli/beagle-lab) — research journal, experiment results
 
 ## License
