@@ -650,7 +650,6 @@
 ;; fmt: interpolated string templates (parse-time rewrite → str call)
 ;; (fmt "hello ${name}") → (str "hello " name)
 ;; (fmt #<<JS ... ${expr} ... JS) → (str "..." expr "...")
-;; See docs/todo.md "Target-aware code generation" for the roadmap.
 (define (fmt-find-close-brace text start)
   (define len (string-length text))
   (let loop ([i start] [depth 1])

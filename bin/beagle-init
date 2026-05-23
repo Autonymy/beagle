@@ -62,8 +62,8 @@ fi
 # --- Write CLAUDE.md ---
 if [[ ! -f "CLAUDE.md" ]]; then
     CHEATSHEET=""
-    if [[ -n "$BEAGLE_PATH" && -f "$BEAGLE_PATH/docs/cheatsheet-consumer.md" ]]; then
-        CHEATSHEET=$(cat "$BEAGLE_PATH/docs/cheatsheet-consumer.md")
+    if [[ -n "$BEAGLE_PATH" && -f "$BEAGLE_PATH/skill-data/beagle-agent.md" ]]; then
+        CHEATSHEET=$(cat "$BEAGLE_PATH/skill-data/beagle-agent.md")
     fi
 
     cat > CLAUDE.md << 'CLEOF'
