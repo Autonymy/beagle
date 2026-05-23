@@ -1,4 +1,9 @@
-# Plan: Hook Distribution + Agent Mode Separation
+---
+status: done
+priority: —
+---
+
+# Hook Distribution + Agent Mode Separation
 
 ## Problem
 

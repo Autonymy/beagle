@@ -1,4 +1,15 @@
-# Plan: documentation consolidation
+---
+status: done
+priority: —
+---
+
+# Documentation consolidation
+
+(Superseded by the `lab/` reorganization — the `docs/` directory is being
+retired entirely; planning docs live in `lab/plans/`, journal in
+`lab/journal/`, canonical reference in `beagle-doc/scribblings/`.)
+
+
 
 ## Problem
 

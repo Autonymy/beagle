@@ -1,4 +1,9 @@
-# Plan: schema-typed paths — extend beyond Nix + SQL
+---
+status: active
+priority: 2
+---
+
+# Schema-typed paths — extend beyond Nix + SQL
 
 ## Thesis
 

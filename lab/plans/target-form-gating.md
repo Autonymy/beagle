@@ -1,4 +1,9 @@
-# Plan: target-form gating
+---
+status: done
+priority: —
+---
+
+# Target-form gating
 
 Enforce the portability boundary at check time. Target-specific forms
 (`await` for JS, `inh`/`fn-set`/etc. for Nix) currently parse and

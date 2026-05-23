@@ -1,3 +1,8 @@
+---
+status: done
+priority: —
+---
+
 # Racket Package Reorganization: composable lib/test/doc split
 
 ## Context

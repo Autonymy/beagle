@@ -1,4 +1,9 @@
-# Plan: target-specific file extensions
+---
+status: done
+priority: —
+---
+
+# Target-specific file extensions
 
 ## Design
 

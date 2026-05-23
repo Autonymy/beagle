@@ -1,4 +1,9 @@
-# Plan: `beagle/sql` target
+---
+status: done
+priority: —
+---
+
+# `beagle/sql` target
 
 ## Thesis
 
