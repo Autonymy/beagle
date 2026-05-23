@@ -42,6 +42,16 @@
        (let ([c (string-ref s 0)])
          (or (char=? c #\() (char=? c #\[) (char=? c #\{) (char=? c #\#)))))
 
+;; Prepend Clojure metadata to a raw emission string when the source-location
+;; table has an entry for the AST node `e` and the emission starts with a
+;; collection delimiter (metadata only attaches to forms in Clojure).
+(define (with-srcloc-meta e raw)
+  (define tbl (current-emit-src-table))
+  (define loc (and tbl (hash-ref tbl e #f)))
+  (if (and loc (metadatable? raw))
+    (string-append (emit-srcloc loc) raw)
+    raw))
+
 ;; --- top-level -------------------------------------------------------------
 
 (define (build-record-field-table prog)
@@ -96,11 +106,7 @@
     (define body
       (string-join
        (for/list ([form (in-list (program-forms prog))])
-         (define raw (emit-form form))
-         (define loc (hash-ref (program-src-table prog) form #f))
-         (if (and loc (metadatable? raw))
-           (string-append (emit-srcloc loc) raw)
-           raw))
+         (with-srcloc-meta form (emit-form form)))
        "\n\n"))
     (define needs-clj-string?
       (regexp-match? #rx"[( \t\n]str/" body))
@@ -248,12 +254,20 @@
 ;; --- expressions -----------------------------------------------------------
 
 (define (emit-expr e)
-  (define raw (emit-expr-core e))
-  (define tbl (current-emit-src-table))
-  (define loc (and tbl (hash-ref tbl e #f)))
-  (if (and loc (metadatable? raw))
-    (string-append (emit-srcloc loc) raw)
-    raw))
+  (with-srcloc-meta e (emit-expr-core e)))
+
+;; Shared scaffolding for `when-let`/`when-some` (single binding + body block).
+(define (emit-when-binding kw name expr body)
+  (format "(~a [~a ~a]\n  ~a)"
+          kw name (emit-expr expr) (emit-body body "  ")))
+
+;; Shared scaffolding for `if-let`/`if-some` (single binding + then expr, optional else).
+(define (emit-if-binding kw name expr then else)
+  (if else
+    (format "(~a [~a ~a]\n  ~a\n  ~a)"
+            kw name (emit-expr expr) (emit-expr then) (emit-expr else))
+    (format "(~a [~a ~a]\n  ~a)"
+            kw name (emit-expr expr) (emit-expr then))))
 
 (define (emit-expr-core e)
   (cond
@@ -296,32 +310,27 @@
              (emit-expr (when-form-cond-expr e))
              (emit-body (when-form-body e) "  "))]
     [(when-let-form? e)
-     (format "(when-let [~a ~a]\n  ~a)"
-             (when-let-form-name e)
-             (emit-expr (when-let-form-expr e))
-             (emit-body (when-let-form-body e) "  "))]
+     (emit-when-binding "when-let"
+                        (when-let-form-name e)
+                        (when-let-form-expr e)
+                        (when-let-form-body e))]
     [(if-let-form? e)
-     (if (if-let-form-else-body e)
-       (format "(if-let [~a ~a]\n  ~a\n  ~a)"
-               (if-let-form-name e)
-               (emit-expr (if-let-form-expr e))
-               (emit-expr (if-let-form-then-body e))
-               (emit-expr (if-let-form-else-body e)))
-       (format "(if-let [~a ~a]\n  ~a)"
-               (if-let-form-name e)
-               (emit-expr (if-let-form-expr e))
-               (emit-expr (if-let-form-then-body e))))]
+     (emit-if-binding "if-let"
+                      (if-let-form-name e)
+                      (if-let-form-expr e)
+                      (if-let-form-then-body e)
+                      (if-let-form-else-body e))]
     [(when-some-form? e)
-     (format "(when-some [~a ~a]\n  ~a)"
-             (when-some-form-name e)
-             (emit-expr (when-some-form-expr e))
-             (emit-body (when-some-form-body e) "  "))]
+     (emit-when-binding "when-some"
+                        (when-some-form-name e)
+                        (when-some-form-expr e)
+                        (when-some-form-body e))]
     [(if-some-form? e)
-     (format "(if-some [~a ~a]\n  ~a\n  ~a)"
-             (if-some-form-name e)
-             (emit-expr (if-some-form-expr e))
-             (emit-expr (if-some-form-then-body e))
-             (emit-expr (if-some-form-else-body e)))]
+     (emit-if-binding "if-some"
+                      (if-some-form-name e)
+                      (if-some-form-expr e)
+                      (if-some-form-then-body e)
+                      (if-some-form-else-body e))]
     [(with-open-form? e)
      (format "(with-open [~a]\n  ~a)"
              (emit-let-bindings (with-open-form-bindings e))
@@ -385,14 +394,24 @@
      (symbol->string (dynamic-var-name e))]
     [(check-expr? e)
      (define inner (emit-expr (check-expr-expr e)))
-     (format "(let [r__check ~a]\n  (if (instance? ~a r__check)\n    (~a r__check)\n    (throw (ex-info (str \"check failed: \" (~a r__check)) {:error r__check}))))"
-             inner "Ok" "ok-value" "err-error")]
+     (format
+      (string-append
+       "(let [r__check ~a]\n"
+       "  (if (instance? Ok r__check)\n"
+       "    (ok-value r__check)\n"
+       "    (throw (ex-info (str \"check failed: \" (err-error r__check)) {:error r__check}))))")
+      inner)]
     [(rescue-form? e)
      (define inner (emit-expr (rescue-form-expr e)))
      (define fallback (emit-expr (rescue-form-fallback e)))
      (define err-name (or (rescue-form-err-name e) '_))
-     (format "(let [r__rescue ~a]\n  (if (instance? ~a r__rescue)\n    (~a r__rescue)\n    (let [~a r__rescue] ~a)))"
-             inner "Ok" "ok-value" err-name fallback)]
+     (format
+      (string-append
+       "(let [r__rescue ~a]\n"
+       "  (if (instance? Ok r__rescue)\n"
+       "    (ok-value r__rescue)\n"
+       "    (let [~a r__rescue] ~a)))")
+      inner err-name fallback)]
     [(target-case-form? e)
      (define target (current-emit-target))
      (define cases (target-case-form-cases e))
@@ -675,23 +694,27 @@
     (format "[~a & ~a]" names-str (seq-destructure-rest-name d))
     (format "[~a]" names-str)))
 
+(define (emit-map-destructure d)
+  (define keys-str (string-join (map symbol->string (map-destructure-keys d)) " "))
+  (if (map-destructure-as-name d)
+    (format "{:keys [~a] :as ~a}" keys-str (map-destructure-as-name d))
+    (format "{:keys [~a]}" keys-str)))
+
+;; Emit any binding name target — plain symbol, map destructure, or seq destructure.
+;; Used by params, let-bindings, for-bindings.
+(define (emit-binding-name name)
+  (cond
+    [(map-destructure? name) (emit-map-destructure name)]
+    [(seq-destructure? name) (emit-seq-destructure name)]
+    [(symbol? name)          (symbol->string name)]
+    [else                    (symbol->string (param-name name))]))
 
 (define (emit-args args)
   (cond
     [(null? args) ""]
     [else (string-append " " (string-join (map emit-expr args) " "))]))
 
-(define (emit-param p)
-  (cond
-    [(map-destructure? p) (emit-map-destructure p)]
-    [(seq-destructure? p) (emit-seq-destructure p)]
-    [else (symbol->string (param-name p))]))
-
-(define (emit-map-destructure d)
-  (define keys-str (string-join (map symbol->string (map-destructure-keys d)) " "))
-  (if (map-destructure-as-name d)
-    (format "{:keys [~a] :as ~a}" keys-str (map-destructure-as-name d))
-    (format "{:keys [~a]}" keys-str)))
+(define (emit-param p) (emit-binding-name p))
 
 (define (emit-params params)
   (string-join (map emit-param params) " "))
@@ -707,14 +730,9 @@
 (define (emit-let-bindings bindings)
   (string-join
    (for/list ([b (in-list bindings)])
-     (define name-str
-       (cond
-         [(map-destructure? (let-binding-name b))
-          (emit-map-destructure (let-binding-name b))]
-         [(seq-destructure? (let-binding-name b))
-          (emit-seq-destructure (let-binding-name b))]
-         [else (symbol->string (let-binding-name b))]))
-     (format "~a ~a" name-str (emit-expr (let-binding-value b))))
+     (format "~a ~a"
+             (emit-binding-name (let-binding-name b))
+             (emit-expr (let-binding-value b))))
    "\n   "))
 
 (define (emit-for-clauses clauses)
@@ -722,14 +740,9 @@
    (for/list ([c (in-list clauses)])
      (cond
        [(for-binding? c)
-        (define name-str
-          (cond
-            [(seq-destructure? (for-binding-name c))
-             (emit-seq-destructure (for-binding-name c))]
-            [(map-destructure? (for-binding-name c))
-             (emit-map-destructure (for-binding-name c))]
-            [else (symbol->string (for-binding-name c))]))
-        (format "~a ~a" name-str (emit-expr (for-binding-expr c)))]
+        (format "~a ~a"
+                (emit-binding-name (for-binding-name c))
+                (emit-expr (for-binding-expr c)))]
        [(for-when? c)
         (format ":when ~a" (emit-expr (for-when-test c)))]
        [(for-let? c)
