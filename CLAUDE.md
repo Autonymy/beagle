@@ -11,12 +11,12 @@ syntactic surface area, structured errors. One canonical idiom per concept.
 
 ## Status
 
-`#lang beagle` v0.14.0 — 1343 tests passing (+ oracle/differential/bun-parity via `BEAGLE_ORACLE=1`).
+`#lang beagle` v0.14.0 — 1372 tests passing (+ oracle/differential/bun-parity via `BEAGLE_ORACLE=1`).
 
 - **Targets:** `beagle/clj` (default), `beagle/cljs`, `beagle/js`, `beagle/nix`, `beagle/sql`, `beagle/py`, `beagle/rkt`
 - **Forms:** ~78 forms — ~50 cross-target (definitions, control flow, data structures, pattern matching, threading, interop) + 28 typed JS target forms (`js/*`).
 - **Types:** 9 primitives (`String`, `Int`, `Float`, `Bool`, `Keyword`, `Symbol`, `Nil`, `Any`, `NixType`), `Number` (`U Int Float`), parametric (`Vec`, `Map`, `Set`, `List`, `NixType`), union (`U`), nullable (`T?`), function types, `forall` (with optional `<:` bounds), parametric `defunion` (`(Result T E)`), `(Promise T)`
-- **Stdlib:** ~865 pre-typed (portable 319 + Clojure 414 + CLJS 86), plus JS (55), Nix (280), SQL (54), Python (151)
+- **Stdlib:** 1830 pre-typed — portable 269, Clojure 397, CLJS 132, JS 102, Nix 523, SQL 59, Python 348
 - **Type checking:** flow-sensitive narrowing, cross-module import, collection/destructuring inference, exhaustive match warnings, refinement predicates
 - **Diagnostics:** Rust-style errors with signatures, "did you mean?" suggestions, JSON mode
 - **Tooling:** LSP, typed REPL, reactive daemon (~100ms re-check), repair compiler, property testing, distributed tracing, `beagle init --hooks` (scaffold Claude Code integration for any project)
