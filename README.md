@@ -180,7 +180,7 @@ Generates a PostToolUse hook, settings, `CLAUDE.md`, and language context. The d
 
 ## Status
 
-`#lang beagle` v0.13.x — 1343 tests passing. **No v1.0 until others have used it in anger.** The author dogfoods on a 220-file NixOS config; production-grade for one user, ready-for-adventure for others.
+`#lang beagle` v0.14.0 — 1343 tests passing. **No v1.0 until others have used it in anger.** The author dogfoods on a 220-file NixOS config ([firnos](https://github.com/tompassarelli/firnos)) — schema-typed end-to-end, system builds from `flake.bnix` directly. Production-grade for one user, ready-for-adventure for others.
 
 If you're a NixOS user who wants to try it: the [nixos-starter template](#) (forthcoming) gets you running in 60 seconds.
 
