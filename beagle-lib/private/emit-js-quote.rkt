@@ -236,8 +236,8 @@
              (emit-js-ast-expr-str (js-ast-ternary-else-expr node)))]
 
     [(js-ast-binary? node)
-     (define op-str (hash-ref JS-AST-BINARY-OPS (js-ast-binary-op node)
-                              (symbol->string (js-ast-binary-op node))))
+     (define op-str (hash-ref JS-BINARY-OPS (js-ast-binary-op node)
+                              (lambda () (symbol->string (js-ast-binary-op node)))))
      (format "(~a ~a ~a)"
              (emit-js-ast-expr-str (js-ast-binary-left node))
              op-str

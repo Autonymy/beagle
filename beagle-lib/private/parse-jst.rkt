@@ -89,4 +89,4 @@
 
 (provide
  JST-BINARY-OPS jst-binary-op?
- parse-jst-callee parse-jst-class parse-jst-class-method)
+ parse-jst-class)

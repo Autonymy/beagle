@@ -1,12 +1,27 @@
 #lang racket/base
 
+;; JS capability sets and operator tables.
+;; Single source of truth for: which symbols emit-js knows how to translate,
+;; how infix/unary operators map to JS source, which symbols need the runtime.
+
 (require racket/set)
 
+;; --- operator translation tables -------------------------------------------
+;; Hash from symbol → JS operator string. Used by emit-js to render infix
+;; calls. The keys also serve as the membership test for `js-infix?`/`js-unary?`.
+
 (define JS-INFIX-OPS
-  (set '+ '- '* '/ '< '> '<= '>= '= '== 'not= 'mod 'identical?))
+  (hash '+ "+" '- "-" '* "*" '/ "/"
+        '< "<" '> ">" '<= "<=" '>= ">="
+        '= "===" 'not= "!==" '== "==="
+        'mod "%" 'identical? "==="))
 
 (define JS-UNARY-OPS
-  (set 'not))
+  (hash 'not "!"))
+
+;; Symbol-only sets for set-union into JS-TRANSLATED.
+(define JS-INFIX-OP-SYMS (list->set (hash-keys JS-INFIX-OPS)))
+(define JS-UNARY-OP-SYMS (list->set (hash-keys JS-UNARY-OPS)))
 
 (define JS-CORE-CALL
   (set 'str 'println 'print 'pr 'prn
@@ -57,7 +72,7 @@
        'max-key 'min-key))
 
 (define JS-TRANSLATED
-  (set-union JS-INFIX-OPS JS-UNARY-OPS JS-CORE-CALL JS-RUNTIME-HELPERS))
+  (set-union JS-INFIX-OP-SYMS JS-UNARY-OP-SYMS JS-CORE-CALL JS-RUNTIME-HELPERS))
 
 (define JS-VALUE-WRAPPERS
   (hash
@@ -108,5 +123,7 @@
    'run!      "((_f, _c) => (_c.forEach(_f), null))"
    ))
 
-(provide JS-TRANSLATED JS-INFIX-OPS JS-UNARY-OPS JS-CORE-CALL
-         JS-RUNTIME-HELPERS JS-VALUE-WRAPPERS)
+(provide JS-TRANSLATED
+         JS-INFIX-OPS JS-UNARY-OPS
+         JS-INFIX-OP-SYMS JS-UNARY-OP-SYMS
+         JS-CORE-CALL JS-RUNTIME-HELPERS JS-VALUE-WRAPPERS)

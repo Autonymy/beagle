@@ -45,7 +45,11 @@
 (define (mangle-prop s)
   (string-replace s "-" "_"))
 
-(define JS-AST-BINARY-OPS
+;; --- canonical JS binary/assign operator tables -----------------------------
+;; Shared by parse-js-quote (recognition during parse) and the emitters
+;; (rendering during emit). Single source of truth.
+
+(define JS-BINARY-OPS
   (hasheq '+ "+" '- "-" '* "*" '/ "/" '% "%"
           '** "**" '=== "===" '!== "!==" '== "==" '!= "!="
           '< "<" '> ">" '<= "<=" '>= ">="
@@ -54,10 +58,23 @@
           '<< "<<" '>> ">>" '>>> ">>>"
           'in "in" 'instanceof "instanceof"))
 
+(define JS-ASSIGN-OPS
+  (hasheq '+= "+=" '-= "-=" '*= "*=" '/= "/="
+          '%= "%=" '**= "**="
+          'and= "&&=" 'or= "||=" 'nullish= "??="
+          'bit-and= "&=" 'bit-or= "|=" 'bit-xor= "^="
+          '<<= "<<=" '>>= ">>=" '>>>= ">>>="))
+
+(define (js-binary-op? sym)
+  (and (symbol? sym) (hash-has-key? JS-BINARY-OPS sym)))
+(define (js-assign-op? sym)
+  (and (symbol? sym) (hash-has-key? JS-ASSIGN-OPS sym)))
+
 (define current-emit-expr (make-parameter #f))
 
 (provide
  escape-js-regex-slash escape-js-template-string
  mangle-name mangle-str mangle-prop
- JS-AST-BINARY-OPS
+ JS-BINARY-OPS JS-ASSIGN-OPS
+ js-binary-op? js-assign-op?
  current-emit-expr)

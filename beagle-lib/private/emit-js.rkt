@@ -5,6 +5,7 @@
 (require racket/match
          racket/string
          racket/format
+         racket/list
          racket/set
          "parse.rkt"
          "emit-dispatch.rkt"
@@ -29,20 +30,38 @@
     [else (number->string n)]))
 
 ;; --- infix operators -------------------------------------------------------
-
-(define JS-INFIX-OPS
-  (hash '+ "+" '- "-" '* "*" '/ "/"
-        '< "<" '> ">" '<= "<=" '>= ">="
-        '= "===" 'not= "!==" '== "==="
-        'mod "%" 'identical? "==="))
-
-(define JS-UNARY-OPS
-  (hash 'not "!"))
+;; JS-INFIX-OPS / JS-UNARY-OPS live in js-capabilities.rkt.
 
 (define (js-infix? sym) (hash-has-key? JS-INFIX-OPS sym))
 (define (js-unary? sym) (hash-has-key? JS-UNARY-OPS sym))
 
+;; --- small string utilities ------------------------------------------------
+
+;; A keyword symbol like ':x is rendered as a bare property name "x".
+;; Accepts either the full string (":x") or a symbol whose first char is `:`.
+(define (kw->prop kw)
+  (define s (if (symbol? kw) (symbol->string kw) kw))
+  (mangle-str (substring s 1)))
+
+(define (keyword-symbol? sym)
+  (and (symbol? sym)
+       (let ([s (symbol->string sym)])
+         (and (positive? (string-length s))
+              (char=? (string-ref s 0) #\:)))))
+
 ;; --- core function translations --------------------------------------------
+
+;; Render a flat (k v k v ...) list as ", "-separated [k]: v JS entries.
+;; Caller is responsible for confirming even arity. Returns "" when empty.
+(define (emit-kv-entries kvs)
+  (string-join
+   (let loop ([rest kvs] [acc '()])
+     (if (< (length rest) 2)
+         (reverse acc)
+         (loop (cddr rest)
+               (cons (format "[~a]: ~a" (emit-expr (car rest)) (emit-expr (cadr rest)))
+                     acc))))
+   ", "))
 
 (define (emit-core-call fn-sym args)
   (define n (length args))
@@ -83,18 +102,11 @@
                       (emit-expr (car args))
                       (string-join (map emit-expr (cdr args)) ", "))
               #f)]
-    [(assoc) (if (>= n 3)
-              (format "({...~a, ~a})"
-                      (emit-expr (car args))
-                      (string-join
-                       (let loop ([rest (cdr args)] [acc '()])
-                         (if (< (length rest) 2)
-                           (reverse acc)
-                           (loop (cddr rest)
-                                 (cons (format "[~a]: ~a" (emit-expr (car rest)) (emit-expr (cadr rest)))
-                                       acc))))
-                       ", "))
-              #f)]
+    [(assoc) (if (and (>= n 3) (odd? n))
+                 (format "({...~a, ~a})"
+                         (emit-expr (car args))
+                         (emit-kv-entries (cdr args)))
+                 #f)]
     [(inc) (if (= n 1) (format "(~a + 1)" (emit-expr (car args))) #f)]
     [(dec) (if (= n 1) (format "(~a - 1)" (emit-expr (car args))) #f)]
     [(abs) (if (= n 1) (format "Math.abs(~a)" (emit-expr (car args))) #f)]
@@ -272,18 +284,18 @@
     [(not=) (if (= n 2) (format "(~a !== ~a)" (emit-expr (car args)) (emit-expr (cadr args))) #f)]
     [(seq) (if (= n 1) (format "(~a.length > 0 ? ~a : null)" (emit-expr (car args)) (emit-expr (car args))) #f)]
     ;; --- runtime helpers (beagle/core.js) -------------------------------------
-    [(range) (begin (use-runtime!) (format "$$bc.range(~a)" (string-join (map emit-expr args) ", ")))]
-    [(remove) (if (= n 2) (begin (use-runtime!) (format "$$bc.remove(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
-    [(mapcat) (if (= n 2) (begin (use-runtime!) (format "$$bc.mapcat(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
-    [(every?) (if (= n 2) (begin (use-runtime!) (format "$$bc.every_p(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
-    [(keep) (if (= n 2) (begin (use-runtime!) (format "$$bc.keep(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
-    [(map-indexed) (if (= n 2) (begin (use-runtime!) (format "$$bc.map_indexed(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
-    [(assoc-in) (if (= n 3) (begin (use-runtime!) (format "$$bc.assoc_in(~a, ~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)) (emit-expr (caddr args)))) #f)]
-    [(update-in) (if (= n 3) (begin (use-runtime!) (format "$$bc.update_in(~a, ~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)) (emit-expr (caddr args)))) #f)]
-    [(select-keys) (if (= n 2) (begin (use-runtime!) (format "$$bc.select_keys(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
-    [(merge-with) (if (>= n 2) (begin (use-runtime!) (format "$$bc.merge_with(~a)" (string-join (map emit-expr args) ", "))) #f)]
-    [(take-while) (if (= n 2) (begin (use-runtime!) (format "$$bc.take_while(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
-    [(drop-while) (if (= n 2) (begin (use-runtime!) (format "$$bc.drop_while(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
+    [(range)       (runtime-call "range" args)]
+    [(remove)      (if (= n 2) (runtime-call "remove" args) #f)]
+    [(mapcat)      (if (= n 2) (runtime-call "mapcat" args) #f)]
+    [(every?)      (if (= n 2) (runtime-call "every_p" args) #f)]
+    [(keep)        (if (= n 2) (runtime-call "keep" args) #f)]
+    [(map-indexed) (if (= n 2) (runtime-call "map_indexed" args) #f)]
+    [(assoc-in)    (if (= n 3) (runtime-call "assoc_in" args) #f)]
+    [(update-in)   (if (= n 3) (runtime-call "update_in" args) #f)]
+    [(select-keys) (if (= n 2) (runtime-call "select_keys" args) #f)]
+    [(merge-with)  (if (>= n 2) (runtime-call "merge_with" args) #f)]
+    [(take-while)  (if (= n 2) (runtime-call "take_while" args) #f)]
+    [(drop-while)  (if (= n 2) (runtime-call "drop_while" args) #f)]
     ;; --- batch 2: collection ops -----------------------------------------------
     [(cons) (if (= n 2) (format "[~a, ...~a]" (emit-expr (car args)) (emit-expr (cadr args))) #f)]
     [(butlast) (if (= n 1) (format "~a.slice(0, -1)" (emit-expr (car args))) #f)]
@@ -317,41 +329,40 @@
     [(re-seq) (if (= n 2) (format "[...~a.matchAll(~a)].map(m => m[0])"
                                   (emit-expr (cadr args)) (emit-expr (car args))) #f)]
     [(re-groups) (if (= n 1) (format "~a" (emit-expr (car args))) #f)]
-    [(format) (if (>= n 1) (begin (use-runtime!) (format "$$bc.format(~a)" (string-join (map emit-expr args) ", "))) #f)]
+    [(format)     (if (>= n 1) (runtime-call "format" args) #f)]
     ;; --- type coercion (int/double/char omitted — shadow user names too easily)
     ;; --- higher-order ----------------------------------------------------------
-    [(memoize) (if (= n 1) (begin (use-runtime!) (format "$$bc.memoize(~a)" (emit-expr (car args)))) #f)]
-    [(fnil) (if (>= n 2) (begin (use-runtime!) (format "$$bc.fnil(~a)" (string-join (map emit-expr args) ", "))) #f)]
-    [(some-fn) (if (>= n 1) (begin (use-runtime!) (format "$$bc.some_fn(~a)" (string-join (map emit-expr args) ", "))) #f)]
-    [(every-pred) (if (>= n 1) (begin (use-runtime!) (format "$$bc.every_pred(~a)" (string-join (map emit-expr args) ", "))) #f)]
+    [(memoize)    (if (= n 1) (runtime-call "memoize" args) #f)]
+    [(fnil)       (if (>= n 2) (runtime-call "fnil" args) #f)]
+    [(some-fn)    (if (>= n 1) (runtime-call "some_fn" args) #f)]
+    [(every-pred) (if (>= n 1) (runtime-call "every_pred" args) #f)]
     [(run!) (if (= n 2) (format "(~a.forEach(~a), null)" (emit-expr (cadr args)) (emit-expr (car args))) #f)]
     ;; --- map / set ops ---------------------------------------------------------
-    [(rename-keys) (if (= n 2) (begin (use-runtime!) (format "$$bc.rename_keys(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
-    [(map-keys) (if (= n 2) (begin (use-runtime!) (format "$$bc.map_keys(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
-    [(map-vals) (if (= n 2) (begin (use-runtime!) (format "$$bc.map_vals(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
-    [(update-keys) (if (= n 2) (begin (use-runtime!) (format "$$bc.map_keys(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
-    [(update-vals) (if (= n 2) (begin (use-runtime!) (format "$$bc.map_vals(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
-    [(disj) (if (>= n 2) (begin (use-runtime!) (format "$$bc.disj(~a)" (string-join (map emit-expr args) ", "))) #f)]
+    [(rename-keys) (if (= n 2) (runtime-call "rename_keys" args) #f)]
+    [(map-keys)    (if (= n 2) (runtime-call "map_keys" args) #f)]
+    [(map-vals)    (if (= n 2) (runtime-call "map_vals" args) #f)]
+    [(update-keys) (if (= n 2) (runtime-call "map_keys" args) #f)]
+    [(update-vals) (if (= n 2) (runtime-call "map_vals" args) #f)]
+    [(disj)        (if (>= n 2) (runtime-call "disj" args) #f)]
     [(find) (if (= n 2) (format "(() => { const _m = ~a, _k = ~a; return _k in _m ? [_k, _m[_k]] : null; })()"
                                 (emit-expr (car args)) (emit-expr (cadr args))) #f)]
     [(key) (if (= n 1) (format "~a[0]" (emit-expr (car args))) #f)]
     [(val) (if (= n 1) (format "~a[1]" (emit-expr (car args))) #f)]
-    [(reduce-kv) (if (= n 3) (begin (use-runtime!) (format "$$bc.reduce_kv(~a, ~a, ~a)"
-                                                           (emit-expr (car args)) (emit-expr (cadr args)) (emit-expr (caddr args)))) #f)]
+    [(reduce-kv)  (if (= n 3) (runtime-call "reduce_kv" args) #f)]
     ;; --- sequence generation ---------------------------------------------------
     [(repeat) (cond
                 [(= n 2) (format "Array.from({length: ~a}, () => ~a)" (emit-expr (car args)) (emit-expr (cadr args)))]
                 [else #f])]
     [(repeatedly) (if (= n 2) (format "Array.from({length: ~a}, ~a)" (emit-expr (car args)) (emit-expr (cadr args))) #f)]
-    [(dedupe) (if (= n 1) (begin (use-runtime!) (format "$$bc.dedupe(~a)" (emit-expr (car args)))) #f)]
-    [(interpose) (if (= n 2) (begin (use-runtime!) (format "$$bc.interpose(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
-    [(partition-all) (if (= n 2) (begin (use-runtime!) (format "$$bc.partition_all(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
-    [(partition-by) (if (= n 2) (begin (use-runtime!) (format "$$bc.partition_by(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
+    [(dedupe)        (if (= n 1) (runtime-call "dedupe" args) #f)]
+    [(interpose)     (if (= n 2) (runtime-call "interpose" args) #f)]
+    [(partition-all) (if (= n 2) (runtime-call "partition_all" args) #f)]
+    [(partition-by)  (if (= n 2) (runtime-call "partition_by" args) #f)]
     [(split-at) (if (= n 2) (format "[~a.slice(0, ~a), ~a.slice(~a)]"
                                     (emit-expr (cadr args)) (emit-expr (car args))
                                     (emit-expr (cadr args)) (emit-expr (car args))) #f)]
-    [(split-with) (if (= n 2) (begin (use-runtime!) (format "$$bc.split_with(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
-    [(zipmap) (if (= n 2) (begin (use-runtime!) (format "$$bc.zipmap(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
+    [(split-with) (if (= n 2) (runtime-call "split_with" args) #f)]
+    [(zipmap)     (if (= n 2) (runtime-call "zipmap" args) #f)]
     ;; --- bitwise ---------------------------------------------------------------
     [(bit-and) (if (= n 2) (format "(~a & ~a)" (emit-expr (car args)) (emit-expr (cadr args))) #f)]
     [(bit-or) (if (= n 2) (format "(~a | ~a)" (emit-expr (car args)) (emit-expr (cadr args))) #f)]
@@ -366,39 +377,32 @@
     [(bit-flip) (if (= n 2) (format "(~a ^ (1 << ~a))" (emit-expr (car args)) (emit-expr (cadr args))) #f)]
     [(bit-and-not) (if (= n 2) (format "(~a & ~~~a)" (emit-expr (car args)) (emit-expr (cadr args))) #f)]
     ;; --- more collection ops ---------------------------------------------------
-    [(get-in) (if (= n 2) (begin (use-runtime!) (format "$$bc.get_in(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
+    [(get-in)     (if (= n 2) (runtime-call "get_in" args) #f)]
     [(vector) (format "[~a]" (string-join (map emit-expr args) ", "))]
     [(list) (format "[~a]" (string-join (map emit-expr args) ", "))]
     [(hash-map) (if (even? n)
-                  (format "{~a}"
-                          (string-join
-                           (let loop ([rest args] [acc '()])
-                             (if (< (length rest) 2)
-                               (reverse acc)
-                               (loop (cddr rest)
-                                     (cons (format "[~a]: ~a" (emit-expr (car rest)) (emit-expr (cadr rest)))
-                                           acc))))
-                           ", "))
-                  #f)]
+                    (format "{~a}" (emit-kv-entries args))
+                    #f)]
     [(hash-set) (format "new Set([~a])" (string-join (map emit-expr args) ", "))]
-    [(take-nth) (if (= n 2) (begin (use-runtime!) (format "$$bc.take_nth(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
-    [(keep-indexed) (if (= n 2) (begin (use-runtime!) (format "$$bc.keep_indexed(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
-    [(reductions) (if (>= n 2) (begin (use-runtime!) (format "$$bc.reductions(~a)" (string-join (map emit-expr args) ", "))) #f)]
-    [(replace) (if (= n 2) (begin (use-runtime!) (format "$$bc.replace(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
-    [(max-key) (if (>= n 2) (begin (use-runtime!) (format "$$bc.max_key(~a)" (string-join (map emit-expr args) ", "))) #f)]
-    [(min-key) (if (>= n 2) (begin (use-runtime!) (format "$$bc.min_key(~a)" (string-join (map emit-expr args) ", "))) #f)]
+    [(take-nth)     (if (= n 2) (runtime-call "take_nth" args) #f)]
+    [(keep-indexed) (if (= n 2) (runtime-call "keep_indexed" args) #f)]
+    [(reductions)   (if (>= n 2) (runtime-call "reductions" args) #f)]
+    [(replace)      (if (= n 2) (runtime-call "replace" args) #f)]
+    [(max-key)      (if (>= n 2) (runtime-call "max_key" args) #f)]
+    [(min-key)      (if (>= n 2) (runtime-call "min_key" args) #f)]
     [(next) (if (= n 1) (format "(() => { const _s = ~a.slice(1); return _s.length > 0 ? _s : null; })()" (emit-expr (car args))) #f)]
     [(empty) (if (= n 1) (format "(Array.isArray(~a) ? [] : {})" (emit-expr (car args))) #f)]
     ;; --- IO / formatting -------------------------------------------------------
     [(newline) (if (= n 0) "console.log()" #f)]
-    [(printf) (if (>= n 1) (begin (use-runtime!) (format "process.stdout.write($$bc.format(~a))"
-                                                         (string-join (map emit-expr args) ", "))) #f)]
+    [(printf) (if (>= n 1)
+                  (format "process.stdout.write(~a)" (runtime-call "format" args))
+                  #f)]
     [(compare-and-set!) (if (= n 3)
                           (format "(() => { const _a = ~a; if (_a.value === ~a) { _a.value = ~a; return true; } return false; })()"
                                   (emit-expr (car args)) (emit-expr (cadr args)) (emit-expr (caddr args)))
                           #f)]
     [(gensym) (format "Symbol(~a)" (if (= n 0) "" (emit-expr (car args))))]
-    [(hash) (if (= n 1) (begin (use-runtime!) (format "$$bc.hash(~a)" (emit-expr (car args)))) #f)]
+    [(hash) (if (= n 1) (runtime-call "hash" args) #f)]
     [(random-uuid) (if (= n 0) "crypto.randomUUID()" #f)]
     [(parse-long) (if (= n 1) (format "parseInt(~a, 10)" (emit-expr (car args))) #f)]
     [(parse-double) (if (= n 1) (format "parseFloat(~a)" (emit-expr (car args))) #f)]
@@ -471,6 +475,13 @@
 
 (define (use-runtime!)
   (needs-runtime? #t))
+
+;; Convenience: mark runtime as needed and emit a call to one of the
+;; functions exported by beagle/core.js.
+;;   (runtime-call "range" args) => "$$bc.range(arg1, arg2, ...)"
+(define (runtime-call js-name args)
+  (use-runtime!)
+  (format "$$bc.~a(~a)" js-name (string-join (map emit-expr args) ", ")))
 
 ;; --- binding environment (for value-position wrapper resolution) -----------
 
@@ -613,7 +624,7 @@
             (string-append "./" (string-replace ns-str "." "/") ".js")))
         (if refer
           (format "import { ~a } from '~a';"
-                  (string-join (map (lambda (s) (mangle-str (symbol->string s))) refer) ", ")
+                  (string-join (map mangle-name refer) ", ")
                   module-path)
           (let ([alias (or (require-entry-alias r)
                            (let ([parts (string-split ns-str ".")])
@@ -690,8 +701,7 @@
      (define comment
        (format "// ~a = ~a"
                (mangle-name (defunion-form-name f))
-               (string-join (map (compose mangle-str symbol->string)
-                                (defunion-form-members f)) " | ")))
+               (string-join (map mangle-name (defunion-form-members f)) " | ")))
      (define member-fields (defunion-form-member-fields f))
      (if (not member-fields)
        comment
@@ -699,40 +709,20 @@
          (string-join
            (for/list ([m (in-list (defunion-form-members f))])
              (define fields (hash-ref member-fields m))
-             (define m-str (mangle-str (symbol->string m)))
-             (define field-names (map (compose mangle-str symbol->string param-name) fields))
-             (format "function ~a(~a) { return Object.freeze({ _tag: ~v~a }); }"
-                     m-str
-                     (string-join field-names ", ")
-                     (symbol->string m)
-                     (if (null? field-names) ""
-                       (string-append ", "
-                         (string-join
-                           (map (lambda (n) (format "~a: ~a" n n)) field-names)
-                           ", ")))))
+             (emit-tagged-factory m fields))
            "\n")))]
 
     [(deferror-form? f)
-     (define name (mangle-str (symbol->string (deferror-form-name f))))
+     (define name (mangle-name (deferror-form-name f)))
      (define members (deferror-form-members f))
      (define mf (deferror-form-member-fields f))
      (define comment (format "// error ~a = ~a" name
-                             (string-join (map (compose mangle-str symbol->string) members) " | ")))
+                             (string-join (map mangle-name members) " | ")))
      (string-append comment "\n"
        (string-join
          (for/list ([m (in-list members)])
            (define fields (hash-ref mf m '()))
-           (define m-str (mangle-str (symbol->string m)))
-           (define field-names (map (compose mangle-str symbol->string param-name) fields))
-           (format "function ~a(~a) { return Object.freeze({ _tag: ~v~a }); }"
-                   m-str
-                   (string-join field-names ", ")
-                   (symbol->string m)
-                   (if (null? field-names) ""
-                     (string-append ", "
-                       (string-join
-                         (map (lambda (n) (format "~a: ~a" n n)) field-names)
-                         ", ")))))
+           (emit-tagged-factory m fields))
          "\n"))]
 
     [(defscalar-form? f)
@@ -779,8 +769,7 @@
     [(symbol? e)
      (cond
        [(eq? e 'nil) "null"]
-       [(char=? (string-ref (symbol->string e) 0) #\:)
-        (~v (mangle-str (substring (symbol->string e) 1)))]
+       [(keyword-symbol? e) (~v (kw->prop e))]
        [(js-bound? e) (mangle-name e)]
        [(hash-ref JS-VALUE-WRAPPERS e #f) => values]
        [else
@@ -808,8 +797,7 @@
                      (define v (cdr p))
                      (define key-str
                        (cond
-                         [(and (symbol? k) (char=? (string-ref (symbol->string k) 0) #\:))
-                          (mangle-str (substring (symbol->string k) 1))]
+                         [(keyword-symbol? k) (kw->prop k)]
                          [else (format "[~a]" (emit-expr k))]))
                      (format "~a: ~a" key-str (emit-expr v)))
                    (map-form-pairs e))
@@ -1131,8 +1119,7 @@
              (string-join (map emit-expr (new-form-args e)) ", "))]
 
     [(kw-access? e)
-     (define key (symbol->string (kw-access-kw e)))
-     (define prop (mangle-str (substring key 1)))
+     (define prop (kw->prop (kw-access-kw e)))
      (if (kw-access-default e)
        (format "(~a.~a != null ? ~a.~a : ~a)"
                (emit-expr (kw-access-target e)) prop
@@ -1211,14 +1198,28 @@
 
 ;; --- records ---------------------------------------------------------------
 
+;; Emit `function Tag(...fields) { return Object.freeze({ _tag: "Tag", ... }); }`
+;; Shared by defunion and deferror members (both produce tagged variant ctors).
+(define (emit-tagged-factory member-name fields)
+  (define m-str (mangle-name member-name))
+  (define field-names (map (compose mangle-name param-name) fields))
+  (format "function ~a(~a) { return Object.freeze({ _tag: ~v~a }); }"
+          m-str
+          (string-join field-names ", ")
+          (symbol->string member-name)
+          (if (null? field-names) ""
+              (string-append ", "
+                             (string-join
+                              (map (lambda (n) (format "~a: ~a" n n)) field-names)
+                              ", ")))))
+
 (define (emit-record f)
   (define name (record-form-name f))
   (define fields (record-form-fields f))
   (define name-str (symbol->string name))
-  (define name-mangled (mangle-str name-str))
-  (define name-lower (string-downcase name-str))
-  (define field-names (map (lambda (p) (symbol->string (param-name p))) fields))
-  (define field-params (map mangle-str field-names))
+  (define name-mangled (mangle-name name))
+  (define accessor-prefix (mangle-str (string-downcase name-str)))
+  (define field-params (map (compose mangle-name param-name) fields))
   (define factory
     (format "function ~a(~a) {\n  return Object.freeze({_tag: ~v, ~a});\n}"
             name-mangled
@@ -1226,10 +1227,9 @@
             name-str
             (string-join field-params ", ")))
   (define accessors
-    (for/list ([fname (in-list field-names)])
-      (define mangled-fname (mangle-str fname))
+    (for/list ([fp (in-list field-params)])
       (format "function ~a_~a(r) { return r.~a; }"
-              (mangle-str name-lower) mangled-fname mangled-fname)))
+              accessor-prefix fp fp)))
   (string-join (cons factory accessors) "\n\n"))
 
 ;; --- with (record update) --------------------------------------------------
@@ -1238,9 +1238,9 @@
   (define target-str (emit-expr (with-form-target e)))
   (define update-strs
     (for/list ([u (in-list (with-form-updates e))])
-      (define key (symbol->string (with-update-field-kw u)))
-      (define prop (mangle-str (substring key 1)))
-      (format "~a: ~a" prop (emit-expr (with-update-value u)))))
+      (format "~a: ~a"
+              (kw->prop (with-update-field-kw u))
+              (emit-expr (with-update-value u)))))
   (format "Object.freeze({...~a, ~a})" target-str (string-join update-strs ", ")))
 
 ;; --- match -----------------------------------------------------------------
@@ -1288,8 +1288,8 @@
          [(eq? val 'nil) (format "~a == null" tmp)]
          [(string? val)  (format "~a === ~v" tmp val)]
          [(boolean? val) (format "~a === ~a" tmp (if val "true" "false"))]
-         [(and (symbol? val) (char=? (string-ref (symbol->string val) 0) #\:))
-          (format "~a === ~v" tmp (mangle-str (substring (symbol->string val) 1)))]
+         [(keyword-symbol? val)
+          (format "~a === ~v" tmp (kw->prop val))]
          [else (format "~a === ~a" tmp val)]))
      (format "if (~a) { ~a } else" test (make-body-str))]
     [(pat-record? pat)
@@ -1311,7 +1311,7 @@
     [(pat-map? pat)
      (define tests
        (for/list ([entry (in-list (pat-map-entries pat))])
-         (define k (mangle-str (substring (symbol->string (car entry)) 1)))
+         (define k (kw->prop (car entry)))
          (define v (cdr entry))
          (cond
            [(pat-literal? v)
@@ -1413,10 +1413,9 @@
     [(exact-integer? d) (number->string d)]
     [(real? d) (emit-js-number d)]
     [(symbol? d)
-     (define s (symbol->string d))
-     (if (char=? (string-ref s 0) #\:)
-       (~v (mangle-str (substring s 1)))
-       (~v s))]
+     (if (keyword-symbol? d)
+         (~v (kw->prop d))
+         (~v (symbol->string d)))]
     [(null? d) "[]"]
     [(pair? d) (format "[~a]" (string-join (map emit-quoted d) ", "))]
     [else (~v d)]))
@@ -1549,13 +1548,6 @@
 (define (emit-body-stmts exprs indent)
   (string-join (map (lambda (e) (emit-expr-stmt e)) exprs)
                (string-append "\n" indent)))
-
-(define (take lst n)
-  (if (or (<= n 0) (null? lst)) '()
-      (cons (car lst) (take (cdr lst) (- n 1)))))
-
-(define (last lst)
-  (if (null? (cdr lst)) (car lst) (last (cdr lst))))
 
 ;; --- block string -----------------------------------------------------------
 

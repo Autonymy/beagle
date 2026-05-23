@@ -12,7 +12,7 @@
 (define portable-keys (list->set (hash-keys STDLIB-PORTABLE)))
 
 (define inline-emitted (set-intersect portable-keys JS-CORE-CALL))
-(define infix-unary (set-intersect portable-keys (set-union JS-INFIX-OPS JS-UNARY-OPS)))
+(define infix-unary (set-intersect portable-keys (set-union JS-INFIX-OP-SYMS JS-UNARY-OP-SYMS)))
 (define runtime (set-intersect portable-keys JS-RUNTIME-HELPERS))
 (define js-native stdlib-js-keys)
 (define unsupported JS-NO-EMIT)

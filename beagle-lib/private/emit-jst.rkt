@@ -65,7 +65,7 @@
 
 (define (emit-jst-binary e)
   (define op-str
-    (hash-ref JS-AST-BINARY-OPS (jst-binary-op e)
+    (hash-ref JS-BINARY-OPS (jst-binary-op e)
               (lambda () (symbol->string (jst-binary-op e)))))
   (format "(~a ~a ~a)"
           (emit-jst-expr (jst-binary-left e))

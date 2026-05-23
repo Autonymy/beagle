@@ -2,33 +2,15 @@
 
 ;; JS/quote parse helpers — extracted from parse.rkt.
 ;; Parses (js/quote ...) body into js-ast-* struct nodes.
+;;
+;; JS-BINARY-OPS / JS-ASSIGN-OPS live in js-emit-utils.rkt (single source
+;; of truth shared by parser and emitters).
 
 (require racket/match
          racket/string
          "ast.rkt"
-         "types.rkt")
-
-;; JS binary operators
-(define JS-BINARY-OPS
-  (hasheq '+ "+" '- "-" '* "*" '/ "/" '% "%"
-          '** "**" '=== "===" '!== "!==" '== "==" '!= "!="
-          '< "<" '> ">" '<= "<=" '>= ">="
-          'and "&&" 'or "||" 'nullish "??"
-          'bit-and "&" 'bit-or "|" 'bit-xor "^"
-          '<< "<<" '>> ">>" '>>> ">>>"
-          'in "in" 'instanceof "instanceof"))
-
-(define JS-ASSIGN-OPS
-  (hasheq '+= "+=" '-= "-=" '*= "*=" '/= "/="
-          '%= "%=" '**= "**="
-          'and= "&&=" 'or= "||=" 'nullish= "??="
-          'bit-and= "&=" 'bit-or= "|=" 'bit-xor= "^="
-          '<<= "<<=" '>>= ">>=" '>>>= ">>>="))
-
-(define (js-binary-op? sym)
-  (and (symbol? sym) (hash-has-key? JS-BINARY-OPS sym)))
-(define (js-assign-op? sym)
-  (and (symbol? sym) (hash-has-key? JS-ASSIGN-OPS sym)))
+         "types.rkt"
+         "js-emit-utils.rkt")
 
 (define (splice-sym? sym)
   (and (symbol? sym)
@@ -371,6 +353,7 @@
 
 (provide
  parse-js-ast-body
+ ;; Re-exported from js-emit-utils.rkt for backward compatibility.
  JS-BINARY-OPS JS-ASSIGN-OPS
  js-binary-op? js-assign-op?
  splice-sym? splice-kind)
