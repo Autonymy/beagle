@@ -6,11 +6,16 @@
          "ast.rkt"
          "types.rkt")
 
+;; --- Small primitives ------------------------------------------------------
+
+;; `foo.bar` → dotted column reference. The dot must be interior
+;; (not at position 0 or final).
 (define (sql-dot-ref? sym)
   (define s (symbol->string sym))
-  (define dot-pos (for/or ([i (in-range (string-length s))])
+  (define len (string-length s))
+  (define dot-pos (for/or ([i (in-range len)])
                     (and (char=? (string-ref s i) #\.) i)))
-  (and dot-pos (> dot-pos 0) (< dot-pos (- (string-length s) 1))))
+  (and dot-pos (> dot-pos 0) (< dot-pos (- len 1))))
 
 (define (parse-sql-column-ref sym)
   (define s (symbol->string sym))
@@ -18,6 +23,28 @@
                     (and (char=? (string-ref s i) #\.) i)))
   (sql-column-ref (string->symbol (substring s 0 dot-pos))
                   (string->symbol (substring s (+ dot-pos 1)))))
+
+;; A column may be bare `foo` or qualified `t.foo`. Return either a
+;; symbol or a sql-column-ref. Used by group-by/partition-by.
+(define (parse-sql-bare-or-dot d)
+  (if (and (symbol? d) (sql-dot-ref? d))
+    (parse-sql-column-ref d)
+    d))
+
+;; Unwrap a `[...]` or `(...)` form into its element list. Errors with
+;; `ctx` (a short string describing where this was used) on malformed input.
+(define (unwrap-bracket-or-list form ctx)
+  (define d (->datum form))
+  (cond
+    [(bracketed? d) (bracket-body d)]
+    [(list? d) d]
+    [else (error 'beagle "~a: expected a list, got ~v" ctx d)]))
+
+;; Parse a single expression via the current parse-expr injection.
+(define (parse-via-current-expr item)
+  ((current-parse-expr) (if (syntax? item) item (datum->syntax #f item))))
+
+;; --- Column / constraint parsing -------------------------------------------
 
 (define (parse-sql-constraints items)
   (let loop ([rest items] [acc '()])
@@ -50,11 +77,7 @@
     (sql-column col-name col-type constraints)))
 
 (define (parse-sql-column-names cols-form)
-  (define d (->datum cols-form))
-  (define items (cond
-                  [(bracketed? d) (bracket-body d)]
-                  [(list? d) d]
-                  [else (error 'beagle "insert: expected column name list, got ~v" d)]))
+  (define items (unwrap-bracket-or-list cols-form "insert column names"))
   (for/list ([item (in-list items)])
     (define s (->datum item))
     (unless (symbol? s)
@@ -62,32 +85,32 @@
     s))
 
 (define (parse-sql-values-row row)
-  (define d (->datum row))
-  (define items (cond
-                  [(bracketed? d) (bracket-body d)]
-                  [(list? d) d]
-                  [else (error 'beagle "insert values: expected a row vector, got ~v" d)]))
-  (map (lambda (item) ((current-parse-expr) (if (syntax? item) item (datum->syntax #f item)))) items))
+  (define items (unwrap-bracket-or-list row "insert values row"))
+  (map parse-via-current-expr items))
 
 (define (parse-sql-set-pairs set-form)
   (define d (->datum set-form))
   (define pairs-raw (cdr d))
   (for/list ([pair-raw (in-list pairs-raw)])
-    (define pair-d (->datum pair-raw))
-    (define items (cond
-                    [(bracketed? pair-d) (bracket-body pair-d)]
-                    [(list? pair-d) pair-d]
-                    [else (error 'beagle "update set: expected [col expr] pair, got ~v" pair-d)]))
+    (define items (unwrap-bracket-or-list pair-raw "update set pair"))
     (when (< (length items) 2)
       (error 'beagle "update set: need [column value], got ~v" items))
     (cons (car items)
-          ((current-parse-expr) (datum->syntax #f (cadr items))))))
+          (parse-via-current-expr (cadr items)))))
 
 (define (parse-sql-where-clause rest-forms)
   (for/or ([form (in-list rest-forms)])
     (define d (->datum form))
     (and (pair? d) (eq? (car d) 'where)
          (parse-sql-expr (datum->syntax #f (cadr d))))))
+
+;; --- Expression parsing ----------------------------------------------------
+
+;; Operators recognised by parse-sql-expr without falling through to the
+;; generic call branch. Kept as a single source of truth.
+(define SQL-OPERATOR-FORMS
+  '(= <> > < >= <= + - * / and or not like between in
+    is-null is-not-null ||))
 
 (define SQL-KNOWN-FUNCTIONS
   '(count sum avg min max coalesce upper lower trim length
@@ -98,6 +121,9 @@
     count-distinct
     row_number rank dense_rank ntile lag lead
     first_value last_value nth_value))
+
+(define SQL-AGGREGATE-FUNCTIONS
+  '(count sum avg min max count-distinct))
 
 (define (parse-sql-expr stx)
   (define d (->datum stx))
@@ -110,18 +136,17 @@
     [(number? d) d]
     [(boolean? d) d]
     [(eq? d 'nil) 'nil]
-    [(and (pair? d) (memq (car d) '(= <> > < >= <= + - * / and or not like between in
-                                      is-null is-not-null ||)))
-     (call-form (car d) (map (lambda (a) (parse-sql-expr (datum->syntax #f a))) (cdr d)))]
+    [(and (pair? d) (memq (car d) SQL-OPERATOR-FORMS))
+     (call-form (car d) (map parse-sql-subexpr (cdr d)))]
     [(and (pair? d) (eq? (car d) 'case))
      (parse-sql-case (cdr d))]
     [(and (pair? d) (eq? (car d) 'cast))
      (when (< (length d) 3)
        (error 'beagle "cast requires (cast expr Type)"))
-     (sql-cast (parse-sql-expr (datum->syntax #f (cadr d)))
+     (sql-cast (parse-sql-subexpr (cadr d))
                (caddr d))]
     [(and (pair? d) (eq? (car d) 'exists))
-     (sql-exists (parse-sql-expr (datum->syntax #f (cadr d))))]
+     (sql-exists (parse-sql-subexpr (cadr d)))]
     [(and (pair? d) (eq? (car d) 'select))
      (parse-sql-select (cdr d) #f #f)]
     [(and (pair? d) (eq? (car d) 'select-distinct))
@@ -129,8 +154,12 @@
     [(and (pair? d) (memq (car d) SQL-KNOWN-FUNCTIONS))
      (parse-sql-function-call d)]
     [(pair? d)
-     (call-form (car d) (map (lambda (a) (parse-sql-expr (datum->syntax #f a))) (cdr d)))]
+     (call-form (car d) (map parse-sql-subexpr (cdr d)))]
     [else d]))
+
+;; Helper: parse-sql-expr on a sub-datum that needs wrapping.
+(define (parse-sql-subexpr d)
+  (parse-sql-expr (datum->syntax #f d)))
 
 (define (parse-sql-function-call d)
   (define fn-name (car d))
@@ -144,13 +173,13 @@
         [(eq? (->datum (car items)) ':over)
          (values (reverse acc) alias (cdr items))]
         [else (loop (cdr items) (cons (car items) acc) alias over)])))
-  (define parsed-args (map (lambda (a) (parse-sql-expr (datum->syntax #f a))) args))
+  (define parsed-args (map parse-sql-subexpr args))
   (cond
     [over-clauses
      (define-values (partition-by win-order-by)
        (parse-sql-over-clauses over-clauses))
      (sql-window fn-name parsed-args partition-by win-order-by alias)]
-    [(memq fn-name '(count sum avg min max count-distinct))
+    [(memq fn-name SQL-AGGREGATE-FUNCTIONS)
      (sql-aggregate fn-name (if (null? parsed-args) #f (car parsed-args)) alias)]
     [(<= (length parsed-args) 1)
      (sql-aggregate fn-name (if (null? parsed-args) #f (car parsed-args)) alias)]
@@ -166,11 +195,7 @@
     (when (pair? cd)
       (case (car cd)
         [(partition-by)
-         (set! partition-by (map (lambda (g)
-                                   (define gd (->datum g))
-                                   (if (and (symbol? gd) (sql-dot-ref? gd))
-                                     (parse-sql-column-ref gd)
-                                     gd))
+         (set! partition-by (map (lambda (g) (parse-sql-bare-or-dot (->datum g)))
                                  (cdr cd)))]
         [(order-by)
          (set! order-by (parse-sql-order-by (cdr cd)))])))
@@ -182,14 +207,16 @@
       [(null? rest)
        (sql-case (reverse clauses) else-expr)]
       [(and (pair? rest) (pair? (cdr rest)) (eq? (car rest) ':else))
-       (loop '() clauses (parse-sql-expr (datum->syntax #f (cadr rest))))]
+       (loop '() clauses (parse-sql-subexpr (cadr rest)))]
       [(and (pair? rest) (pair? (car rest)) (eq? (caar rest) 'when))
        (define clause-d (car rest))
-       (define cond-expr (parse-sql-expr (datum->syntax #f (cadr clause-d))))
-       (define result-expr (parse-sql-expr (datum->syntax #f (caddr clause-d))))
+       (define cond-expr (parse-sql-subexpr (cadr clause-d)))
+       (define result-expr (parse-sql-subexpr (caddr clause-d)))
        (loop (cdr rest) (cons (sql-case-clause cond-expr result-expr) clauses) else-expr)]
       [else
        (error 'beagle "case: expected (when cond result) clauses, got ~v" (car rest))])))
+
+;; --- Top-level query forms (queryable from with/union) ---------------------
 
 (define (parse-sql-top-form datum)
   (define d (->datum datum))
@@ -198,14 +225,10 @@
      (parse-sql-select (cdr d) #f #f)]
     [(and (pair? d) (eq? (car d) 'select-distinct))
      (parse-sql-select (cdr d) #f #t)]
-    [(and (pair? d) (eq? (car d) 'union))
-     (sql-union 'union (parse-sql-top-form (cadr d)) (parse-sql-top-form (caddr d)))]
-    [(and (pair? d) (eq? (car d) 'union-all))
-     (sql-union 'union-all (parse-sql-top-form (cadr d)) (parse-sql-top-form (caddr d)))]
-    [(and (pair? d) (eq? (car d) 'intersect))
-     (sql-union 'intersect (parse-sql-top-form (cadr d)) (parse-sql-top-form (caddr d)))]
-    [(and (pair? d) (eq? (car d) 'except))
-     (sql-union 'except (parse-sql-top-form (cadr d)) (parse-sql-top-form (caddr d)))]
+    [(and (pair? d) (memq (car d) '(union union-all intersect except)))
+     (sql-union (car d)
+                (parse-sql-top-form (cadr d))
+                (parse-sql-top-form (caddr d)))]
     [else (error 'beagle "expected SQL query form (select/union/etc), got ~v" d)]))
 
 (define (parse-sql-with rest)
@@ -220,6 +243,8 @@
         (loop (cdr items)
               (cons (sql-cte (car d) (parse-sql-top-form (cadr d))) ctes))))))
 
+;; --- SELECT and friends ----------------------------------------------------
+
 (define (parse-sql-select-column col-datum)
   (define d (->datum col-datum))
   (cond
@@ -229,16 +254,12 @@
     [(symbol? d) d]
     [(and (pair? d) (memq (car d) SQL-KNOWN-FUNCTIONS))
      (parse-sql-function-call d)]
-    [else (parse-sql-expr (datum->syntax #f d))]))
+    [else (parse-sql-subexpr d)]))
 
 (define (parse-sql-select rest subs distinct?)
   (when (null? rest) (error 'beagle "select requires at least a column list"))
   (define cols-form (car rest))
-  (define cols-d (->datum cols-form))
-  (define col-items (cond
-                      [(bracketed? cols-d) (bracket-body cols-d)]
-                      [(list? cols-d) cols-d]
-                      [else (error 'beagle "select: first argument must be column list, got ~v" cols-d)]))
+  (define col-items (unwrap-bracket-or-list cols-form "select column list"))
   (define columns
     (let loop ([items col-items] [acc '()])
       (cond
@@ -268,32 +289,17 @@
          (define table-name (cadr cd))
          (define alias (parse-sql-as-alias (cddr cd)))
          (set! from-clause (if alias (sql-alias table-name alias) table-name))]
-        [(join inner-join)
-         (define join-info (parse-sql-join-clause 'inner (cdr cd)))
-         (set! joins (append joins (list join-info)))]
-        [(left-join)
-         (define join-info (parse-sql-join-clause 'left (cdr cd)))
-         (set! joins (append joins (list join-info)))]
-        [(right-join)
-         (define join-info (parse-sql-join-clause 'right (cdr cd)))
-         (set! joins (append joins (list join-info)))]
-        [(full-join)
-         (define join-info (parse-sql-join-clause 'full (cdr cd)))
-         (set! joins (append joins (list join-info)))]
-        [(cross-join)
-         (define join-info (parse-sql-join-clause 'cross (cdr cd)))
-         (set! joins (append joins (list join-info)))]
+        [(join inner-join) (set! joins (append joins (list (parse-sql-join-clause 'inner (cdr cd)))))]
+        [(left-join)       (set! joins (append joins (list (parse-sql-join-clause 'left  (cdr cd)))))]
+        [(right-join)      (set! joins (append joins (list (parse-sql-join-clause 'right (cdr cd)))))]
+        [(full-join)       (set! joins (append joins (list (parse-sql-join-clause 'full  (cdr cd)))))]
+        [(cross-join)      (set! joins (append joins (list (parse-sql-join-clause 'cross (cdr cd)))))]
         [(where)
-         (set! where-clause (parse-sql-expr (datum->syntax #f (cadr cd))))]
+         (set! where-clause (parse-sql-subexpr (cadr cd)))]
         [(group-by)
-         (set! group-by (map (lambda (g)
-                               (define gd (->datum g))
-                               (if (and (symbol? gd) (sql-dot-ref? gd))
-                                 (parse-sql-column-ref gd)
-                                 gd))
-                             (cdr cd)))]
+         (set! group-by (map (lambda (g) (parse-sql-bare-or-dot (->datum g))) (cdr cd)))]
         [(having)
-         (set! having (parse-sql-expr (datum->syntax #f (cadr cd))))]
+         (set! having (parse-sql-subexpr (cadr cd)))]
         [(order-by)
          (set! order-by (parse-sql-order-by (cdr cd)))]
         [(limit)
@@ -321,7 +327,7 @@
         [(null? items) #f]
         [(eq? (->datum (car items)) ':as) (loop (cddr items))]
         [(pair? (->datum (car items)))
-         (parse-sql-expr (datum->syntax #f (->datum (car items))))]
+         (parse-sql-subexpr (->datum (car items)))]
         [else (loop (cdr items))])))
   (sql-join type table alias condition))
 
@@ -330,11 +336,7 @@
     (cond
       [(null? rest) (reverse acc)]
       [else
-       (define col-d (->datum (car rest)))
-       (define col-expr
-         (if (and (symbol? col-d) (sql-dot-ref? col-d))
-           (parse-sql-column-ref col-d)
-           col-d))
+       (define col-expr (parse-sql-bare-or-dot (->datum (car rest))))
        (define-values (dir remaining)
          (if (and (pair? (cdr rest))
                   (memq (->datum (cadr rest)) '(:asc :desc asc desc)))
