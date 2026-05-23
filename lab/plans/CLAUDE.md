@@ -1,5 +1,7 @@
 # Active work — priority order
 
+- **surface-redesign.md** — redesign beagle's surface from principles (agent-first, one canonical idiom, no compat). BLOCKS cyclone-self-host: the surface we port is the surface we keep
+- **cyclone-self-host.md** — bootstrap beagle on Cyclone Scheme; remove Racket runtime dependency. BLOCKED by surface-redesign
 - **schema-typed-paths.md** — extend `.beagle-cache/<x>-schema.json` ingestion beyond Nix + SQL (TS .d.ts, typeshed, OpenAPI, JSON Schema, etc.)
 
 ## Done
