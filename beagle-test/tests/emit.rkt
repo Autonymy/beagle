@@ -660,3 +660,109 @@
   (define out (compile '(def x (target-case :clj "clojure" :js "javascript"))))
   (check-true (matches? #rx"\"clojure\"" out))
   (check-false (matches? #rx"\"javascript\"" out)))
+
+;; --- set! ------------------------------------------------------------------
+
+(test-case "set! on a symbol emits Clojure set!"
+  (define out (compile '(defn f [] (set! *warn-on-reflection* true))))
+  (check-true (matches? #rx"\\(set! \\*warn-on-reflection\\* true\\)" out)))
+
+(test-case "set! on a method-call target wraps in (set! (.field obj) val)"
+  (define out (compile '(defn f [(o : Any)] (set! (.-name o) "x"))))
+  (check-true (matches? #rx"\\(set! \\(\\.-name o\\) \"x\"\\)" out)))
+
+;; --- keyword-access with default -------------------------------------------
+
+(test-case "kw-access with default emits 3-arg get"
+  (define out (compile '(defn f [(m : Any)] : String (:name m "anonymous"))))
+  (check-true (matches? #rx"\\(:name m \"anonymous\"\\)" out)))
+
+;; --- condp without default --------------------------------------------------
+
+(test-case "condp without default omits trailing default clause"
+  (define out (compile '(defn f [(k : Keyword)] : String (condp = k :a "alpha" :b "beta"))))
+  (check-true (matches? #rx"\\(condp = k" out))
+  (check-true (matches? #rx":a \"alpha\"" out))
+  (check-true (matches? #rx":b \"beta\"" out))
+  ;; default would be a 3-element format; without one, the output should
+  ;; not end with a stray "other" branch
+  (check-false (matches? #rx"\"other\"" out)))
+
+;; --- match: record pattern with no bindings ---------------------------------
+
+(test-case "match record pattern with empty bindings emits bare instance? test"
+  (define out (compile `(defrecord Tag ,(br '(n : Int)))
+                       `(defn f [(t : Any)] : Int
+                          (match t
+                            ,(br '(Tag) 0)
+                            ,(br '_ 1)))))
+  (check-true (matches? #rx"\\(instance\\? Tag" out)))
+
+(test-case "match map pattern with single key emits unwrapped test"
+  (define out
+    (compile `(defn f [(m : Any)] : Int
+                (match m
+                  ,(br (mt ':k 1) 10)
+                  ,(br '_ 20)))))
+  (check-true (matches? #rx"\\(= \\(:k " out))
+  (check-false (matches? #rx"\\(and \\(=" out)))
+
+;; --- new-form (single-arg constructor) -------------------------------------
+
+(test-case "new-form with one arg emits as call"
+  (define out (compile `(defrecord Box ,(br '(v : Int)))
+                       '(def b (Box 42))))
+  (check-true (matches? #rx"\\(Box 42\\)" out)))
+
+;; --- with-form (record update) -----------------------------------------------
+
+(test-case "with-form emits assoc"
+  (define out
+    (compile `(defrecord P ,(br '(x : Int) '(y : Int)))
+             `(defn shift [(p : P)] : P
+                (with p ,(br ':x '(+ (p-x p) 1)) ,(br ':y '(+ (p-y p) 1))))))
+  (check-true (matches? #rx"\\(assoc p :x" out))
+  (check-true (matches? #rx":y \\(\\+ \\(p-y p\\)" out)))
+
+;; --- defmulti ---------------------------------------------------------------
+
+(test-case "defmulti emits dispatch fn inline"
+  (define out (compile '(defmulti area :shape)))
+  (check-true (matches? #rx"\\(defmulti area :shape\\)" out)))
+
+;; --- defenum ---------------------------------------------------------------
+
+(test-case "defenum emits set of keywords with -values suffix"
+  (define out (compile '(defenum Color red green blue)))
+  (check-true (matches? #rx"\\(def Color-values #\\{" out))
+  (check-true (matches? #rx":red" out))
+  (check-true (matches? #rx":blue" out)))
+
+;; --- defunion (closed, with member fields) ----------------------------------
+
+(test-case "defunion with member fields emits comment + per-variant defrecord"
+  (define out (compile `(defunion Shape
+                          (Circle ,(br '(radius : Int)))
+                          (Square ,(br '(side : Int))))))
+  (check-true (matches? #rx";; Shape = Circle \\| Square" out))
+  (check-true (matches? #rx"\\(defrecord Circle \\[radius\\]\\)" out))
+  (check-true (matches? #rx"\\(defrecord Square \\[side\\]\\)" out)))
+
+;; --- ns emits combined :require + :import correctly ------------------------
+
+(test-case "ns with both :require and :import emits both clauses"
+  (define out (compile '(require clojure.string :as str)
+                       '(import java.io.File)
+                       '(def x 1)))
+  (check-true (matches? #rx":require" out))
+  (check-true (matches? #rx":import" out))
+  (check-true (matches? #rx"\\[clojure\\.string :as str\\]" out))
+  (check-true (matches? #rx"\\[java\\.io File\\]" out)))
+
+;; --- ns with bare-class import (no dot) -------------------------------------
+
+(test-case "ns import for bare class emits plain symbol"
+  (define out (compile '(import Exception)
+                       '(def x 1)))
+  (check-true (matches? #rx":import" out))
+  (check-true (matches? #rx"Exception" out)))
