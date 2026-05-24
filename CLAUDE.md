@@ -290,11 +290,22 @@ the empirical basis.
   `(if (not c) t e)`.
 - **`inc` / `dec`** — sugar. Use `(+ x 1)` / `(- x 1)`.
 - **`not=`** — sugar. Use `(not (= a b))`.
+- **`deferror`** — unified into `(defunion :throwable Name ...)`.
+  Same structural shape; throwable is now a keyword on defunion.
+- **`define-macro beagle`** — 0 corpus usage. All procedural macros
+  use `define-macro proc`. Removed alongside `macro-eval.rkt`
+  (the compile-time beagle interpreter that powered 'beagle macros).
 
 Kept after empirical re-evaluation (Day 0 friction-list verdict
 reversed): `loop`/`recur` (agent reflexively reaches for it — that's
 the canonical signal), `->Name` constructor (beagle has no `(Name ...)`
 alternative; no redundancy to drop).
+
+### Lints (surface redesign, 2026-05)
+
+- **`(:field r)` on records** — warning suggesting the typed
+  auto-accessor `(field-name r)`. Map access untouched; only fires
+  when target type is a known defrecord. Suppress via `BEAGLE_NO_LINT=1`.
 
 ## Setup (one-time)
 

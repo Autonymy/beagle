@@ -51,7 +51,10 @@ Typed structural record with auto-generated accessors.
 ```
 
 - Constructor: `(->Account "Alice" 100.0)` — note the `->` prefix.
-- Field access: `(account-holder a)` — auto-generated, typed.
+- Field access: `(account-holder a)` — typed auto-accessor. **Canonical.**
+  Using `(:holder a)` (keyword-as-fn) works at runtime but the type
+  checker emits a warning suggesting the auto-accessor instead, since
+  the typed form catches field typos. Keyword-as-fn is for *map* access.
 - Update: `(with a [:balance (+ (account-balance a) 10)])`.
 - Use when: defining a typed data shape with named fields.
 - Don't expect: inheritance, mutation, computed fields.
@@ -111,18 +114,20 @@ Like `defrecord` but for protocol implementations.
 - (deftype vs defrecord+extend-type is currently distinct; future
   pass may unify.)
 
-### `deferror`
+### `defunion :throwable`
 
-Throwable variant union (structurally identical to defunion).
+Throwable variant union (same structural shape as defunion; throwability
+makes the variants catchable).
 
 ```
-(deferror ParseError
+(defunion :throwable ParseError
   Truncated
   (BadFormat [(msg : String)]))
 ```
 
 - Use with `try`/`catch`/`throw`.
-- (Future: probably unify into `(defunion Name #:throwable ...)`.)
+- Previously `(deferror ...)`; unified into defunion with `:throwable`
+  keyword in 2026-05 surface redesign.
 
 ### `defprotocol`
 
@@ -373,6 +378,8 @@ Function composition pipelines.
 - `as->`/`cond->`/`some->` — use let-chains
 - `when-not`/`if-not` — use `(when (not c))` / `(if (not c) t e)`
 - `inc`/`dec`/`not=` — sugar; use primitives
+- `deferror` — use `(defunion :throwable Name ...)`
+- `define-macro beagle` — use `define-macro proc`
 - `unsafe-clj`/`unsafe-js`/etc. — zero escape hatches by design
 
 If an agent reaches for any of these, the parser produces an explicit
