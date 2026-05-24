@@ -94,12 +94,13 @@ Plan updated: `lab/plans/cyclone-self-host.md` now starts with Phase 0.
 ### Tests
 
 ```
-1401 → 1387 (-14)
+1401 → 1382 (-19)
 ```
 
-The -14 is exactly the count of tests for forms I dropped (defmulti
+The -19 splits as: -14 from tests removed for dropped forms (defmulti
 parse/emit/check, as-> parse, when-not/if-not parse, when-not/if-not
-emit, the defmethod-ok fixture). Everything else passes.
+emit, the defmethod-ok fixture), -5 more from tests for inc/dec → add1/
+sub1 emit-rkt translations that no longer apply.
 
 ### Commits (in order)
 
@@ -248,20 +249,22 @@ empirical usage data on which forms are reflexive vs taught, and a
 willingness to do the "3 concepts → 1 form + 1 macro for the others"
 kind of redesign which is multi-day work.
 
-## One subtle gotcha worth flagging
+## Enforcement (added)
 
-Dropped stdlib aliases (inc/dec/not=) don't get an explicit lint
-warning at parse time. The parser doesn't reject them; the type
-checker just doesn't have signatures for them. Emission produces the
-call literally (`(inc 5)` → `(inc 5)`). For Clojure target this still
-works at runtime (Clojure has `inc` natively); for Scheme/Cyclone
-target it would fail at the target's compile step.
+Initially the drops were documented but not enforced — `(inc 5)`
+would silently pass to emit and (for Clojure target) accidentally
+work because Clojure has `inc` natively. Added explicit parse-time
+errors for every dropped form:
 
-So the "drop" is *documented* but not *enforced*. An agent that types
-`(inc 5)` gets no immediate feedback in a Clojure-targeted file. To
-fully enforce, we'd need lint to warn on "call to function not in
-beagle's stdlib for the current target." That's a small follow-up,
-worth doing before agents lean on it.
+```
+beagle: inc removed — use (+ x 1)
+beagle: when-not removed — use (when (not ...) body)
+beagle: cond-> removed — use a let-chain with (if ...) for...
+[etc]
+```
+
+An agent reaching for a dropped form gets an immediate parse error
+with the canonical replacement. No silent target-specific accident.
 
 ## What I'd recommend
 
