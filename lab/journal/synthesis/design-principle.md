@@ -587,32 +587,56 @@ These are questions that the audit raised but that need explicit
 design thought before the relevant work ships. Recording them so they
 aren't improvised when the time comes.
 
-### Pattern algebra closure (before match `or`-extension ships)
+### Pattern algebra closure — RESOLVED: incremental
 
-Adding `or` as a match pattern primitive commits beagle to having a
-*pattern algebra*. The natural neighbors are:
+The question: does beagle commit to a full pattern algebra (`or`,
+`and`, `not`, guards) up-front, or add operators incrementally as
+they earn their place?
 
-- `and`-patterns (match all of)
-- `not`-patterns (match anything but)
-- guard clauses (`:when expr` in pattern position)
+**Resolution: incremental.** Pattern operators earn their place
+individually under the same asymmetric-burden principle as the rest
+of the surface. Or-pattern ships first because it absorbs `case`
+(its existence-justification). Other operators (`and`, `not`,
+guards) wait for concrete need.
 
-Some pattern-matching languages have all of these (Haskell, OCaml,
-Scala). Some have only some. The question: what is beagle's closure?
-Three positions are coherent:
+This is one specific application of a broader meta-question worth
+naming for future audits:
 
-1. **`or` only.** Other algebra composes from existing forms (nested
-   match, manual conditions). Position: pattern algebra is just `or`
-   because it's the one composition that *can't* be expressed any
-   other way at the pattern level.
-2. **`or` + guards.** Add `:when expr` because guards interact
-   meaningfully with destructuring (you need the bindings in scope
-   for the guard). Skip `and` and `not`.
-3. **`or` + `and` + `not` + guards.** Full pattern algebra, ML-family
-   posture.
+> **Incremental vs. closed-design for new surface families.** When
+> adding the first member of a *family* (pattern operators, type
+> constructors, control-flow primitives), is the right discipline
+> "ship the one member that earns its place, defer the family" or
+> "commit to the family up-front because operator interactions
+> matter"?
 
-This is a position that needs to be argued, not defaulted into.
-The or-extension PR should state which closure beagle is committing
-to and why.
+Both are coherent philosophies. Beagle has applied incremental
+consistently — Clojure-derived core grew by add-when-earned, audit
+cycles trim — so the default lean is incremental unless a specific
+argument carries.
+
+The argument *for* closed-design in pattern algebras specifically:
+operator interactions are real (`or` inside guards, `and` with
+bindings, `not` with destructuring all have subtleties), and most
+established pattern-matching languages chose closed-design for this
+reason.
+
+The argument *against* in beagle's case: incremental has worked for
+the rest of the surface; removal-is-cheap-now-and-expensive-later
+applies to operator additions too (each additional operator that
+doesn't earn its place becomes permanent); the asymmetric-burden
+principle says default-don't-add unless earning proven.
+
+The hygiene that protects future-incremental: the or-pattern AST and
+parser should be shaped so adding `and`/`not`/guards later is
+mechanical (not a redesign). Specifically, or-pattern is a
+*pattern-combinator* AST node, not a special-case in the match
+parser. If guards are added later, they slot in as a pattern
+modifier. If `and` is added, it's a sibling combinator. None of
+these require revisiting the or-pattern.
+
+Open: when nullable narrowing or other type-system work surfaces a
+real need for guards, revisit this resolution. Same for `and`/`not`
+if a use case appears that composition doesn't cleanly cover.
 
 ### Post-nullable-narrowing form for the `when-let` pattern
 
@@ -700,3 +724,91 @@ in-scope for the match-or extension work, not a follow-up.
 The general rule: when dropping form X by folding into form Y, audit
 each target's emit for any optimization X had that Y now needs to
 inherit. Add those to Y's emit-layer scope as part of the drop work.
+
+## Next-audit-cycle candidates (under the bootstrap-vs-native lens)
+
+The current audit queue (drops + match-or extension) was assembled
+before the bootstrap-vs-native lens was articulated. The lens
+changes which forms deserve re-examination. Recording the candidates
+here so the next audit cycle sweeps comprehensively rather than only
+the items currently flagged.
+
+These are not action items — they're radar items, surfaced so the
+next pass under the new lens doesn't miss them.
+
+- **`for` comprehensions.** Kept previously on "better than SRFI 42"
+  / "participates in bracket-clause family" grounds. Both correct.
+  But under bootstrap-vs-native, `for` is entry-hall — Clojure-shaped
+  comprehension that lowers bootstrap cost. The question hasn't been
+  asked: is the comprehension shape itself doing beagle-native work,
+  or is it pure entry-hall? Distinct from "does for survive the
+  predictability test."
+- **`defprotocol` / `extend-type`.** Kept after `defmulti` /
+  `defmethod` drop because protocol-based polymorphism is the
+  remaining canonical dispatch idiom. Still Clojure-shaped
+  polymorphism though. The question of whether beagle's polymorphism
+  *story* is correct hasn't been asked under the new lens. The
+  answer might be "yes, defprotocol/extend-type is the right shape"
+  but it hasn't been deliberated.
+- **`->>` (last-arg threading).** Kept after `->` drop. Pattern-
+  isolated under the strict lens (its bracket-pair shape is in
+  arguments, not clauses). Survives mostly on "ubiquitous in
+  data-pipeline code" grounds. Worth re-asking whether let-chains
+  fully cover it under the asymmetric burden.
+- **`loop` / `recur`.** Kept after the day-0 friction list
+  re-evaluation. The agent-reflex-signal that justified the
+  reprieve is real, but the alternative (named recursive functions)
+  is conceptually cleaner. Worth re-asking whether tail-call
+  optimization in target emitters covers the use cases.
+- **Map literal `{:k v}`.** Bracket-pair shape extends the
+  collection family (`[]`, `{}`, `#{}`). Pattern-extending so
+  earns its place. But the alternative (`(hash-map :k v)` or
+  similar) is more uniform with how other typed constructors work.
+  Probably stays — pattern-extending is strong — but the question
+  hasn't been re-examined under the new lens.
+
+These don't move now. They get re-examined in the next audit cycle,
+which happens after the current queue (match-or, when, when-let,
+case drop) ships and the surface is stable enough to re-audit.
+
+## When the audit cycle ends
+
+The audit has been productive and dominant for an extended period.
+It also has a natural endpoint — the surface eventually becomes
+*done enough* and energy shifts to using the surface (bnix grows,
+game/a-life work begins, claim-NF runtime substrate, eventually
+Cyclone self-host). The audit is not infinite; it's a phase.
+
+The signal for "audit done enough":
+
+1. **No remaining forms fail the bootstrap-vs-native lens decisively.**
+   Every current form has been examined under the lens; what survives
+   either pays for itself (pattern-extending + bracket-clause family
+   members + Beagle-native machinery) or has been deliberately kept
+   as bootstrap scaffolding with a documented future-removal trigger.
+2. **No remaining design questions block real usage.** Open questions
+   exist (e.g., post-nullable-narrowing form names, pattern-algebra
+   closure additions) but none are gating any in-progress work.
+3. **The surface compiles cleanly against dogfood corpus without
+   friction.** firnos plus bnix plus heist plus whatever else uses
+   beagle natively — no daily papercuts that would push for surface
+   changes.
+4. **No corpus-scale migrations remain.** Whatever automated rewrites
+   were going to happen have happened; the codebase is in the shape
+   the surface implies.
+
+When all four hold, the audit phase is done enough to step back from.
+That doesn't mean future surface changes never happen — but they
+become responsive to *concrete need* (an open question got answered;
+a use case surfaced a gap) rather than driven by audit cycles.
+
+The current queue (match-or + remaining drops) reduces toward this
+state but isn't there yet. After it ships plus the next-cycle
+radar items above get one re-examination pass, the surface is
+probably in audit-done-enough territory.
+
+The reason to name the endpoint: without it, the audit becomes its
+own perpetual mode and crowds out the *using* work that is the
+actual point of building beagle in the first place. The audit
+exists to make the surface fit-for-use; once the surface fits, the
+audit's job is done.
