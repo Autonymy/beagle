@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# beagle-test: tiered test runner for beagle.
+#
+# Replaces direct `raco test beagle-test/tests/`. Reads tier classifications
+# from beagle-test/tiers.rktd; runs active + demoted tiers; blocks build
+# on active failures only; logs new demoted failures to lab/surface-debt.md.
+#
+# Usage:
+#   bin/beagle-test                         # run active + demoted
+#   bin/beagle-test --active-only           # active tier only (fast loop)
+#   bin/beagle-test --include-gated         # also run gated tier (needs env vars)
+#
+# Exits 0 if all active tests pass, 1 if any active failure.
+# Demoted failures DO NOT affect exit code (advisory only).
+#
+# IMPORTANT: use this script, not `raco test` directly, during iteration.
+# `raco test` bypasses tier logic and will block on demoted failures.
+
+set -uo pipefail
+source "$(dirname "$0")/_beagle-racket"
+
+BEAGLE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+exec "$RACKET" "$BEAGLE_ROOT/beagle-lib/private/tier-runner.rkt" "$@"

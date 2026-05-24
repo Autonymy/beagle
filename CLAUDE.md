@@ -215,7 +215,12 @@ not type-check or inspect deeper errors until delimiters pass.
 - `bin/beagle-check SOURCE` / `bin/beagle-check-all DIR...`
 - `bin/beagle-build SOURCE` / `bin/beagle-build-all DIR...`
 - `bin/beagle-expand SOURCE` — show macro expansion
-- `raco test tests/`
+- `bin/beagle-test` — **tiered** test runner (active blocks, demoted advisory).
+  Use this, NOT `raco test beagle-test/tests/` directly — `raco test` bypasses
+  tier logic and will block iteration on demoted-tier failures that shouldn't
+  block. Flags: `--active-only` for fast loop, `--include-gated` to add
+  env-gated suites. Tier classification in `beagle-test/tiers.rktd`; demoted
+  failures logged to `lab/surface-debt.md` for batch reconciliation.
 
 ### When navigating — prefer query tools over grep
 

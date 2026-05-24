@@ -102,6 +102,118 @@ beagle inventing that template as it goes.
 
 ---
 
+# A recurring meta-pattern: separate clocks for separate concerns
+
+Several beagle decisions take the same shape: an operational concern
+that looks like one thing actually decomposes into multiple independent
+functions, each with its own clock (cadence, decision criteria, blocking
+behavior). Conflating them creates artificial pressure on at least one,
+usually the fast one being gated by the slow one.
+
+The pattern, stated generally:
+
+> **Operational concerns that look like one thing usually decompose
+> into multiple independent functions with their own clocks.
+> Conflating creates artificial pressure on at least one.**
+
+Naming this meta-pattern explicitly so future instantiations get
+recognized as such on first encounter rather than re-derived from
+scratch.
+
+Known instantiations:
+
+- **Commits / releases / announcements** — three cadences (commit
+  on coherence, release on materially-better, announce on its own
+  schedule). Conflating "commit = release" or "release = announce"
+  creates pressure (over-batching commits, or holding good releases
+  for marketing windows).
+- **Test tiers: active / demoted / gated** — three clocks (active
+  blocks every iteration, demoted runs continuously but doesn't block
+  and gets reconciled in batch, gated runs opt-in). See test-cadence
+  section below.
+- **Bootstrap entry-hall / beagle-native building** — already discussed
+  as the upstream principle, but it's also an instance of this pattern:
+  the entry hall has a temporal clock (sheds forms as gravity grows),
+  the building has a design clock (derives from first principles),
+  they don't share criteria.
+
+Likely future instantiations to watch for:
+
+- Build steps (typecheck / parse / emit / oracle-verify probably
+  shouldn't all be one blocking pass).
+- Lint passes (warning-vs-blocking-vs-info already implicitly tiered;
+  formalize when it grows).
+- Documentation generation (Scribble rebuilds, README updates,
+  external doc sync — likely separate cadences).
+- Surface decisions themselves (audit/decide/execute/reconcile —
+  already de facto multi-step; formalizing the steps might help).
+
+The reason to name the meta-pattern: when the next operational concern
+shows up looking unified, the question "is this actually one thing or
+does it decompose into multiple clocks?" should be reflexive. Without
+naming the pattern, each instance has to be discovered fresh.
+
+## Test-cadence decomposition (an instance of the meta-pattern)
+
+Test runs were previously treated as one undifferentiated operation:
+`raco test beagle-test/tests/`, everything blocks on any failure.
+This conflated three actually-different concerns:
+
+1. **Tests that must pass before the next iteration step.** Surface
+   changes break the parser? Block immediately. Active emit target
+   regresses? Block. Type checker accepts wrong code? Block.
+2. **Tests that should run but shouldn't block iteration.** Behavioral
+   tests for non-load-bearing targets — running them tells you whether
+   the surface change affected them, but the answer isn't load-bearing
+   for the change to ship, because the target isn't load-bearing right
+   now. The information is valuable for *eventual* reconciliation, not
+   for *immediate* blocking.
+3. **Tests that need explicit opt-in to run.** Oracle suites that
+   shell out to external interpreters, suites that require uncommon
+   tooling installed. These shouldn't run in the default loop because
+   they're slow and noisy, but they should be runnable when needed.
+
+Treating all three as "the test suite" gates iteration on the slowest
+and most aspirational concerns. The decomposition fixes this:
+
+| Tier | Cadence | Blocking | Reconciliation |
+|---|---|---|---|
+| **active** | every iteration | yes — fails the build | n/a (kept current always) |
+| **demoted** | every CI push (and locally by default in current MVP) | no — failures logged to `lab/surface-debt.md` | batched at strategic milestones (Cyclone self-host, surface stable) |
+| **gated** | opt-in (`--include-gated`, env vars) | yes when run, but rarely run | n/a (run only when relevant) |
+
+The mechanism: `beagle-test/tiers.rktd` is the manifest; `bin/beagle-test`
+is the tiered runner; `lab/surface-debt.md` is the reconciliation queue.
+
+**Structural floor rule.** All `emit-*.rkt` structural tests stay active
+regardless of target status. They're cheap and catch entire-emitter
+breakage before it rots invisibly. Only `-behavioral.rkt` tests for
+non-load-bearing targets get demoted.
+
+**Promotion criteria.** Demoted → active requires BOTH (a) the surface
+is stable enough that reconciliation work won't be redone immediately
+AND (b) the target is load-bearing for actual work (real use case,
+not hypothetical optionality). Just (a) is not enough — keeping a
+target's behavioral suite current costs ongoing maintenance, and that
+cost is only worth paying when (b) says someone actually depends on
+the runtime correctness.
+
+**Reconciliation contract.** "Demoted" must mean *paused with a
+specific reactivation trigger*, not "abandoned." Beagle's trigger is
+well-defined: post-Cyclone-self-host + surface stable, do a batched
+reconciliation pass against `lab/surface-debt.md` entries. Each entry
+captures the surface change, the affected target, and "what the test
+was checking" so reconciliation isn't archaeology against git history.
+
+**The deeper point.** The test-cadence decomposition is structurally
+identical to the commit/release/announce decomposition: three clocks,
+three decision criteria, don't let the slow one gate the fast one.
+The same shape will keep showing up. The meta-pattern at the top of
+this section is the load-bearing abstraction; test cadence is one
+named instance.
+
+---
+
 # Methodology: how to operate within the upstream principle
 
 The sections below are all *consequences* of the principle above.
