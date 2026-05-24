@@ -81,8 +81,8 @@
   (check-true (string-contains? out "class Rect(Shape):"))
   (check-true (string-contains? out "w: object")))
 
-(test-case "deferror emits Exception base"
-  (define out (py-emit "(define-target py) (deferror AppError (NotFound [(msg : String)]) (Timeout [(code : Int)]))"))
+(test-case "defunion :throwable emits Exception base"
+  (define out (py-emit "(define-target py) (defunion :throwable AppError (NotFound [(msg : String)]) (Timeout [(code : Int)]))"))
   (check-true (string-contains? out "class AppError(Exception):"))
   (check-true (string-contains? out "class NotFound(AppError):"))
   (check-true (string-contains? out "msg: object"))

@@ -1158,7 +1158,7 @@
            (string? (nth rest-items 0)))
         (parse-simple-defunion (nth rest-items 0) (.slice rest-items 1))
 
-      ;; deferror: (deferror Name member-defs...)
+      ;; deferror: (defunion :throwable Name member-defs...)
       (and (= head "deferror") (>= (.-length rest-items) 1))
         (parse-deferror-form (nth rest-items 0) (.slice rest-items 1))
 

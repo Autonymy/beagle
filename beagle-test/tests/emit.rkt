@@ -626,10 +626,10 @@
   (check-true (matches? #rx"let \\[r__rescue" out))
   (check-true (matches? #rx"err" out)))
 
-;; --- deferror ----------------------------------------------------------------
+;; --- defunion :throwable -----------------------------------------------------
 
-(test-case "deferror emits defrecord per variant"
-  (define out (compile `(deferror ApiError
+(test-case "defunion :throwable emits defrecord per variant"
+  (define out (compile `(defunion :throwable ApiError
                           (NotFound ,(br '(id : Int)))
                           (RateLimit ,(br '(retry-after : Int))))))
   (check-true (matches? #rx"error ApiError" out))

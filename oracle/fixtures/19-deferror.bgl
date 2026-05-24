@@ -1,6 +1,6 @@
 #lang beagle/rkt
 
-(deferror AppError
+(defunion :throwable AppError
   (NotFound [(key : String)])
   (InvalidInput [(msg : String)]))
 

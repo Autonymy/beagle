@@ -1007,16 +1007,18 @@
   (check-true (call-form? (rescue-form-fallback f)))
   (check-eq? (rescue-form-err-name f) 'err))
 
-;; --- deferror ----------------------------------------------------------------
+;; --- (defunion :throwable ...) -----------------------------------------------
+;; deferror was unified into defunion with :throwable keyword. The parser
+;; routes (defunion :throwable Name ...) to deferror-form internally.
 
-(test-case "deferror with bare variants parses"
-  (define f (car (parse-one '(deferror NetworkError Timeout ConnectionRefused))))
+(test-case "defunion :throwable with bare variants parses"
+  (define f (car (parse-one '(defunion :throwable NetworkError Timeout ConnectionRefused))))
   (check-true (deferror-form? f))
   (check-equal? (deferror-form-name f) 'NetworkError)
   (check-equal? (deferror-form-members f) '(Timeout ConnectionRefused)))
 
-(test-case "deferror with fielded variants parses"
-  (define f (car (parse-one `(deferror ApiError
+(test-case "defunion :throwable with fielded variants parses"
+  (define f (car (parse-one `(defunion :throwable ApiError
                                (NotFound ,(br '(id : Int)))
                                (RateLimit ,(br '(retry-after : Int)))))))
   (check-true (deferror-form? f))

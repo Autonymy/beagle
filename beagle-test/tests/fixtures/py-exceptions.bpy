@@ -2,7 +2,7 @@
 
 (ns py-exceptions)
 
-(deferror DomainError
+(defunion :throwable DomainError
   Overflow
   Underflow
   (BadInput [(field : String) (reason : String)]))

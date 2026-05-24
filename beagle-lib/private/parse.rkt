@@ -298,6 +298,11 @@
        (reg! name (type-union (map (lambda (m) (type-prim m)) members)))
        (when imp-union-members
          (hash-set! imp-union-members name members))]
+      [(list 'defunion ':throwable (? symbol? name) members ...)
+       ;; Throwable union: register the parent name as a type. Variants
+       ;; are registered when the form is parsed in the main pass (the
+       ;; parse-deferror code path).
+       (reg! name (type-prim name))]
       [(list 'defunion (list (? symbol? name) type-vars ...) member-defs ...)
        (define mnames (map car member-defs))
        (current-user-parametric (set-add (current-user-parametric) name))
@@ -1237,6 +1242,28 @@
     [(list 'defenum (? symbol? name) values ...)
      (defenum-form name (map ->datum (or (stx-tail subs 2) values)))]
 
+    ;; (defunion :throwable Name ...) — throwable variant union.
+    ;; Routes to deferror-form internally (same structural shape; throw/catch
+    ;; semantics live in the type checker's union-as-error logic). Inlined
+    ;; rather than calling parse-deferror because subs offset differs by 1.
+    [(list 'defunion ':throwable (? symbol? name) member-defs ...)
+     (define member-names '())
+     (define mf-hash (make-hasheq))
+     (for ([md (in-list (or (stx-tail subs 3) member-defs))])
+       (define d (->datum md))
+       (cond
+         [(symbol? d)
+          (set! member-names (cons d member-names))
+          (hash-set! mf-hash d '())]
+         [(and (list? d) (>= (length d) 2) (symbol? (car d)))
+          (define mname (car d))
+          (set! member-names (cons mname member-names))
+          (hash-set! mf-hash mname (parse-record-fields (cadr d)))]
+         [else
+          (error 'beagle
+                 "defunion :throwable member must be Symbol or (Name [fields...]): ~v" d)]))
+     (deferror-form name (reverse member-names) mf-hash)]
+
     [(list 'defunion (? symbol? name) members ...)
      (define raw (map ->datum (or (stx-tail subs 2) members)))
      (define mnames (map (lambda (m) (if (pair? m) (car m) m)) raw))
@@ -1252,8 +1279,8 @@
     [(list 'defunion (list (? symbol? name) type-vars ...) member-defs ...)
      (parse-parametric-defunion name type-vars member-defs subs)]
 
-    [(list 'deferror (? symbol? name) member-defs ...)
-     (parse-deferror name member-defs subs)]
+    [(list 'deferror _ ...)
+     (error 'beagle "deferror removed — use (defunion :throwable Name ...) instead")]
 
     [(list 'defscalar (? symbol? name) (? symbol? backing) ':where preds ...)
      (defscalar-form name (->datum backing) (map parse-scalar-predicate preds))]

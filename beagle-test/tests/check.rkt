@@ -1000,19 +1000,19 @@
   '(def x : Any (rescue (+ 1 1) err (str err))))
 
 ;; =============================================================================
-;; Tests — deferror / :raises
+;; Tests — (defunion :throwable ...) / :raises
 ;; =============================================================================
 
-(check-ok "deferror with bare variants passes type check"
-  '(deferror NetworkError Timeout ConnectionRefused))
+(check-ok "defunion :throwable with bare variants passes type check"
+  '(defunion :throwable NetworkError Timeout ConnectionRefused))
 
-(check-ok "deferror with fielded variants passes type check"
-  `(deferror ApiError
+(check-ok "defunion :throwable with fielded variants passes type check"
+  `(defunion :throwable ApiError
      (NotFound ,(br '(id : Int)))
      (RateLimit ,(br '(retry-after : Int)))))
 
 (check-ok "defn with :raises passes type check"
-  `(deferror NetErr Timeout Refused)
+  `(defunion :throwable NetErr Timeout Refused)
   `(defn fetch ,(br '(url : String)) : String :raises NetErr (str url)))
 
 ;; =============================================================================
