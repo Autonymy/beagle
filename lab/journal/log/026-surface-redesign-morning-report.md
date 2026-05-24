@@ -102,6 +102,25 @@ parse/emit/check, as-> parse, when-not/if-not parse, when-not/if-not
 emit, the defmethod-ok fixture), -5 more from tests for inc/dec → add1/
 sub1 emit-rkt translations that no longer apply.
 
+**Oracle suite**: `oracle/bin/check-oracle oracle/fixtures/` reports
+**30/30 PASS**. The Racket emit → `raco make` round-trip validates all
+oracle fixtures under the new surface. (The BEAGLE_ORACLE=1 broader
+test mode reports 24/1480 failures, which are pre-existing
+differential/bun-parity tests unrelated to surface changes — verified
+by isolated oracle-script run passing cleanly.)
+
+### Key test modules (all green under new surface)
+
+```
+sql-fixtures        : 12/12 pass
+sql-schema-cache    :  3/3  pass
+py-fixtures         :  8/8  pass
+js-fixtures         :  6/6  pass
+py-exec-oracle      :  7/7  pass
+js-exec-oracle      :  5/5  pass
+bench/e23 harness   : OK    (compile + sqlite + diff)
+```
+
 ### Commits (in order)
 
 1. `surface-redesign: Day 0 observation pass complete` — friction
