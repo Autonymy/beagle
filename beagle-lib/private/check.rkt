@@ -987,6 +987,22 @@
              "warning: call to ~a returns ~a but the result is not consumed — use match, let, check, or rescue\n"
              fn-name (type->string t))))
 
+;; Warn when (:field record) is used on a known record type — the typed
+;; auto-accessor (field-name record) is more explicit and produces a
+;; clearer error on field typos. Suppressed via BEAGLE_NO_LINT=1.
+(define (warn-kw-access-on-record e target-type)
+  (when (and (type-prim? target-type)
+             (hash-has-key? RECORD-FIELDS (type-prim-name target-type))
+             (not (getenv "BEAGLE_NO_LINT")))
+    (define rec-name (type-prim-name target-type))
+    (define kw-sym (kw-access-kw e))
+    (define field-name (substring (symbol->string kw-sym) 1))
+    (define rec-lower (string-downcase (symbol->string rec-name)))
+    (define accessor (string-append rec-lower "-" field-name))
+    (fprintf (current-error-port)
+             "warning: (~a target) on record ~a — prefer typed accessor (~a target)\n"
+             kw-sym rec-name accessor)))
+
 (define (last-expr-type body env)
   (let loop ([forms body] [current-env env] [result #f])
     (cond
@@ -1789,9 +1805,10 @@
      (for ([a (in-list (new-form-args e))]) (infer-expr a env))
      ANY]
     [(kw-access? e)
-     (infer-expr (kw-access-target e) env)
+     (define target-type (infer-expr (kw-access-target e) env))
      (when (kw-access-default e) (infer-expr (kw-access-default e) env))
-     (lookup-kw-field-type (kw-access-kw e) (infer-expr (kw-access-target e) env) env)]
+     (warn-kw-access-on-record e target-type)
+     (lookup-kw-field-type (kw-access-kw e) target-type env)]
     [(with-form? e)
      (define target-type (infer-expr (with-form-target e) env))
      (cond
