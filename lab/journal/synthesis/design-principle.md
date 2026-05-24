@@ -39,7 +39,52 @@ pattern.
   Each new def-form is *more* learnable because the pattern is
   predictable.
 - `let` / `letfn` / `loop` — bracket-binding shape `[name value ...]`.
-- `match` clause patterns reuse the bracket-binding shape.
+- `match` / `cond` / `for` clauses — bracket-pair clause shape (see
+  meta-pattern below).
+
+## The bracket-clause meta-pattern
+
+This is the load-bearing regularity that protects several
+clause-shaped forms that would otherwise look pattern-isolated.
+
+Beagle has a generalized **bracket-pair clause** shape that recurs
+across forms with different left-side interpretations but the same
+visual structure:
+
+| Form | Clause shape | Left-side interpretation |
+|---|---|---|
+| `let` | `[name value]` | Identifier to bind |
+| `match` | `[pattern body]` | Pattern to match against the target |
+| `cond` | `[test body]` | Boolean test expression |
+| `for` | `[var coll :when pred]` | Iteration source + optional modifiers |
+
+These don't share semantics — they share *shape*. An agent who has
+internalized "pair-things-up-in-brackets-inside-parens" from any one
+of them is primed to parse the others. The visual regularity teaches
+the family even when the interpretation differs.
+
+**This is what saves `cond`.** The earlier "drop candidate" verdict
+was wrong because it asked "does cond fold into match?" (no — distinct
+concept). The right question is "does cond participate in an existing
+family?" (yes — bracket-clause family). Participation in a family is
+pattern-extension, even when the per-form semantics differ.
+
+**This is what condemns flat-pair `case`.** `(case x 1 :a 2 :b :else)`
+breaks the bracket-clause family. Its alternative interpretation
+(left side is a literal value to test for equality) would slot
+naturally into the family if its syntax were `[1 :a]` `[2 :b]`. The
+flat-pair shape is what makes it an island. So the right move for
+`case` is either (a) drop in favor of `match` (which already uses
+bracket clauses), or (b) reshape `case` to use bracket clauses. Not
+"keep as-is."
+
+**Test for any new clause-shaped form:** does it use bracket-pair
+clauses consistently with the family, or does it introduce an island
+shape? Bracket-pair → pattern-extending → earns its place (assuming
+distinct concept). Island shape → pattern-isolated → doesn't.
+
+Future surface decisions should consult this meta-pattern explicitly,
+not re-derive it from individual form audits.
 
 **Pattern-isolated.** The new form exists for its own sake, with no
 broader regularity it reinforces. Each one is a *separate fact* to
