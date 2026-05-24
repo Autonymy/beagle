@@ -1159,6 +1159,11 @@
      (define arm-env (mut-copy env))
      (hash-set! arm-env (pat-var-name pat) target-type)
      arm-env]
+    ;; or-pattern: v1 handles no-binding alternatives (literals, wildcards,
+    ;; bare records with no bindings). All alternatives sharing bindings is
+    ;; future work — would require verifying binding agreement across
+    ;; alternatives.
+    [(pat-or? pat) env]
     [else env]))
 
 ;; --- exhaustive match checking ----------------------------------------------
@@ -1189,19 +1194,31 @@
                                                (list->set (hash-keys flds)))))))
           rt)])]))
 
+;; Flatten or-pattern alternatives into a list of leaf patterns for
+;; exhaustiveness analysis. (or A B) contributes both A and B; nested
+;; or-patterns flatten. Pattern combinators added later (and, not, guards)
+;; would need their own treatment here.
+(define (effective-patterns pat)
+  (cond
+    [(pat-or? pat)
+     (apply append (map effective-patterns (pat-or-alternatives pat)))]
+    [else (list pat)]))
+
 (define (check-match-exhaustiveness e env target-type)
   (define clauses (match-form-clauses e))
+  (define all-patterns
+    (apply append
+           (map (lambda (c) (effective-patterns (match-clause-pattern c)))
+                clauses)))
   (define record-pats
-    (filter pat-record?
-            (map match-clause-pattern clauses)))
+    (filter pat-record? all-patterns))
   (define matched-types
     (map pat-record-type-name record-pats))
   (define matched-set (list->set matched-types))
   (define has-wildcard?
-    (ormap (lambda (c)
-             (or (pat-wildcard? (match-clause-pattern c))
-                 (pat-var? (match-clause-pattern c))))
-           clauses))
+    (ormap (lambda (p)
+             (or (pat-wildcard? p) (pat-var? p)))
+           all-patterns))
   (define src (src-for e))
   (define file (and src (src-loc-source src)))
   (define line (and src (src-loc-line src)))

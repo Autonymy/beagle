@@ -514,6 +514,8 @@
                                                        'name (symbol->string (cdr e))))
                                              (pat-map-entries p)))]
     [(pat-var? p)      (hasheq 'type "var" 'name (symbol->string (pat-var-name p)))]
+    [(pat-or? p)       (hasheq 'type "or"
+                               'alternatives (map pattern->json (pat-or-alternatives p)))]
     [else (hasheq 'type "unknown" 'raw (~a p))]))
 
 (define (program->json prog)

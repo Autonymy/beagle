@@ -137,6 +137,13 @@
          ,(br '(Circle r) '(* r r))
          ,(br '(Rect w h) '(* w h)))))
 
+   (check-js-contains "match or-pattern → combined ||"
+     " || "
+     `(defn classify [(x : Int)] : String
+       (match x
+         ,(br '(or 1 2 3) "low")
+         ,(br '_ "other"))))
+
    (check-js-contains "vec literal → array"
      "[1, 2, 3]"
      `(def xs : (Vec Int) ,(br 1 2 3)))

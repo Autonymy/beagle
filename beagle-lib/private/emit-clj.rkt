@@ -6,6 +6,7 @@
          racket/string
          racket/format
          racket/set
+         racket/list
          "parse.rkt"
          "emit-dispatch.rkt")
 
@@ -585,16 +586,116 @@
                        " ")])
       (format "(defn ~a [v]\n  {:pre [~a]}\n  v)" ctor pre-exprs))))
 
+;; Case-fold optimization: if every match clause is a literal-dispatch
+;; pattern (pat-literal, or pat-or with all-literal alternatives) with
+;; optional wildcard/var as the final clause, emit Clojure's `case`
+;; form for O(1) dispatch. Otherwise fall through to the general
+;; (let ... (cond ...)) emission.
+;;
+;; This preserves the perf characteristic of the dropped `case` form
+;; after it gets folded into match + or-pattern (see design-principle.md
+;; "Emit-layer obligations for surface drops").
+(define (case-foldable-pattern? pat)
+  (cond
+    [(pat-literal? pat) #t]
+    [(pat-or? pat)
+     (andmap (lambda (alt) (or (pat-literal? alt) (pat-wildcard? alt)))
+             (pat-or-alternatives pat))]
+    [else #f]))
+
+(define (case-foldable-match? clauses)
+  (cond
+    [(null? clauses) #f]
+    [else
+     (define non-tail (drop-right clauses 1))
+     (define tail (last clauses))
+     (define tail-pat (match-clause-pattern tail))
+     (and (andmap (lambda (c) (case-foldable-pattern? (match-clause-pattern c)))
+                  non-tail)
+          (or (case-foldable-pattern? tail-pat)
+              (pat-wildcard? tail-pat)
+              (pat-var? tail-pat)))]))
+
+(define (emit-case-folded-match clauses target-sym target-str)
+  ;; Each non-default clause becomes `(value or value-list) body`.
+  ;; Final wildcard/var becomes the case default (no key).
+  (define-values (dispatch-clauses default-clause)
+    (let* ([tail (last clauses)]
+           [tail-pat (match-clause-pattern tail)])
+      (cond
+        [(or (pat-wildcard? tail-pat) (pat-var? tail-pat))
+         (values (drop-right clauses 1) tail)]
+        [else (values clauses #f)])))
+  (define clause-strs
+    (for/list ([c (in-list dispatch-clauses)])
+      (define pat (match-clause-pattern c))
+      (define body-str (emit-body (match-clause-body c) "      "))
+      (define key-str
+        (cond
+          [(pat-literal? pat) (emit-pat-literal-value pat)]
+          [(pat-or? pat)
+           (define vals
+             (for/list ([alt (in-list (pat-or-alternatives pat))]
+                        #:when (pat-literal? alt))
+               (emit-pat-literal-value alt)))
+           (format "(~a)" (string-join vals " "))]))
+      (format "~a ~a" key-str body-str)))
+  (define default-str
+    (cond
+      [(not default-clause) ""]
+      [(pat-wildcard? (match-clause-pattern default-clause))
+       (format "\n    ~a" (emit-body (match-clause-body default-clause) "      "))]
+      [(pat-var? (match-clause-pattern default-clause))
+       (define var (pat-var-name default-clause))
+       (format "\n    (let [~a ~a] ~a)"
+               (pat-var-name (match-clause-pattern default-clause))
+               target-sym
+               (emit-body (match-clause-body default-clause) "      "))]))
+  (format "(case ~a\n    ~a~a)"
+          target-str
+          (string-join clause-strs "\n    ")
+          default-str))
+
+(define (emit-pat-literal-value pat)
+  (define val (pat-literal-value pat))
+  (cond
+    [(eq? val 'nil) "nil"]
+    [(string? val) (format "~v" val)]
+    [(boolean? val) (if val "true" "false")]
+    [(and (symbol? val) (char=? (string-ref (symbol->string val) 0) #\:))
+     (symbol->string val)]
+    [else (format "~a" val)]))
+
 (define (emit-match e)
   (define target-str (emit-expr (match-form-target e)))
-  (define target-sym (format "match__~a" (random 99999)))
   (define clauses (match-form-clauses e))
-  (define cond-pairs
-    (for/list ([c (in-list clauses)])
-      (emit-match-arm c target-sym)))
-  (format "(let [~a ~a]\n  (cond\n    ~a))"
-          target-sym target-str
-          (string-join cond-pairs "\n    ")))
+  (cond
+    [(case-foldable-match? clauses)
+     ;; Optimization: pure literal dispatch → Clojure `case` (O(1)).
+     (define target-sym (format "match__~a" (random 99999)))
+     (emit-case-folded-match clauses target-sym target-str)]
+    [else
+     ;; General path: (let [tmp target] (cond ...))
+     (define target-sym (format "match__~a" (random 99999)))
+     (define cond-pairs
+       (for/list ([c (in-list clauses)])
+         (emit-match-arm c target-sym)))
+     (format "(let [~a ~a]\n  (cond\n    ~a))"
+             target-sym target-str
+             (string-join cond-pairs "\n    "))]))
+
+;; Pattern test expression for a literal pattern. Extracted so or-pattern
+;; can compose tests across alternatives. Returns a Clojure boolean
+;; expression that evaluates to true if `target-sym` matches `pat`.
+(define (emit-pat-literal-test pat target-sym)
+  (define val (pat-literal-value pat))
+  (cond
+    [(eq? val 'nil) (format "(nil? ~a)" target-sym)]
+    [(string? val)  (format "(= ~a ~v)" target-sym val)]
+    [(boolean? val) (format "(~a ~a)" (if val "true?" "false?") target-sym)]
+    [(and (symbol? val) (char=? (string-ref (symbol->string val) 0) #\:))
+     (format "(= ~a ~a)" target-sym (symbol->string val))]
+    [else (format "(= ~a ~a)" target-sym val)]))
 
 (define (emit-match-arm clause target-sym)
   (define pat (match-clause-pattern clause))
@@ -605,16 +706,20 @@
     [(pat-var? pat)
      (format ":else (let [~a ~a] ~a)" (pat-var-name pat) target-sym body-str)]
     [(pat-literal? pat)
-     (define val (pat-literal-value pat))
-     (define test
-       (cond
-         [(eq? val 'nil) (format "(nil? ~a)" target-sym)]
-         [(string? val)  (format "(= ~a ~v)" target-sym val)]
-         [(boolean? val) (format "(~a ~a)" (if val "true?" "false?") target-sym)]
-         [(and (symbol? val) (char=? (string-ref (symbol->string val) 0) #\:))
-          (format "(= ~a ~a)" target-sym (symbol->string val))]
-         [else (format "(= ~a ~a)" target-sym val)]))
-     (format "~a ~a" test body-str)]
+     (format "~a ~a" (emit-pat-literal-test pat target-sym) body-str)]
+    ;; or-pattern (v1: literal-only alternatives). Combines per-alternative
+    ;; tests with `or`. Future operators (and, not, guards) would slot in
+    ;; as sibling cases here.
+    [(pat-or? pat)
+     (define tests
+       (for/list ([alt (in-list (pat-or-alternatives pat))])
+         (cond
+           [(pat-literal? alt) (emit-pat-literal-test alt target-sym)]
+           [(pat-wildcard? alt) "true"]
+           [else (error 'emit-clj
+                        "or-pattern (v1) supports literal alternatives only; got: ~v"
+                        alt)])))
+     (format "(or ~a) ~a" (string-join tests " ") body-str)]
     [(pat-record? pat)
      (define rec-name (pat-record-type-name pat))
      (define bindings (pat-record-bindings pat))

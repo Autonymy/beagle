@@ -650,6 +650,9 @@
        (for/list ([pair (in-list entries)])
          (format "~a: ~a" (emit-expr (car pair)) (emit-pattern (cdr pair)))))
      (format "{~a}" (string-join entry-strs ", "))]
+    ;; or-pattern → PEP 634 "p1 | p2 | ..." syntax.
+    [(pat-or? p)
+     (string-join (map emit-pattern (pat-or-alternatives p)) " | ")]
     [else "_"]))
 
 ;; --- case → match/case with literal values ----------------------------------

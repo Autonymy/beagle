@@ -617,6 +617,22 @@
 (check-fixture-silent "match with wildcard and non-sibling records stays silent"
   "match-wildcard-non-sibling-silent.bclj")
 
+;; --- or-pattern (literal alternatives, v1) ---
+
+(check-ok "match with or-pattern of literals type-checks"
+  `(defn classify [(x : Int)] : String
+     (match x
+       ,(br '(or 1 2 3) "low")
+       ,(br '(or 4 5 6) "mid")
+       ,(br '_ "other"))))
+
+(check-ok "or-pattern with keyword literals type-checks"
+  `(defn name [(k : Keyword)] : String
+     (match k
+       ,(br '(or :a :b) "first")
+       ,(br '(or :c :d) "second")
+       ,(br '_ "other"))))
+
 ;; =============================================================================
 ;; Tests — defunion (fixtures)
 ;; =============================================================================

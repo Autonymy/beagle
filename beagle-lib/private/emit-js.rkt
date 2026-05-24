@@ -1276,6 +1276,18 @@
       (format "const ~a = ~a; ~a" tmp target-str arms-str)))
   (iife full #:async? async?))
 
+;; Pattern test expression for a literal pattern. Extracted so or-pattern
+;; can compose tests across alternatives.
+(define (emit-pat-literal-test-js pat tmp)
+  (define val (pat-literal-value pat))
+  (cond
+    [(eq? val 'nil) (format "~a == null" tmp)]
+    [(string? val)  (format "~a === ~v" tmp val)]
+    [(boolean? val) (format "~a === ~a" tmp (if val "true" "false"))]
+    [(keyword-symbol? val)
+     (format "~a === ~v" tmp (kw->prop val))]
+    [else (format "~a === ~a" tmp val)]))
+
 (define (emit-match-arm clause tmp)
   (define pat (match-clause-pattern clause))
   (define body (match-clause-body clause))
@@ -1292,16 +1304,21 @@
      (format "{ const ~a = ~a; ~a }"
              (mangle-name (pat-var-name pat)) tmp (make-body-str (list (pat-var-name pat))))]
     [(pat-literal? pat)
-     (define val (pat-literal-value pat))
-     (define test
-       (cond
-         [(eq? val 'nil) (format "~a == null" tmp)]
-         [(string? val)  (format "~a === ~v" tmp val)]
-         [(boolean? val) (format "~a === ~a" tmp (if val "true" "false"))]
-         [(keyword-symbol? val)
-          (format "~a === ~v" tmp (kw->prop val))]
-         [else (format "~a === ~a" tmp val)]))
-     (format "if (~a) { ~a } else" test (make-body-str))]
+     (format "if (~a) { ~a } else" (emit-pat-literal-test-js pat tmp) (make-body-str))]
+    ;; or-pattern (v1: literal-only alternatives). Combines per-alternative
+    ;; tests with `||`. Future operators slot in as sibling cases here.
+    [(pat-or? pat)
+     (define tests
+       (for/list ([alt (in-list (pat-or-alternatives pat))])
+         (cond
+           [(pat-literal? alt) (emit-pat-literal-test-js alt tmp)]
+           [(pat-wildcard? alt) "true"]
+           [else (error 'emit-js
+                        "or-pattern (v1) supports literal alternatives only; got: ~v"
+                        alt)])))
+     (format "if (~a) { ~a } else"
+             (string-join tests " || ")
+             (make-body-str))]
     [(pat-record? pat)
      (define rec-name (pat-record-type-name pat))
      (define bindings (pat-record-bindings pat))

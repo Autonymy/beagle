@@ -624,6 +624,24 @@
 ;; (:keyword target) call-form removed — use (get m :key) for maps,
 ;; (field-name r) for record field access.
 
+;; --- match: or-pattern ----------------------------------------------------
+
+(test-case "or-pattern parses with literal alternatives"
+  (define f (car (parse-one `(match x
+                               ,(br '(or 1 2 3) "low")
+                               ,(br '_ "other")))))
+  (check-true (match-form? f))
+  (define clauses (match-form-clauses f))
+  (check-equal? (length clauses) 2)
+  (define or-pat (match-clause-pattern (car clauses)))
+  (check-true (pat-or? or-pat))
+  (check-equal? (length (pat-or-alternatives or-pat)) 3)
+  (check-true (andmap pat-literal? (pat-or-alternatives or-pat))))
+
+(parse-err/rx "or-pattern with zero alternatives errors"
+  #rx"or-pattern requires at least one"
+  `(match x ,(br '(or) "x")))
+
 ;; --- defprotocol -----------------------------------------------------------
 
 (test-case "defprotocol parses"

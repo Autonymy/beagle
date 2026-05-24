@@ -1578,6 +1578,13 @@
     [(keyword-sym? d)   (pat-literal d)]
     [(and (pair? d) (eq? (car d) MAP-TAG))
      (parse-map-pattern (cdr d))]
+    ;; Pattern combinators. or-pattern: (or pat1 pat2 ...) matches if
+    ;; any alternative matches. Designed as a combinator so future
+    ;; operators (and, not, guards) slot in as sibling parse cases.
+    [(and (pair? d) (eq? (car d) 'or))
+     (when (null? (cdr d))
+       (error 'beagle "or-pattern requires at least one alternative"))
+     (pat-or (map parse-pattern (cdr d)))]
     [(and (pair? d) (symbol? (car d))
           (let ([s (symbol->string (car d))])
             (and (positive? (string-length s))

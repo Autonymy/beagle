@@ -181,6 +181,11 @@
 (struct pat-record   (type-name bindings)                    #:transparent)
 (struct pat-map      (entries)                               #:transparent)
 (struct pat-var      (name)                                  #:transparent)
+;; Pattern combinators. pat-or holds a list of alternative sub-patterns;
+;; matches if any alternative matches. Designed as a combinator (sub-pattern
+;; list) so future operators (pat-and, pat-not, pat-guard) slot in as
+;; sibling structs without restructuring the match parser or evaluator.
+(struct pat-or       (alternatives)                          #:transparent)
 
 (struct check-expr  (expr)                                   #:transparent)
 (struct rescue-form (expr fallback err-name)                 #:transparent)
@@ -379,7 +384,7 @@
  (struct-out defscalar-form) (struct-out scalar-predicate)
  (struct-out match-form) (struct-out match-clause)
  (struct-out pat-wildcard) (struct-out pat-literal) (struct-out pat-record)
- (struct-out pat-map) (struct-out pat-var)
+ (struct-out pat-map) (struct-out pat-var) (struct-out pat-or)
  (struct-out check-expr) (struct-out rescue-form) (struct-out target-case-form)
  (struct-out with-meta)
  (struct-out when-let-form) (struct-out if-let-form)

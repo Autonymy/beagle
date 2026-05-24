@@ -45,6 +45,24 @@ to reverse-engineer intent from the failing test code.
 
 ---
 
+## Promotion verification gaps
+
+Different shape from debt entries above. Records optimizations or
+behaviors that ship with **structural-only** verification under the
+tiered regime (because the target's behavioral suite is demoted).
+When the target promotes back to active, these need end-to-end
+verification before being treated as fully validated.
+
+Format: date | optimization | targets affected | what structural
+verification catches | what structural verification misses.
+
+| Date | Optimization | Targets | Caught | Missed |
+|---|---|---|---|---|
+| 2026-05-24 | Case-fold of literal-only or-pattern match → target-native dispatch (Clojure `case`, Rkt `case` form for O(1) hash dispatch) | clj, rkt | Structural: emitter produces `(case x ...)` form with correct keys, not `(let ... (cond ...))` chain | Behavioral: that the lowered case form executes correctly under all literal types (int, keyword, string, bool, nil) and that perf gain is actually realized vs. cond chain |
+| 2026-05-24 | JS case-fold deliberately NOT implemented | js | n/a — no optimization shipped | n/a — chained ternary that emit-js generates matches what JS `case-form` already emits; there is no perf regression to avoid in JS for case-drop |
+
+---
+
 ## Entries
 
 <!-- Append new entries below, most recent first. -->

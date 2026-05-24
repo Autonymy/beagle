@@ -1138,6 +1138,23 @@
           (format "let ~a = ~a; in ~a"
                   (mangle-name (pat-var-name pat))
                   target body-str)]
+         ;; or-pattern (v1: literal-only alternatives). Combines tests
+         ;; with `||` in a Nix `if`. Future operators slot in as sibling
+         ;; cases here.
+         [(pat-or? pat)
+          (define tests
+            (for/list ([alt (in-list (pat-or-alternatives pat))])
+              (cond
+                [(pat-literal? alt)
+                 (format "~a == ~a" target (emit-expr (pat-literal-value alt) depth))]
+                [(pat-wildcard? alt) "true"]
+                [else (error 'emit-nix
+                             "or-pattern (v1) supports literal alternatives only; got: ~v"
+                             alt)])))
+          (format "if ~a then ~a else ~a"
+                  (string-join tests " || ")
+                  body-str
+                  (emit-match-clauses (cdr cs)))]
          [else (emit-match-clauses (cdr cs))])]))
   (emit-match-clauses clauses))
 

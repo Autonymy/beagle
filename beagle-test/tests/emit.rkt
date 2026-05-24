@@ -668,6 +668,47 @@
   (check-true (matches? #rx"\\(= \\(:k " out))
   (check-false (matches? #rx"\\(and \\(=" out)))
 
+;; --- match: or-pattern + case-fold optimization (Clojure target) ---
+;;
+;; All-literal-dispatch match (with optional wildcard/var default) gets
+;; lowered to Clojure's `case` form for O(1) dispatch — preserves the
+;; perf characteristic of the dropped `case` form after it's folded into
+;; match+or. Mixed-pattern matches (records + literals, etc.) fall
+;; through to the general (let ... (cond ...)) emission, where or-pattern
+;; emits as combined (or test1 test2 ...).
+
+(test-case "or-pattern of integer literals — case-fold to (case x ...)"
+  (define out
+    (compile `(defn f [(x : Int)] : String
+                (match x
+                  ,(br '(or 1 2 3) "low")
+                  ,(br '_ "other")))))
+  (check-true (matches? #rx"\\(case x" out))
+  (check-true (matches? #rx"\\(1 2 3\\) \"low\"" out))
+  (check-true (matches? #rx"\"other\"" out)))
+
+(test-case "or-pattern of keyword literals — case-fold to (case k ...)"
+  (define out
+    (compile `(defn f [(k : Keyword)] : String
+                (match k
+                  ,(br '(or :a :b) "first")
+                  ,(br '_ "other")))))
+  (check-true (matches? #rx"\\(case k" out))
+  (check-true (matches? #rx"\\(:a :b\\) \"first\"" out)))
+
+(test-case "or-pattern mixed with non-literal — falls through to cond chain"
+  (define out
+    (compile `(defrecord Tag ,(br '(n : Int)))
+             `(defn f [(x : Any)] : Int
+                (match x
+                  ,(br '(or 1 2) 10)
+                  ,(br '(Tag n) 'n)
+                  ,(br '_ 0)))))
+  ;; Not case-foldable because (Tag n) is not a literal; emits the
+  ;; general cond chain with (or test1 test2) for the literal alternatives.
+  (check-true (matches? #rx"\\(cond" out))
+  (check-true (matches? #rx"\\(or \\(= " out)))
+
 ;; --- new-form (single-arg constructor) -------------------------------------
 
 (test-case "new-form with one arg emits as call"

@@ -277,6 +277,10 @@
   (check-true (string-contains? out "case Circle(r):"))
   (check-true (string-contains? out "case _:")))
 
+(test-case "or-pattern emits PEP 634 | syntax"
+  (define out (py-emit "(define-target py) (defn f [(x : Int)] : String (match x [(or 1 2 3) \"low\"] [_ \"other\"]))"))
+  (check-true (string-contains? out "case 1 | 2 | 3:")))
+
 ;; --- loop/recur -------------------------------------------------------------
 
 (test-case "loop/recur emits while True"

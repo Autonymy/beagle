@@ -731,12 +731,83 @@
 ;; bound variable inside its arm so accessors are well-typed. See
 ;; oracle/MAPPING.md "Flow-Sensitive Narrowing".
 
+;; Case-fold optimization: if every match clause is a literal-dispatch
+;; pattern (pat-literal, pat-or with all-literal alternatives) with
+;; optional wildcard/var as the final clause, emit Typed Racket's `case`
+;; form for O(1) dispatch table. Preserves the perf characteristic of
+;; the dropped `case` form after it folds into match + or-pattern.
+(define (rkt-case-foldable-pattern? pat)
+  (cond
+    [(pat-literal? pat) #t]
+    [(pat-or? pat)
+     (andmap (lambda (alt) (or (pat-literal? alt) (pat-wildcard? alt)))
+             (pat-or-alternatives pat))]
+    [else #f]))
+
+(define (rkt-case-foldable-match? clauses)
+  (cond
+    [(null? clauses) #f]
+    [else
+     (define non-tail (drop-right clauses 1))
+     (define tail (last clauses))
+     (define tail-pat (match-clause-pattern tail))
+     (and (andmap (lambda (c) (rkt-case-foldable-pattern? (match-clause-pattern c)))
+                  non-tail)
+          (or (rkt-case-foldable-pattern? tail-pat)
+              (pat-wildcard? tail-pat)
+              (pat-var? tail-pat)))]))
+
+(define (emit-pat-literal-rkt pat)
+  (define val (pat-literal-value pat))
+  (cond
+    [(eq? val 'nil) "(void)"]
+    [(string? val) (format "~v" val)]
+    [(boolean? val) (if val "#t" "#f")]
+    [(and (symbol? val) (char=? (string-ref (symbol->string val) 0) #\:))
+     (format "'~a" (substring (symbol->string val) 1))]
+    [else (format "~a" val)]))
+
+(define (emit-rkt-case-folded clauses target-str)
+  (define-values (dispatch-clauses default-clause)
+    (let ([tail (last clauses)])
+      (cond
+        [(or (pat-wildcard? (match-clause-pattern tail))
+             (pat-var? (match-clause-pattern tail)))
+         (values (drop-right clauses 1) tail)]
+        [else (values clauses #f)])))
+  (define clause-strs
+    (for/list ([c (in-list dispatch-clauses)])
+      (define pat (match-clause-pattern c))
+      (define body-str (emit-body (match-clause-body c)))
+      (define keys
+        (cond
+          [(pat-literal? pat) (list (emit-pat-literal-rkt pat))]
+          [(pat-or? pat)
+           (for/list ([alt (in-list (pat-or-alternatives pat))]
+                      #:when (pat-literal? alt))
+             (emit-pat-literal-rkt alt))]))
+      (format "[(~a) ~a]" (string-join keys " ") body-str)))
+  (define default-str
+    (cond
+      [(not default-clause) ""]
+      [else
+       (format " [else ~a]" (emit-body (match-clause-body default-clause)))]))
+  (format "(case ~a ~a~a)"
+          target-str
+          (string-join clause-strs " ")
+          default-str))
+
 (define (emit-match e)
   (define target-str (emit-expr (match-form-target e)))
-  (define clause-strs
-    (for/list ([c (in-list (match-form-clauses e))])
-      (emit-match-clause target-str c)))
-  (format "(cond ~a)" (string-join clause-strs " ")))
+  (define clauses (match-form-clauses e))
+  (cond
+    [(rkt-case-foldable-match? clauses)
+     (emit-rkt-case-folded clauses target-str)]
+    [else
+     (define clause-strs
+       (for/list ([c (in-list clauses)])
+         (emit-match-clause target-str c)))
+     (format "(cond ~a)" (string-join clause-strs " "))]))
 
 (define (emit-match-clause target-str c)
   (define pat (match-clause-pattern c))
@@ -750,6 +821,19 @@
     [(pat-var? pat)
      (format "[else (let ([~a ~a]) ~a)]"
              (mangle-name (pat-var-name pat)) target-str (emit-body body))]
+    ;; or-pattern (v1: literal-only alternatives). Emits as `(or test1 ...)`
+    ;; in cond, matching the Clojure target's shape.
+    [(pat-or? pat)
+     (define tests
+       (for/list ([alt (in-list (pat-or-alternatives pat))])
+         (cond
+           [(pat-literal? alt)
+            (format "(equal? ~a ~a)" target-str (emit-expr (pat-literal-value alt)))]
+           [(pat-wildcard? alt) "#t"]
+           [else (error 'emit-rkt
+                        "or-pattern (v1) supports literal alternatives only; got: ~v"
+                        alt)])))
+     (format "[(or ~a) ~a]" (string-join tests " ") (emit-body body))]
     [(pat-record? pat)
      (define type-name (pat-record-type-name pat))
      (define bindings (pat-record-bindings pat))

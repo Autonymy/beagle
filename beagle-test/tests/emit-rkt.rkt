@@ -268,6 +268,12 @@
   (check-true (string-contains? out "Circle?"))
   (check-true (string-contains? out "Circle-r")))
 
+(test-case "or-pattern (all-literal) case-folds to (case ...) for O(1) dispatch"
+  (define out (rkt-emit "(define-target rkt) (defn f [(x : Integer)] : String (match x [(or 1 2 3) \"low\"] [_ \"other\"]))"))
+  (check-true (string-contains? out "(case x"))
+  (check-true (string-contains? out "[(1 2 3) \"low\"]"))
+  (check-true (string-contains? out "[else \"other\"]")))
+
 ;; --- try/catch -------------------------------------------------------------
 
 (test-case "try/catch emits with-handlers"
