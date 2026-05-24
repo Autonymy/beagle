@@ -660,22 +660,51 @@ When the time comes (post-nullable-narrowing), the question is
 "what should this form be called and shaped like" — not "should we
 revive `when-let`."
 
-### `do`-form examination (post-`when`-drop)
+### `do`-form examination — RESOLVED: keep
 
-After dropping `when`, the new canonical for side-effect-sequence is
-`(do ...)`. `do` becomes more visible, used inside `if` branches and
-elsewhere. Under the principle:
+After dropping `when`, `do` becomes the canonical side-effect-sequence
+form, used inside `if` branches and `match`/`cond` clause bodies. The
+audit considered both the binary keep/drop and the reframe (should
+`if`/`match`/`cond` accept multiple body forms implicitly, removing
+the need for `do` in those positions?).
 
-- Not bracket-clause-shaped (so not in that family)
-- Sequencing-of-effects is its own concept that nothing else does
-  (so pattern-isolated)
-- But it's *the only way* to compose multiple statements where one
-  is needed (so structurally load-bearing)
+**Verdict: keep `do`. Do not change `if`/`match`/`cond` to implicit
+multi-body.**
 
-The audit verdict is probably "keep" because there's no composition
-that replaces it (every Lisp has progn/begin). But put it on the
-radar for explicit examination after `when` drops, so the principle
-isn't assumed to give an answer it hasn't been asked.
+The pattern-isolated bar:
+- `do` is not bracket-clause-shaped (not in that family).
+- Sequencing-of-effects is its own concept; nothing else expresses it.
+- But composition does not replace it — there is no way to express
+  "evaluate b1 then b2 then b3 and return last" without a sequencing
+  primitive. Every Lisp has progn/begin/do for this reason.
+
+The reframe considered: should `if` accept multi-body in then/else?
+Should `match`/`cond` clause bodies accept multi-body?
+
+**`if` with multi-body would create ambiguity.** `(if c b1 b2)` already
+means "(if c then-branch=b1 else-branch=b2)". To accept multi-body
+would require either (a) syntactic delimiter for then-vs-else (breaks
+the current shape), or (b) restricting multi-body to no-else cases
+(asymmetric — only one of the two branches gets the affordance).
+Either breaks the simple syntactic rule beagle has now ("if has 2 or 3
+args"). The cost in unambiguous-parse outweighs the friction-reduction.
+
+**`match`/`cond` clause bodies are similar.** The clause body is the
+expression that the clause produces; multi-body would create the same
+"where does the expression end" ambiguity. The current shape (single
+expression per clause body, wrap in `do` for multi-statement) is
+unambiguous.
+
+**Corpus check:** Post-when-drop, `(do …)` appears 1 time in the
+beagle-test fixtures corpus (kitchen-sink.bclj log-point). The friction
+the audit was concerned about is empirical low. The cost of breaking
+unambiguous-parse to remove that friction is high.
+
+**The deeper observation:** the places `do` is required are exactly
+the places where pattern-extending alternatives would conflict with
+existing unambiguous-parse guarantees. That's not coincidence — it's
+the *reason* `do` is required there. It's the syntactically-safe way
+to extend single-expression positions to multi-statement sequences.
 
 ## Tooling: codemods for corpus-scale migrations
 
