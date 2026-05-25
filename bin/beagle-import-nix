@@ -216,8 +216,17 @@
          [(or (char-numeric? ch) (and (char=? ch #\-)
                                        (< (add1 i) len)
                                        (char-numeric? (string-ref str (add1 i)))))
-          (define end (find-end str i char-numeric?))
-          (loop end (cons (tok 'int (substring str i end)) acc))]
+          ;; Numeric literal: integer or float (Nix supports both).
+          ;; Walk while digits, optionally take one `.` followed by digits.
+          (define int-end (find-end str i char-numeric?))
+          (cond
+            [(and (< int-end len) (char=? (string-ref str int-end) #\.)
+                  (< (add1 int-end) len) (char-numeric? (string-ref str (add1 int-end))))
+             ;; Float: NNN.NNN
+             (define frac-end (find-end str (add1 int-end) char-numeric?))
+             (loop frac-end (cons (tok 'float (substring str i frac-end)) acc))]
+            [else
+             (loop int-end (cons (tok 'int (substring str i int-end)) acc))])]
          [(or (char-alphabetic? ch) (char=? ch #\_) (char=? ch #\/))
           (define end (find-end str i name-char?))
           (define name (substring str i end))
@@ -548,7 +557,7 @@
          [(name) (not (member (tok-val t)
                               '("then" "else" "in" "with"
                                 "let" "if" "inherit")))]
-         [(int str path) #t]
+         [(int float str path) #t]
          [(punct) (member (tok-val t) '("(" "{" "["))]
          [else #f])))
 
@@ -619,6 +628,9 @@
     [(int)
      (advance!)
      `(int ,(string->number (tok-val t)))]
+    [(float)
+     (advance!)
+     `(float ,(string->number (tok-val t)))]
     [(path)
      (advance!)
      `(path ,(tok-val t))]
@@ -832,8 +844,37 @@
     [(list 'attrset bindings)
      (emit-attrset bindings depth)]
     [(list 'rec-attrset bindings)
-     (string-append "; rec attrset not yet supported, emitting plain attrset\n"
-                    (emit-attrset bindings depth))]
+     ;; beagle/nix's (rec-attrs k1 v1 k2 v2 ...) — keys are BARE SYMBOLS,
+     ;; values are exprs. Preserves recursive scoping of Nix's rec { ... }.
+     (define pairs
+       (apply append
+              (map (λ (b)
+                     (match b
+                       [(list 'bind path val)
+                        (define key-sym
+                          (cond
+                            [(and (= (length path) 1) (string? (car path)))
+                             (car path)]
+                            [else
+                             ;; Unusual: multi-segment or quoted key in
+                             ;; rec attrset. Best effort: dot-join.
+                             (string-join
+                               (map (λ (s) (if (string? s) s (format "~v" (cadr s))))
+                                    path)
+                               ".")]))
+                        (list key-sym (emit-expr val depth))]
+                       [(list 'inherit names)
+                        (apply append
+                               (map (λ (n) (list (symbol->string n) (symbol->string n))) names))]
+                       [(list 'inherit-from src names)
+                        (apply append
+                               (map (λ (n)
+                                      (list (symbol->string n)
+                                            (format "~a.~a" (emit-expr src depth) (symbol->string n))))
+                                    names))]
+                       [_ '()]))
+                   bindings)))
+     (format "(rec-attrs ~a)" (string-join pairs " "))]
     [(list 'list elems)
      (format "[~a]"
              (string-join (map (λ (e) (emit-expr e depth)) elems) " "))]
@@ -849,6 +890,8 @@
     [(list 'str-interp parts)
      (emit-str-interp parts depth)]
     [(list 'int n)
+     (number->string n)]
+    [(list 'float n)
      (number->string n)]
     [(list 'bool b)
      (if b "true" "false")]
@@ -1040,15 +1083,18 @@
              (define new-acc
                (cond
                  [(and first-step? (not target-is-id?))
-                  ;; (complex-expr).a.b.c → method-call shape so
-                  ;; beagle/nix can emit it. First static seg becomes
-                  ;; (.a complex-expr); remaining segs append dotted.
+                  ;; (complex-expr).a.b.c — use beagle's parenthesized
+                  ;; identifier-access via the `select-on-complex`
+                  ;; pattern. Beagle/nix accepts `(target).a.b.c` syntax
+                  ;; when target is a parenthesized expression. Emit as
+                  ;; (get target :first-attr) so it's a value-returning
+                  ;; expression that can be further applied or chained.
                   (define first-seg (car static-run))
                   (define rest-segs (cdr static-run))
                   (define first-str
                     (cond [(string? first-seg) first-seg]
                           [else (format "~v" (cadr first-seg))]))
-                  (define base-call (format "(.~a ~a)" first-str acc-expr-str))
+                  (define base-call (format "(get ~a :~a)" acc-expr-str first-str))
                   (cond
                     [(null? rest-segs) base-call]
                     [else
