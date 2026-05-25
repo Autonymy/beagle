@@ -1,1 +1,0 @@
-(deftype Point [(x : Int) (y : Int)])

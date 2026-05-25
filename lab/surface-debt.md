@@ -9,7 +9,7 @@ At that moment, work through entries in this file: re-run each demoted
 test, rewrite/update it for the current surface, promote the fixed
 suite back to active tier (in `beagle-test/tiers.rktd`).
 
-## Total debt: 11 failures across 2 entries
+## Total debt: 17 failures across 3 entries
 
 (Counter line above is read by `bin/beagle-test` to surface accumulated
 debt in runner output. Format: `## Total debt: N failures across M entries`.
@@ -66,6 +66,49 @@ verification catches | what structural verification misses.
 ## Entries
 
 <!-- Append new entries below, most recent first. -->
+
+## 2026-05-25 — deftype drop
+
+**Surface change:** `deftype` removed from beagle parse. Bundled the
+data-shape definition (defrecord-equivalent) and protocol-impl
+attachment (extend-type-equivalent) into a single form. Two distinct
+concepts: `(defrecord Name [fields])` for the shape, `(extend-type Name
+Protocol (method ...))` for the impl. Audit found 0 production uses
+(only 4 fixture uses, all replaced by the typed parse-error). The drop
+falls under "category 4 — bundles two concepts into one form" from
+design-principle.md.
+
+**Active-tier work (done):**
+- parse.rkt: deftype parse case removed; explicit migration error added
+- Active-tier tests updated: parse.rkt (deftype parse test →
+  parse-err), emit.rkt (deftype emit tests deleted, header note added),
+  check.rkt (4 deftype fixture-driven tests deleted, header note added)
+- 4 fixture files deleted:
+  deftype-ok.bclj, deftype-protocol-impl.bclj,
+  deftype-constructor-ok.bclj, deftype-constructor-wrong-arg.bclj
+- check.rkt and emit-{clj,py,rkt}.rkt deftype-form handlers left as
+  dead code (unreachable post-parse-rejection — same pattern used for
+  defmulti/defmethod drop). emit-js.rkt already raised an error.
+
+**Demoted-tier failures (NOT fixed; logged here for reconciliation):**
+
+| Target | Test file | Test name | Was checking |
+|---|---|---|---|
+| clj | emit-clj-behavioral.rkt | "defprotocol + deftype" | That `(defprotocol Greet (hello [self] : String))` paired with `(deftype Person [(name : String)] Greet (hello [self] (str "hi " name)))` emits a deftype that resolves the protocol method and `(hello (->Person "X"))` prints `"hi X"` |
+| clj | emit-clj-behavioral.rkt | "deftype with multiple methods" | That a deftype with two protocol methods (`area`, `describe`) on `(Rect w h)` emits both method bodies and each call dispatches correctly to its method |
+| clj | emit-clj-behavioral.rkt | "deftype implementing multiple protocols" | That a `(deftype Box [label items] Protocol1 (method1 ...) Protocol2 (method2 ...))` form attaches both protocols and method calls dispatch correctly to each |
+| clj | emit-clj-behavioral.rkt | "protocol method with multiple parameters" | That a protocol method declared with multiple parameters (e.g. `(transform [self f g])`) gets the right arity at the deftype impl site |
+| clj | emit-clj-behavioral.rkt | "deftype with no protocols (plain fields)" | That `(deftype Pair [(fst : Int) (snd : Int)])` with no protocols emits a deftype that lets `(->Pair 1 2)` construct and `(.-fst p)` / `(.-snd p)` access fields |
+| clj | emit-clj-behavioral.rkt | "self-referential protocol (method returns protocol type)" | That a protocol whose method returns the protocol's own type (e.g. `(next [self] : Counter)`) compiles when implemented via deftype, and that the returned value supports the same protocol |
+
+**Reconciliation guidance:** rewrite each as `(defrecord Name [...])`
++ `(extend-type Name Protocol (method ...))`. The runtime semantics
+are identical — the `->Name` constructor still works, fields are still
+accessible, and `extend-type` attaches the protocol just as `deftype`
+did. The behavioral expectations (the "Was checking" column) describe
+the contract; verify the runtime output matches before declaring the
+tests fixed. For "deftype implementing multiple protocols," emit
+multiple `extend-type` forms (one per protocol).
 
 ## 2026-05-24 — when drop
 

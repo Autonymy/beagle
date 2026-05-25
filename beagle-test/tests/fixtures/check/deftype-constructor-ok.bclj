@@ -1,2 +1,0 @@
-(deftype Point [(x : Int) (y : Int)])
-(def p (->Point 1 2))

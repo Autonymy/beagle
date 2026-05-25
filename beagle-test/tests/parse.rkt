@@ -696,21 +696,9 @@
 
 ;; --- deftype / extend-type ---------------------------------------------------
 
-(test-case "deftype parses"
-  (define f (car (parse-one `(deftype Point ,(br '(x : Int) '(y : Int))
-                               Printable
-                               (to-string ,(br '(self : Any)) (str x y))))))
-  (check-true (deftype-form? f))
-  (check-eq? (deftype-form-name f) 'Point)
-  (check-equal? (length (deftype-form-fields f)) 2)
-  (check-equal? (length (deftype-form-impls f)) 1)
-  (check-eq? (type-impl-protocol-name (car (deftype-form-impls f))) 'Printable)
-  (check-equal? (length (type-impl-methods (car (deftype-form-impls f)))) 1))
-
-(test-case "deftype without impls"
-  (define f (car (parse-one `(deftype Pair ,(br '(fst : Any) '(snd : Any))))))
-  (check-true (deftype-form? f))
-  (check-equal? (deftype-form-impls f) '()))
+(parse-err/rx "deftype removed — explicit error guides to defrecord + extend-type"
+              #rx"deftype removed"
+  `(deftype Point ,(br '(x : Int) '(y : Int))))
 
 (test-case "extend-type parses"
   (define f (car (parse-one `(extend-type String

@@ -363,19 +363,12 @@
   (define out (compile `(let ,(br (br 'a 'b) 'coll) (+ a b))))
   (check-true (matches? #rx"\\[a b\\] coll" out)))
 
-;; --- deftype / extend-type ---------------------------------------------------
-
-(test-case "deftype emits"
-  (define out (compile `(deftype Point ,(br '(x : Int) '(y : Int))
-                          Printable
-                          (to-string ,(br '(self : Any)) (str x y)))))
-  (check-true (matches? #rx"\\(deftype Point \\[x y\\]" out))
-  (check-true (matches? #rx"Printable" out))
-  (check-true (matches? #rx"\\(to-string \\[self\\]" out)))
-
-(test-case "deftype without impls emits"
-  (define out (compile `(deftype Pair ,(br '(fst : Any) '(snd : Any)))))
-  (check-true (matches? #rx"\\(deftype Pair \\[fst snd\\]\\)" out)))
+;; --- extend-type -------------------------------------------------------------
+;;
+;; deftype removed (2026-05 surface drop). Use (defrecord Name [...]) for the
+;; data shape and (extend-type Name Protocol (method ...)) for the protocol
+;; impls. The decomposition is the canonical idiom — bundling them into deftype
+;; conflates data shape and protocol attachment.
 
 (test-case "extend-type emits"
   (define out (compile `(extend-type String

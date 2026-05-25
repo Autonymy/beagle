@@ -544,20 +544,12 @@
   "destructure-seq-let.bclj")
 
 ;; =============================================================================
-;; Tests — deftype / extend-type (fixtures)
+;; Tests — extend-type (fixtures)
 ;; =============================================================================
-
-(check-fixture-ok "deftype passes type check"
-  "deftype-ok.bclj")
-
-(check-fixture-ok "deftype with protocol impl passes"
-  "deftype-protocol-impl.bclj")
-
-(check-fixture-ok "deftype constructor is typed"
-  "deftype-constructor-ok.bclj")
-
-(check-fixture-err "deftype constructor wrong arg type errors"
-  "deftype-constructor-wrong-arg.bclj")
+;;
+;; deftype removed in 2026-05 surface drop. The deftype fixture suite that
+;; previously lived here has been deleted. defrecord + extend-type is the
+;; canonical replacement for "record with protocol impls."
 
 (check-fixture-ok "extend-type passes type check"
   "extend-type-ok.bclj")

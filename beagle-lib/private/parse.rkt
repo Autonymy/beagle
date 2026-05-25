@@ -830,9 +830,10 @@
     ;; corpus (one fixture file). Use defprotocol + extend-type for
     ;; type-based dispatch instead.
 
-    [(list 'deftype (? symbol? name) fields-form rest ...)
-     (deftype-form name (parse-record-fields (or (stx-ref subs 2) fields-form))
-                   (parse-type-impls (or (stx-tail subs 3) rest)))]
+    ;; deftype removed — bundled defrecord + protocol-impls into a single
+    ;; form, but the decomposition is the canonical idiom. defrecord defines
+    ;; the data shape; extend-type attaches protocol impls. Two distinct
+    ;; concepts, two distinct forms.
 
     [(list 'extend-type (? symbol? type-name) rest ...)
      (extend-type-form type-name (parse-type-impls (or (stx-tail subs 2) rest)))]
@@ -1356,6 +1357,8 @@
      (error 'beagle "defmulti removed — use defprotocol + extend-type for type-based dispatch")]
     [(list 'defmethod _ ...)
      (error 'beagle "defmethod removed — use defprotocol + extend-type for type-based dispatch")]
+    [(list 'deftype _ ...)
+     (error 'beagle "deftype removed — use (defrecord Name [fields]) for the data shape and (extend-type Name Protocol (method ...)) for protocol impls")]
     [(list 'inc _ ...)
      (error 'beagle "inc removed — use (+ x 1)")]
     [(list 'dec _ ...)
