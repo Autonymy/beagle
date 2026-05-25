@@ -14,15 +14,6 @@ Conditional. Type narrows in branches when condition uses @tt{nil?}, @tt{some?},
 @defform[#:id if-no-else (if cond then)]{
 Without else branch, returns @tt{Nil} when condition is false.}
 
-@section[#:tag "if-not"]{if-not}
-
-@defform[(if-not cond then else)]{
-Inverted conditional. Expands to @tt{(if (not cond) then else)}.
-
-@codeblock|{
-(if-not (authorized? user) "denied" "allowed")
-}|}
-
 @section[#:tag "cond"]{cond}
 
 @defform[(cond [test body ...] ...)]{
@@ -50,79 +41,28 @@ An odd trailing form is the default.
   "unknown")
 }|}
 
-@section[#:tag "when"]{when}
+@section[#:tag "removed-when-family"]{Removed: when / when-not / if-not / when-let / if-let / when-some / if-some / case}
 
-@defform[(when cond body ...)]{
-Evaluates body when condition is truthy. Returns @tt{Nil} otherwise.
+The 2026-05 surface redesign removed these forms. Migration shapes:
 
-@codeblock|{
-(when (> x 0)
-  (println "positive")
-  x)
-}|}
+@itemlist[
+  @item{@tt{(when c body)} → @tt{(if c body)} or @tt{(if c (do b1 b2 ...))} for multi-body.
+        The if-no-else form returns @tt{nil} when condition is false, same as @tt{when} did.}
+  @item{@tt{(when-not c body)} → @tt{(if (not c) body)}.}
+  @item{@tt{(if-not c t e)} → @tt{(if (not c) t e)}.}
+  @item{@tt{(when-let [x v] body)} → @tt{(let [x v] (if x (do body)))}. The eventual typed
+        nullable-narrowing form will replace this; it will NOT reuse the @tt{when-let} name.}
+  @item{@tt{(if-let [x v] t e)} → @tt{(let [x v] (if x t e))}. Same future-form note as above.}
+  @item{@tt{(when-some [x v] body)} / @tt{(if-some [x v] t e)} → same interim shape; superseded
+        by future typed-nullable form.}
+  @item{@tt{(case x v1 r1 v2 r2 default)} → @tt{(match x [v1 r1] [v2 r2] [_ default])}. The
+        case-fold optimization in emit-clj.rkt and emit-rkt.rkt lowers literal-only
+        or-patterns to target-native @tt{case} for O(1) dispatch, so the migration ships
+        no perf regression.}
+]
 
-@section[#:tag "when-not"]{when-not}
-
-@defform[(when-not cond body ...)]{
-Evaluates body when condition is falsy. Expands to @tt{(when (not cond) body...)}.
-
-@codeblock|{
-(when-not (empty? items)
-  (process items))
-}|}
-
-@section[#:tag "when-let"]{when-let}
-
-@defform[(when-let [name expr] body ...)]{
-Binds @racket[name] to the result of @racket[expr]; evaluates body if truthy.
-
-@codeblock|{
-(when-let [user (find-user id)]
-  (println (user-name user)))
-}|}
-
-@section[#:tag "if-let"]{if-let}
-
-@defform[(if-let [name expr] then else)]{
-Binds @racket[name] to the result of @racket[expr]. If truthy, evaluates
-@racket[then] with the binding in scope. Otherwise evaluates @racket[else].
-
-@codeblock|{
-(if-let [user (find-user id)]
-  (user-name user)
-  "anonymous")
-}|}
-
-@section[#:tag "when-some"]{when-some / if-some}
-
-@defform[(when-some [name expr] body ...)]{
-Like @tt{when-let} but tests for non-nil (not truthiness). @tt{false} passes.
-
-@codeblock|{
-(when-some [val (get config :debug)]
-  (enable-debugging val))
-}|}
-
-@defform[(if-some [name expr] then else)]{
-Like @tt{if-let} but tests for non-nil.
-
-@codeblock|{
-(if-some [port (get config :port)]
-  (start-server port)
-  (start-server 8080))
-}|}
-
-@section[#:tag "case"]{case}
-
-@defform[(case test value result ... default)]{
-Constant-time dispatch. An odd trailing form is the default.
-
-@codeblock|{
-(case color
-  :red   "stop"
-  :green "go"
-  "unknown")
-}|}
+See @secref{match} for the replacement pattern-dispatch form and the @tt{or}-pattern
+extension that absorbs @tt{case}'s literal-dispatch use case.
 
 @section[#:tag "match"]{match}
 
@@ -134,6 +74,8 @@ Patterns:
   @item{@tt{(RecordName b1 b2 ...)} --- type test + positional field destructuring}
   @item{@tt|{{:key1 pat1 :key2 pat2}}| --- map pattern}
   @item{@tt{nil}, @tt{"str"}, @tt{42} --- literals}
+  @item{@tt{(or p1 p2 ...)} --- match any of the sub-patterns (non-binding;
+        absorbs the literal-dispatch use case that @tt{case} used to cover)}
   @item{@tt{name} --- bind to variable}
   @item{@tt{_} --- wildcard}
 ]
@@ -146,6 +88,14 @@ Patterns:
   [(Circle r) (* 3.14159 r r)]
   [(Rect w h) (* w h)]
   [_ 0.0])
+}|
+
+@codeblock|{
+; or-pattern: replaces (case x 1 "one" 2 "two" :else "other")
+(match x
+  [(or 1 2 3) "small"]
+  [(or 4 5 6) "medium"]
+  [_ "other"])
 }|}
 
 @section[#:tag "try"]{try / catch / finally}

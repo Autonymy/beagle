@@ -16,26 +16,54 @@ macro system. This overview is the map; those are the territory.
 
 @section[#:tag "what-beagle-is"]{What beagle is}
 
-Beagle is a typed authoring layer with one source language and
+Beagle is a typed authoring surface with one source language and
 multiple target backends. You write @tt{.bgl} (or target-specific
 sibling extensions: @tt{.bclj}, @tt{.bcljs}, @tt{.bjs}, @tt{.bnix},
 @tt{.bsql}, @tt{.bpy}, @tt{.brkt}) and the compiler emits Clojure,
 ClojureScript, JavaScript, Nix, SQL, Python, or Typed Racket source
 for runtime. The same typed AST drives every emitter.
 
-The primary user of beagle is an LLM generating beagle code from a
-spec or repair task. Every design decision is filtered through this
-lens: a human Clojure developer with muscle memory will find some
-choices odd; a Scheme purist will find others odd; neither audience
-is the target. The target is a model picking forms by probability over
-training data, and the surface is optimized to minimize the
-probability that the model picks wrong.
+The primary user of beagle is a large language model generating
+beagle code from a spec or repair task. Every design decision is
+filtered through this lens: a human Clojure developer with muscle
+memory will find some choices odd; a Scheme purist will find others
+odd; neither audience is the target. The target is a model picking
+forms by probability over training data, and the surface is
+optimized to minimize the probability that the model picks wrong.
 
-Runtime is whatever the target language provides. Beagle does not
-ship a runtime; it ships a compiler and a typed stdlib catalog. The
-compiler is currently written in Racket; self-hosting (compiler
-written in beagle, compiled to Cyclone Scheme) is the next major
-work.
+@bold{Why this matters: the compression-ceiling argument.} The
+default model-authored language today is Python --- training data
+volume dominates everything else. The model can write Python
+fluently. What the model can't do well in Python is @italic{lift
+repeated structure into typed primitives}. Every Django model,
+every Pydantic schema, every API client gets hand-written each time
+because Python has no macro layer and no rich type system to express
+the pattern once. As a domain specializes and the codebase grows,
+the model's compression ceiling becomes the bottleneck on
+maintainability --- not because the model is bad but because the
+language doesn't give it the abstractions.
+
+Typed languages with rich macro systems (Common Lisp, Racket, OCaml,
+the ML family) hit a different problem: surface sprawl. Common Lisp
+has five ways to do almost everything, OCaml's module system is
+powerful and confusing, Racket has @italic{decades} of accumulated
+idioms. The model can technically use them but the variance is the
+hallucination surface --- five threading macros means five chances
+to pick wrong, and the model has no human's accumulated taste to
+guide the choice.
+
+Beagle's bet: a typed Lisp with @italic{one} canonical idiom per
+concept, a curated catalog of typed externs, and rich enough macros
+to lift repeated structure --- but no more surface than the model
+actually needs. The compression ceiling moves up because the model
+can author DSLs and validate every use site; the hallucination
+surface stays low because there's no five-ways-to-do-X for the
+model to pick wrong among.
+
+Beagle does not ship a runtime; it ships a compiler and a typed
+stdlib catalog. The compiler is currently written in Racket;
+self-hosting (compiler written in beagle, compiled to Cyclone
+Scheme) is the next major architectural milestone.
 
 @section[#:tag "philosophy"]{The five principles}
 
@@ -398,9 +426,70 @@ open questions above will get answered when their dependencies land
 gives the answer concrete constraints). Until then, the surface is
 fit-for-use as-is.
 
-The current discipline: surface changes are responsive to use, not
-to perfection. The audit produced a tight, predictable surface; the
-remaining work is using it.
+@section[#:tag "lock-in-discipline"]{The lock-in discipline}
+
+The audit produced a tight surface and the closure announces the
+audit's end. To prevent the cycle from re-opening on a whim, surface
+changes from here forward are governed by an explicit gate:
+
+@bold{A form change requires a measurable delta on a documented
+benchmark. Full stop.}
+
+No more "I think this reads better" changes. No more "the model
+probably prefers this" changes. No more "this looks like redundancy"
+changes that don't survive empirical examination. If a proposed
+change can't be measured, it can't be made. If a proposed change
+@italic{can} be measured but produces no delta or a worse delta, it
+gets rejected and the proposal becomes a documented "considered and
+rejected" entry rather than living rent-free as a "maybe someday"
+item.
+
+The benchmark methodology has an existence proof (the E3b
+experiments, 36% wall-clock improvement on beagle vs hand-written
+Clojure for an agent-driven task). Generalizing it is the next move
+that locks the surface @italic{in practice} rather than just
+@italic{in principle}.
+
+@subsection{Benchmark coverage --- two arms}
+
+@bold{Arm 1: Nix authoring.} @tt{#lang beagle/nix} against a real
+NixOS configuration corpus. Already stable, already scoreable, and
+production-validated (the config either evaluates or it doesn't, the
+system either boots or it doesn't). Tests beagle's type system, macro
+system, stdlib catalog, schema-driven validator, and emit-nix correctness
+under realistic load. Nix being narrow-but-deeply-structured (16k schema
+entries, real type system, heavy use of higher-order abstractions) makes
+it a strong stress test for everything except general-purpose programming
+idioms.
+
+@bold{Arm 2: application code on Clojure or JavaScript.} Tests what
+Nix can't: loops over business data, mutable state, async, IO patterns,
+multi-module data transformation pipelines. The candidate target is a
+real-world business application (or replica) that exercises Beagle's
+compression and type-checking advantages at scale. This arm is the one
+that has to land before "the lock-in is real" can be claimed for
+general-purpose code.
+
+@subsection{What counts as a benchmark-worthy change}
+
+@itemlist[
+  @item{Add a form: must show that authoring tasks that previously
+        required N steps now require fewer, OR that the new form
+        catches a class of errors the existing surface missed.}
+  @item{Drop a form: must show that no task in the benchmark used
+        it OR that an equivalent task using a different form
+        produces no worse wall-time / correctness numbers.}
+  @item{Rename a form: must show that the new name produces a
+        measurable reduction in model hallucination rate or
+        improvement in error-message localization. (This is a
+        high bar; most rename proposals will fail it, which is the
+        intended outcome.)}
+]
+
+The current discipline: surface changes are responsive to measured
+use, not to perfection. The audit produced a tight, predictable
+surface; the remaining work is using it and letting use produce the
+evidence that justifies any further change.
 
 @section[#:tag "where-to-go-next"]{Where to read next}
 

@@ -148,13 +148,34 @@ Standard Lisp quoting. Quoted forms are not evaluated.
 'foo        ; quoted symbol
 }|
 
-@section[#:tag "unsafe"]{unsafe}
+@section[#:tag "removed-unsafe"]{Removed: unsafe inline target passthrough}
 
-@defform[(unsafe "raw-clojure-source")]{
-Emits the literal string verbatim into the Clojure output. Works at top-level
-and in expression position. Typed as @tt{Any}. Use sparingly --- this is
-the escape hatch for Clojure features beagle doesn't cover.
+@tt{(unsafe "raw-clojure-source")} and its per-target variants
+(@tt{unsafe-js}, @tt{unsafe-clj}, @tt{unsafe-py}, @tt{unsafe-nix},
+@tt{unsafe-rkt}, @tt{unsafe-expr}) were removed in the 2026-05 surface
+redesign. They are parse-time errors with explicit migration guidance.
 
-@codeblock|{
-(unsafe "(defn helper [x] (some-clj-thing x))")
-}|}
+This is load-bearing. Beagle's "no escape hatches" principle holds because
+of this removal --- every typed language that shipped an inline escape
+hatch (TypeScript @tt{any}, Rust @tt{unsafe}, Java @tt{Object}-casting,
+Python @tt{Any}-as-bailout) regretted it. The hatch becomes the path of
+least resistance, untyped code rots invisibly inside otherwise-checked
+files, and the type guarantee loses its meaning.
+
+When you hit a gap, three closed paths:
+
+@itemlist[
+  @item{@bold{Missing stdlib function?} Add a one-line type signature to
+        the appropriate @filepath{beagle-lib/private/stdlib-{clj,js,py,nix,rkt,portable}.rkt}.
+        The catalog is meant to grow.}
+  @item{@bold{Missing surface form?} Add an AST struct + parse case + emit
+        case. Same pattern as every other form. See the contributor docs.}
+  @item{@bold{Genuinely-untypable target snippet?} Write a sibling file in
+        the target language (e.g.\ @filepath{foo.clj} next to
+        @filepath{foo.bclj}) and import it. The filesystem boundary is
+        auditable; an inline backdoor is not.}
+]
+
+The unsafe macro kind (@tt{(define-macro unsafe ...)}) was removed in the
+same pass for the same reason. Template macros are now type-checked end-to-end
+via the only remaining kind, @tt{safe}.

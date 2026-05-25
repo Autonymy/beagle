@@ -38,17 +38,6 @@ Side-effecting iteration. Same binding syntax as @tt{for} (multiple bindings,
   (println x))
 }|}
 
-@section[#:tag "dotimes"]{dotimes}
-
-@defform[(dotimes [name count] body ...)]{
-Counted iteration. Binds @racket[name] to @tt{0}, @tt{1}, ..., @tt{count-1}.
-The binding is typed as @tt{Int}. Returns @tt{nil}.
-
-@codeblock|{
-(dotimes [i 10]
-  (println (str "iteration " i)))
-}|}
-
 @section[#:tag "loop"]{loop / recur}
 
 @defform[(loop [name init ...] body ...)]{
@@ -57,29 +46,57 @@ with new values.
 
 @codeblock|{
 (loop [acc 1 n 5]
-  (if (<= n 1) acc (recur (* acc n) (dec n))))
+  (if (<= n 1) acc (recur (* acc n) (- n 1))))
 }|}
 
-@section[#:tag "threading"]{Threading Macros}
+@section[#:tag "threading"]{Threading: ->>}
 
-@defform[(-> value forms ...)]{Thread-first: inserts value as first argument.}
-@defform[(->> value forms ...)]{Thread-last: inserts value as last argument.}
-@defform[(cond-> value test form ...)]{Conditional thread-first.}
-@defform[(cond->> value test form ...)]{Conditional thread-last.}
-@defform[(some-> value forms ...)]{Nil-safe thread-first (short-circuits on nil).}
-@defform[(some->> value forms ...)]{Nil-safe thread-last.}
-@defform[(as-> value name forms ...)]{Named thread: binds @racket[name] to the
-intermediate value at each step.
+@defform[(->> value forms ...)]{
+Thread-last: inserts @racket[value] as the last argument of the next form,
+then threads that result as the last argument of the form after, and so on.
+Used for shaping collection pipelines.
 
 @codeblock|{
-(-> person :name (str/upper-case))
-(->> items (filter even?) (map inc) (reduce +))
-
-(cond-> order
-  paid?     (assoc :status :paid)
-  shipped?  (assoc :status :shipped))
-
-(some-> user :address :city)
-
-(as-> data $ (map inc $) (filter even? $) (reduce + $))
+(->> items
+     (filter even?)
+     (map (fn [x] (+ x 1)))
+     (reduce +))
 }|}
+
+The other threading forms from Clojure (@tt{->}, @tt{cond->}, @tt{cond->>},
+@tt{some->}, @tt{some->>}, @tt{as->}) were removed in the 2026-05 surface
+redesign:
+
+@itemlist[
+  @item{@tt{->} (thread-first) --- use @tt{->>} or a let-chain. Positional
+        convenience, not semantic uniqueness.}
+  @item{@tt{cond->} / @tt{cond->>} --- use a let-chain with @tt{if} for
+        conditional accumulation.}
+  @item{@tt{some->} / @tt{some->>} --- use a let-chain with explicit nil-checks.}
+  @item{@tt{as->} --- use a @tt{let} with explicit naming for intermediate
+        values.}
+]
+
+@codeblock|{
+; (cond-> order paid? (assoc :status :paid)) becomes:
+(let [step1 order
+      step2 (if paid? (assoc step1 :status :paid) step1)]
+  step2)
+}|
+
+@codeblock|{
+; (some-> user :address :city) becomes:
+(let [a (:address user)]
+  (if a (:city a) nil))
+}|
+
+@codeblock|{
+; (-> person :name (str/upper-case)) becomes:
+(str/upper-case (:name person))
+; or for longer chains, use ->> with explicit-first-arg via fn:
+(->> person ((fn [p] (:name p))) str/upper-case)
+}|
+
+The let-chain replacement is verbose at small scale but composes uniformly
+with the rest of the surface and produces better error localization than
+the threading-macro family.

@@ -138,17 +138,6 @@ Defines a protocol with typed method signatures.
   (greet [(self : Any)] : String))
 }|}
 
-@section[#:tag "deftype"]{deftype}
-
-@defform[(deftype Name [fields ...] ProtocolName (method [params] body ...) ...)]{
-Defines a type implementing one or more protocols.
-
-@codeblock|{
-(deftype Counter [n]
-  IDeref
-  (deref [this] n))
-}|}
-
 @section[#:tag "extend-type"]{extend-type}
 
 @defform[(extend-type TypeName ProtocolName (method [params] body ...) ...)]{
@@ -160,16 +149,30 @@ Extends an existing type with protocol implementations.
   (greet [this] (str "Hello, " this)))
 }|}
 
-@section[#:tag "defmulti"]{defmulti / defmethod}
-
-@defform[(defmulti name dispatch-fn)]{
-Defines a multimethod with the given dispatch function.}
-
-@defform[(defmethod name dispatch-val [params] body ...)]{
-Adds an implementation for a dispatch value.
+@bold{For attaching protocols to a record at definition time}, use @tt{defrecord}
+followed by @tt{extend-type}:
 
 @codeblock|{
-(defmulti area :shape)
-(defmethod area :circle [m]
-  (* 3.14 (:radius m) (:radius m)))
-}|}
+(defrecord Counter [(n : Int)])
+
+(extend-type Counter
+  IDeref
+  (deref [this] (counter-n this)))
+}|
+
+@section[#:tag "removed-deftype-defmulti"]{Removed: deftype, defmulti / defmethod}
+
+The 2026-05 surface redesign removed these forms:
+
+@itemlist[
+  @item{@bold{@tt{deftype}} bundled @tt{defrecord} + protocol-impl into one
+        form. The two-form decomposition (@tt{defrecord} for the data shape,
+        @tt{extend-type} for the protocol attachment) is the canonical idiom.
+        Same data and methods, two distinct forms that match the two distinct
+        concepts.}
+  @item{@bold{@tt{defmulti} / @tt{defmethod}} had ~zero corpus usage (one
+        fixture file). For type-based dispatch use @tt{defprotocol} +
+        @tt{extend-type}; for value-based dispatch use @tt{match}. The
+        value-dispatch alternative @tt{defmulti} offered was a separate
+        idiom for a problem already covered by existing forms.}
+]
