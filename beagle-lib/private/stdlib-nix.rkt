@@ -855,4 +855,16 @@
    'lib/trivial.bitOr         (fn-of (list INT INT) INT)
    'lib/trivial.bitXor        (fn-of (list INT INT) INT)
    'lib/trivial.min           (poly-fn '(A) (list (tv 'A) (tv 'A)) (tv 'A))
-   'lib/trivial.max           (poly-fn '(A) (list (tv 'A) (tv 'A)) (tv 'A))))
+   'lib/trivial.max           (poly-fn '(A) (list (tv 'A) (tv 'A)) (tv 'A))
+
+   ;; ============================================================================
+   ;; pkgs.dockerTools — image-build derivations. Attrset shapes are dockerTools-
+   ;; specific and complex; typed as NixType (opaque) for now. Typed records for
+   ;; the attrsets are a deferred follow-up — build them if typo-debugging on
+   ;; dockerTools attrsets becomes painful in real use.
+   ;; ============================================================================
+
+   'pkgs.dockerTools.buildLayeredImage   (fn-of (list NIXT) NIXT)
+   'pkgs.dockerTools.buildImage          (fn-of (list NIXT) NIXT)
+   'pkgs.dockerTools.streamLayeredImage  (fn-of (list NIXT) NIXT)
+   'pkgs.dockerTools.pullImage           (fn-of (list NIXT) NIXT)))

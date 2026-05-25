@@ -329,6 +329,9 @@
 
 ;; --- nix-ident migration error (emit-side; parse-side covered in nix-parse) ---
 
-(test-case "nix-ident produces parse error at compile"
+(test-case "nix-ident fails at parse — nix-emit returns #f"
+  ;; nix-emit's parse-program is wrapped in with-handlers that returns #f
+  ;; on parse failure. The migration-error message itself is tested in
+  ;; nix-parse.rkt; here we just confirm the form doesn't reach emit.
   (define out (nix-emit "(define-target nix) (def x : Any (nix-ident \"inputs.foo\"))"))
-  (check-true (and (string? out) (regexp-match? #rx"nix-ident removed" out))))
+  (check-false out))
