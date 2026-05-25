@@ -28,6 +28,7 @@ first-class concern.
 @table-of-contents[]
 
 @include-section["getting-started.scrbl"]
+@include-section["surface-overview.scrbl"]
 @include-section["forms.scrbl"]
 @include-section["types.scrbl"]
 @include-section["records.scrbl"]
