@@ -198,6 +198,21 @@
     (datum->syntax #f result (vector src line col pos #f))
     result))
 
+(define (apostrophe-reader ch port src line col pos)
+  ;; ' as a non-terminating-macro: when ' appears IN the middle of a
+  ;; symbol token, it's already absorbed as part of the symbol (this
+  ;; handler doesn't fire there). When ' appears at the START of a
+  ;; fresh token, this handler runs and produces (quote NEXT) —
+  ;; preserving Racket's standard quote behavior.
+  ;;
+  ;; Net effect: identifiers like mapAttrs', getExe', and others
+  ;; common in nixpkgs now parse as single symbols; bare 'foo still
+  ;; quotes.
+  (define next-form (read-syntax/recursive src port))
+  (if (eof-object? next-form)
+      (error 'beagle "expected form after '")
+      (datum->syntax #f `(quote ,next-form) (list src line col pos #f))))
+
 (define beagle-readtable
   (make-readtable #f
     #\{ 'terminating-macro curly-reader
@@ -205,6 +220,7 @@
                              (error 'beagle "unexpected `}`"))
     #\@ 'non-terminating-macro at-reader
     #\^ 'non-terminating-macro caret-reader
+    #\' 'non-terminating-macro apostrophe-reader
     #\# 'non-terminating-macro hash-dispatch))
 
 (define (beagle-read in)
