@@ -183,17 +183,17 @@
          [(char=? ch #\*)
           (loop (add1 i) (cons (tok 'op "*") acc))]
          [(char=? ch #\/)
-          ;; / is used both as path-separator inside names and as
-          ;; division/update operator. In normalized form, // appears
-          ;; for attrset-update and / for division. Single-slash-as-
-          ;; division is rare in configs.
+          ;; / is used as: path-separator, attrset-update operator (//),
+          ;; or division. nix-instantiate normalizes relative paths to
+          ;; absolute paths starting with /. Detect path tokens by
+          ;; eating any sequence of [a-zA-Z0-9_./-] starting after the /.
           (cond
             [(and (< (add1 i) len) (char=? (string-ref str (add1 i)) #\/))
              (loop (+ i 2) (cons (tok 'op "//") acc))]
-            [(and (< (add1 i) len) (name-char? (string-ref str (add1 i))))
-             ;; Looks like a path or qualified name — fall through to name lexer
-             (define end (find-end str i name-char?))
-             (loop end (cons (tok 'name (substring str i end)) acc))]
+            [(and (< (add1 i) len) (path-body-char? (string-ref str (add1 i))))
+             ;; Path literal: /a/b/c.nix
+             (define end (find-end str i path-body-char?))
+             (loop end (cons (tok 'path (substring str i end)) acc))]
             [else (loop (add1 i) (cons (tok 'op "/") acc))])]
          [(char=? ch #\-)
           (cond
@@ -201,13 +201,13 @@
              (loop (+ i 2) (cons (tok 'op "->") acc))]
             [else (loop (add1 i) (cons (tok 'op "-") acc))])]
          [(char=? ch #\")
-          (define-values (s next) (read-string-literal str (add1 i) #\"))
-          (loop next (cons (tok 'str s) acc))]
+          (define-values (parts-list next) (read-string-literal str (add1 i) #\"))
+          (loop next (cons (tok 'str parts-list) acc))]
          [(char=? ch #\')
           ;; Multi-line string ''...'' — nix-instantiate --parse usually
           ;; converts these to "..." with escapes, but handle just in case.
-          (define-values (s next) (read-string-literal str (add1 i) #\'))
-          (loop next (cons (tok 'str s) acc))]
+          (define-values (parts-list next) (read-string-literal str (add1 i) #\'))
+          (loop next (cons (tok 'str parts-list) acc))]
          [(or (char-numeric? ch) (and (char=? ch #\-)
                                        (< (add1 i) len)
                                        (char-numeric? (string-ref str (add1 i)))))
@@ -227,6 +227,13 @@
       (char-numeric? ch)
       (memv ch '(#\_ #\- #\/ #\'))))
 
+(define (path-body-char? ch)
+  ;; Characters allowed in the body of a Nix path literal after the
+  ;; leading slash. Includes . since paths can have file extensions.
+  (or (char-alphabetic? ch)
+      (char-numeric? ch)
+      (memv ch '(#\_ #\- #\. #\/))))
+
 (define (find-end str start pred)
   (let loop ([i start])
     (cond
@@ -235,58 +242,79 @@
       [else i])))
 
 (define (read-string-literal str start delim)
-  ;; Reads until matching delim, respecting backslash escapes. Returns
-  ;; the parsed content (with ${...} as a raw substring) and the next
-  ;; index past the closing delim.
-  (define out (open-output-string))
+  ;; Reads until matching delim. Returns (values parts next-index) where
+  ;; parts is a list of literal-string chunks and (interp "raw-nix-substring")
+  ;; entries. Escaped \${ produces a literal ${ in a string chunk; bare ${
+  ;; opens an interpolation.
+  (define parts-box (box '()))
+  (define current (open-output-string))
+  (define (flush!)
+    (define s (get-output-string current))
+    (when (positive? (string-length s))
+      (set-box! parts-box (cons s (unbox parts-box))))
+    (set! current (open-output-string)))
+  (define (push-interp! s)
+    (flush!)
+    (set-box! parts-box (cons (list 'interp s) (unbox parts-box))))
   (let loop ([i start])
     (cond
       [(>= i (string-length str))
        (error 'beagle-import-nix "unterminated string at offset ~a" start)]
       [(char=? (string-ref str i) #\\)
-       (when (< (add1 i) (string-length str))
-         (define esc (string-ref str (add1 i)))
-         (write-char
-           (case esc
-             [(#\n) #\newline]
-             [(#\t) #\tab]
-             [(#\r) #\return]
-             [(#\\) #\\]
-             [(#\") #\"]
-             [(#\') #\']
-             [else  esc])
-           out))
-       (loop (+ i 2))]
+       (cond
+         [(>= (add1 i) (string-length str))
+          (loop (add1 i))]
+         [else
+          (define esc (string-ref str (add1 i)))
+          (case esc
+            [(#\n) (write-char #\newline current) (loop (+ i 2))]
+            [(#\t) (write-char #\tab current) (loop (+ i 2))]
+            [(#\r) (write-char #\return current) (loop (+ i 2))]
+            [(#\\) (write-char #\\ current) (loop (+ i 2))]
+            [(#\") (write-char #\" current) (loop (+ i 2))]
+            [(#\') (write-char #\' current) (loop (+ i 2))]
+            [(#\$)
+             ;; \$ → literal $. If followed by {, consume it too as
+             ;; literal — preserves literal "${" sequences from source.
+             (write-char #\$ current)
+             (cond
+               [(and (< (+ i 2) (string-length str))
+                     (char=? (string-ref str (+ i 2)) #\{))
+                (write-char #\{ current)
+                (loop (+ i 3))]
+               [else (loop (+ i 2))])]
+            [else (write-char esc current) (loop (+ i 2))])])]
       [(char=? (string-ref str i) delim)
-       (values (get-output-string out) (add1 i))]
+       (flush!)
+       (values (reverse (unbox parts-box)) (add1 i))]
       [(and (char=? (string-ref str i) #\$)
             (< (add1 i) (string-length str))
             (char=? (string-ref str (add1 i)) #\{))
-       ;; Preserve ${...} interpolation by copying it verbatim until
-       ;; matching close-brace.
-       (write-char #\$ out)
-       (write-char #\{ out)
+       ;; Bare ${ — opens an interpolation. Capture raw nix expr text.
+       (define interp-out (open-output-string))
        (let depth-loop ([j (+ i 2)] [depth 1])
          (cond
-           [(zero? depth)
-            (loop j)]
            [(>= j (string-length str))
             (error 'beagle-import-nix "unterminated interpolation at offset ~a" i)]
            [(char=? (string-ref str j) #\{)
-            (write-char #\{ out)
+            (write-char #\{ interp-out)
             (depth-loop (add1 j) (add1 depth))]
            [(char=? (string-ref str j) #\})
-            (write-char #\} out)
             (define new-depth (sub1 depth))
-            (if (zero? new-depth)
-                (loop (add1 j))
-                (depth-loop (add1 j) new-depth))]
+            (cond
+              [(zero? new-depth)
+               (push-interp! (get-output-string interp-out))
+               (loop (add1 j))]
+              [else
+               (write-char #\} interp-out)
+               (depth-loop (add1 j) new-depth)])]
            [else
-            (write-char (string-ref str j) out)
+            (write-char (string-ref str j) interp-out)
             (depth-loop (add1 j) depth)]))]
       [else
-       (write-char (string-ref str i) out)
+       (write-char (string-ref str i) current)
        (loop (add1 i))])))
+
 
 ;; Parser state: mutable token cursor.
 (define cursor (make-parameter #f))
@@ -460,7 +488,7 @@
          [(name) (not (member (tok-val t)
                               '("then" "else" "in" "with"
                                 "let" "if" "inherit")))]
-         [(int str) #t]
+         [(int str path) #t]
          [(punct) (member (tok-val t) '("(" "{" "["))]
          [else #f])))
 
@@ -521,6 +549,9 @@
     [(int)
      (advance!)
      `(int ,(string->number (tok-val t)))]
+    [(path)
+     (advance!)
+     `(path ,(tok-val t))]
     [(str)
      (advance!)
      (parse-string-literal (tok-val t))]
@@ -586,15 +617,18 @@
       [(consume-punct? "]") `(list ,(reverse acc))]
       [else (loop (cons (parse-atom) acc))])))
 
-(define (parse-string-literal raw)
-  ;; If the raw string contains ${...}, split into a list of literal
-  ;; chunks and embedded expression substrings (which we'll re-emit as
-  ;; raw text for now — parsing nested Nix would be a follow-up).
+(define (parse-string-literal parts-list)
+  ;; parts-list comes from read-string-literal: a list of literal-string
+  ;; chunks and (interp "raw-nix") entries. Literal "${" sequences from
+  ;; \${ in source are baked into the literal chunks (NOT in interp
+  ;; entries) — so we can trust the structure.
   (cond
-    [(regexp-match? #rx"\\$\\{" raw)
-     (define parts (split-on-interp raw))
-     `(str-interp ,parts)]
-    [else `(str-lit ,raw)]))
+    [(and (= (length parts-list) 1) (string? (car parts-list)))
+     `(str-lit ,(car parts-list))]
+    [(null? parts-list)
+     `(str-lit "")]
+    [else
+     `(str-interp ,parts-list)]))
 
 (define (split-on-interp s)
   ;; Returns alternating string-lit and expr-substr chunks. expr-substr
@@ -690,7 +724,14 @@
      (format "[~a]"
              (string-join (map (λ (e) (emit-expr e depth)) elems) " "))]
     [(list 'str-lit s)
-     (format "~v" s)]
+     ;; Escape literal ${ → $${ so beagle's emit-nix emits \${ in the
+     ;; output Nix (preserves the literal-not-interpolation property).
+     (format "~v" (escape-literal-dollars s))]
+    [(list 'path p)
+     ;; Nix path literal. beagle/nix's (p "...") form emits as a Nix
+     ;; path. nix-instantiate normalizes relative paths to absolute,
+     ;; so we just preserve the absolute path as-is.
+     (format "(p ~v)" p)]
     [(list 'str-interp parts)
      (emit-str-interp parts depth)]
     [(list 'int n)
@@ -717,12 +758,14 @@
   (case op
     [("+")
      ;; Flatten nested + chains: (binop + (binop + a b) c) → (s a b c).
-     ;; Beagle's (s ...) is variadic; emitting flat preserves the
-     ;; original .nix's normalization shape (("a" + b + "c") vs nested
-     ;; (("a" + b) + "c") which nix-instantiate --parse preserves).
-     (define args (flatten-plus-chain `(binop ,op ,lhs ,rhs)))
+     ;; Then MERGE consecutive string-literal args into one literal
+     ;; (with ${ escaped) so beagle's emit doesn't produce
+     ;; "${THEMES[@]}" — i.e. consecutive Nix strings concat'd at the
+     ;; source become a single literal that's safely escaped.
+     (define raw-args (flatten-plus-chain `(binop ,op ,lhs ,rhs)))
+     (define merged (merge-consecutive-string-lits raw-args))
      (format "(s ~a)"
-             (string-join (map (λ (a) (emit-expr a depth)) args) " "))]
+             (string-join (map (λ (a) (emit-expr a depth)) merged) " "))]
     [else
      (define lhs-str (emit-expr lhs depth))
      (define rhs-str (emit-expr rhs depth))
@@ -751,6 +794,27 @@
     [(list 'binop "+" lhs rhs)
      (append (flatten-plus-chain lhs) (flatten-plus-chain rhs))]
     [_ (list ast)]))
+
+(define (merge-consecutive-string-lits args)
+  ;; Walk a list of args. Consecutive (str-lit s) entries get merged
+  ;; into a single (str-lit "concat"). The merged string has any
+  ;; literal ${ escaped so beagle's emit-nix produces \${ in output
+  ;; rather than leaving an unintended Nix interpolation.
+  (let loop ([rest args] [acc '()] [pending #f])
+    (cond
+      [(null? rest)
+       (reverse (if pending (cons `(str-lit ,pending) acc) acc))]
+      [else
+       (define a (car rest))
+       (cond
+         [(and (pair? a) (eq? (car a) 'str-lit) (string? (cadr a)))
+          (loop (cdr rest) acc
+                (if pending
+                    (string-append pending (cadr a))
+                    (cadr a)))]
+         [else
+          (define new-acc (if pending (cons `(str-lit ,pending) acc) acc))
+          (loop (cdr rest) (cons a new-acc) #f)])])))
 
 (define (emit-lambda kind body depth)
   (match kind
@@ -817,61 +881,98 @@
   ;; Emit an attrset key. Handle the canonical idioms:
   ;;   - single bare name → :name
   ;;   - dotted path → :a.b.c
-  ;;   - "${ident}" string key (single interp, bare ident) → bare ident
-  ;;     (matches the idiomatic Nix attrset key shape and normalizes
-  ;;     identically without paren-wrapping)
-  ;;   - other quoted string → "string"
+  ;;   - string key with single (interp "ident") → bare ident
+  ;;     (matches idiomatic Nix attrset key shape; normalizes without
+  ;;     paren-wrapping)
+  ;;   - other quoted string → "string-content"
   (cond
     [(= (length path) 1)
      (match (car path)
        [(? string? s) (format ":~a" s)]
-       [(list 'str s)
+       [(list 'str parts-list)
         (cond
-          [(simple-ident-interp? s)
-           ;; "${name}" → emit as bare `name`, which beagle's emit-nix
-           ;; renders as `${name}` (without paren-wrap that comes from
-           ;; string-key handling).
-           (extract-ident-interp s)]
-          [else (format "~v" s)])])]
+          [(simple-ident-interp-parts? parts-list)
+           (extract-ident-interp-parts parts-list)]
+          [else
+           (format "~v" (parts-list->raw-string parts-list))])])]
     [else
      ;; Dotted path: emit as :a.b.c form
      (string-append ":"
                     (string-join
-                      (map (λ (s) (if (string? s) s (format "~v" (cadr s))))
+                      (map (λ (s)
+                             (cond
+                               [(string? s) s]
+                               [else (format "~v" (parts-list->raw-string (cadr s)))]))
                            path)
                       "."))]))
 
-(define (simple-ident-interp? s)
-  ;; Check if s is exactly "${IDENT}" — opening ${, then a bare
-  ;; identifier (alphanumeric + underscore + dash), then closing }.
-  (regexp-match-exact? #rx"\\$\\{[a-zA-Z_][a-zA-Z0-9_-]*\\}" s))
+(define (simple-ident-interp-parts? parts-list)
+  ;; Single (interp "ident") with a bare-identifier expression.
+  (and (= (length parts-list) 1)
+       (let ([p (car parts-list)])
+         (and (pair? p) (eq? (car p) 'interp)
+              (regexp-match-exact? #rx"[a-zA-Z_][a-zA-Z0-9_-]*" (cadr p))))))
 
-(define (extract-ident-interp s)
-  ;; Pull out the identifier from "${ident}"
-  (define m (regexp-match #rx"\\$\\{([a-zA-Z_][a-zA-Z0-9_-]*)\\}" s))
-  (cadr m))
+(define (extract-ident-interp-parts parts-list)
+  (cadr (car parts-list)))
+
+(define (parts-list->raw-string parts-list)
+  ;; Concatenate parts back into a single string with ${...} interp
+  ;; markers. Used for cases where we have no better representation.
+  (apply string-append
+         (map (λ (p) (if (string? p) p (format "${~a}" (cadr p))))
+              parts-list)))
 
 (define (emit-str-interp parts depth)
-  ;; "${expr1}foo${expr2}" → (s expr1 "foo" expr2)
-  ;; For MVP, embedded expressions are emitted as raw Nix text wrapped
-  ;; in (nix-ident ...) — but that's the form we just removed! Use a
-  ;; comment instead and emit the literal string with placeholders.
-  ;; TODO: properly recursively parse the embedded Nix expression.
+  ;; parts: list of strings and (interp "raw-nix") entries.
+  ;;
+  ;; Emit as beagle's (s ...) form. For each interp:
+  ;;   - Simple dotted identifier (e.g. "pkgs.foo", "config.bar.baz"):
+  ;;     emit as bare symbol. Beagle's emit-nix renders as ${pkgs.foo}.
+  ;;   - Complex expression (function calls, operators, nested):
+  ;;     emit the string with literal ${...} markers via an opaque
+  ;;     beagle string-with-interp-escape. Beagle's string handling
+  ;;     preserves the ${...} verbatim in the output Nix.
   (cond
     [(and (= (length parts) 1) (string? (car parts)))
-     (format "~v" (car parts))]
+     (format "~v" (escape-literal-dollars (car parts)))]
     [else
      (define s-args
        (map (λ (p)
               (match p
-                [(? string? s) (format "~v" s)]
+                [(? string? s)
+                 (format "~v" (escape-literal-dollars s))]
                 [(list 'interp nix-expr)
-                 ;; HACK: emit the Nix expr as a string literal with a
-                 ;; comment marker. Real fix needs recursive parse.
-                 (format "; TODO unparsed interp: ~s\n               \"~a\""
-                         nix-expr nix-expr)]))
+                 (emit-interp-expr nix-expr)]))
             parts))
      (format "(s ~a)" (string-join s-args " "))]))
+
+(define (escape-literal-dollars s)
+  ;; In a beagle string, "$${...}" is the Nix-style way to mark a literal
+  ;; "${..." (beagle's emit-nix turns "$$" into "$\$" which Nix parses
+  ;; as literal "$"). Source strings here have already been processed
+  ;; through read-string-literal which folded \${ into literal ${ in
+  ;; string chunks. We need to re-escape those so beagle emits them as
+  ;; literal in the .nix output.
+  (regexp-replace* #rx"\\$\\{" s "$${"))
+
+(define (emit-interp-expr nix-expr)
+  ;; nix-expr is a raw substring of normalized Nix from inside a ${...}.
+  ;; Try to emit as a beagle expression that round-trips identically:
+  ;;   - simple identifier (foo, foo-bar, _bar): bare symbol
+  ;;   - dotted identifier (a.b.c): dotted symbol (beagle supports this)
+  ;;   - anything else: emit as an opaque string with a Nix interp marker
+  ;;     that beagle's emit will preserve in the output
+  (define trimmed (string-trim nix-expr))
+  (cond
+    [(regexp-match-exact? #rx"[a-zA-Z_][a-zA-Z0-9_-]*(\\.[a-zA-Z_][a-zA-Z0-9_'-]*)*" trimmed)
+     trimmed]
+    [else
+     ;; Complex expression — emit as a string fragment that beagle will
+     ;; pass through with the ${...} marker preserved. Format the string
+     ;; as a single-char-string "${EXPR}" via Nix-style $${ escape.
+     ;; That round-trips to ${EXPR} in the final .nix.
+     (format "~v" (format "$${~a}" trimmed))]))
 
 ;; ============================================================================
 ;; Entry point
