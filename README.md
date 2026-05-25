@@ -58,25 +58,45 @@ lift repeated structure — but no more surface than the model actually
 needs. The compression ceiling moves up; the hallucination surface stays
 low.
 
-## The five principles
+## Core Principles
 
 Every surface decision was filtered through these. They are load-bearing.
 
-1. **One canonical idiom per concept.** Every concept with N equivalent
+1. **S-expressions, no compromise on composability.** Uniform
+   parenthesized syntax for every construct. No special-case grammar
+   per form. Macros, tools, agents all manipulate code as the same
+   tree-of-symbols data structure that the parser produces. The cost
+   is "looks weird at first to humans"; the payoff is decades of
+   compounding tooling leverage and the only family of languages
+   where the language and the meta-language are the same. Beagle
+   doesn't negotiate this — it's the substrate on which everything
+   else rests.
+
+2. **Immutability by default; explicit side-effects.** Bindings are
+   immutable. Records are functional (update returns a new record).
+   There is no implicit aliasing, no `set!`, no in-place mutation
+   without an explicit marker. State changes go through visible
+   plumbing — IO actions, atom-style references, target-specific
+   forms that say what they're doing. Concurrency reasoning,
+   refactoring safety, agent-driven rewrites all stay sane because
+   the reader can trust that `(let [x ...] ...)` means `x` doesn't
+   become something else mid-scope.
+
+3. **One canonical idiom per concept.** Every concept with N equivalent
    idioms is a 1/N hallucination opportunity. Where two forms claim to
    express the same concept, one gets removed.
 
-2. **Verbose-with-clarity over concise-with-magic.** Explicit positional
+4. **Verbose-with-clarity over concise-with-magic.** Explicit positional
    args beat auto-currying. Named bindings beat implicit context.
    Spelled-out forms beat terse aliases. Generation cost is amortized
    to the model; ambiguity cost compounds at every read site.
 
-3. **Failure modes that localize.** When the model writes the wrong
+5. **Failure modes that localize.** When the model writes the wrong
    thing, the error should pinpoint which form and what shape was
    expected. Forms whose shape matches what the type system understands
    produce better errors.
 
-4. **Zero escape hatches.** No `unsafe-js`, no `unsafe-clj`, no inline
+6. **Zero escape hatches.** No `unsafe-js`, no `unsafe-clj`, no inline
    target passthrough, no `(define-macro unsafe ...)`, no `nix-ident`
    verbatim-string-to-Nix emission. Every gap closes by adding a stdlib
    type signature, adding a typed surface form (the way `flake-input`
@@ -86,7 +106,7 @@ Every surface decision was filtered through these. They are load-bearing.
    as of 2026-05-25: the `nix-ident` form was the last
    escape-hatch-by-another-name and is now a parse-time error.
 
-5. **Consistency compounds; ergonomic savings don't.** A form earns its
+7. **Consistency compounds; ergonomic savings don't.** A form earns its
    place by reinforcing a pattern that shows up elsewhere. Forms that
    exist for local character savings, with no broader pattern, are
    net-negative even when they look convenient at authoring time.
