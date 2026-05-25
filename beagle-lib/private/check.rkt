@@ -2579,8 +2579,11 @@
       [(call-form? e)
        (define fn (call-form-fn e))
        (define args (call-form-args e))
-       ;; Check: call to undefined function
-       (when (and (not (hash-has-key? KNOWN-FNS fn))
+       ;; Higher-order call: fn position is an expression, not a bare
+       ;; symbol. Skip the undefined-function check (nothing to look
+       ;; up); still walk into args below.
+       (when (and (symbol? fn)
+                  (not (hash-has-key? KNOWN-FNS fn))
                   (not (set-member? (current-local-bindings) fn))
                   (not (memq fn '(recur throw)))
                   (not (string-contains? (symbol->string fn) "/")))
@@ -2592,7 +2595,8 @@
                   (if src (format "\n  --> ~a:~a" (or (src-loc-source src) "?") (src-loc-line src)) "")
                   (if suggestion (format "\n  did you mean: ~a?" suggestion) "")))
        ;; Check: scalar constructor receiving value from different scalar
-       (when (and (hash-has-key? SCALAR-CTORS fn)
+       (when (and (symbol? fn)
+                  (hash-has-key? SCALAR-CTORS fn)
                   (= 1 (length args)))
          (define target-scalar (hash-ref SCALAR-CTORS fn))
          (define arg (car args))

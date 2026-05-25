@@ -1398,6 +1398,13 @@
     [(list (? symbol? f) args ...)
      (call-form f (map parse-expr (or (stx-tail subs 1) args)))]
 
+    ;; Higher-order call: function position is an expression, not a
+    ;; bare symbol. Common in Nix where `(get target :attr)` returns
+    ;; a function that's then applied: `((get foo :bar) arg)`.
+    [(cons (? pair? fn-form) args)
+     (call-form (parse-expr (or (stx-ref subs 0) fn-form))
+                (map parse-expr (or (stx-tail subs 1) args)))]
+
     [_ (error 'beagle "unsupported form: ~v" d)]))
 
 (define (parse-protocol-method sig)

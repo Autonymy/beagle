@@ -981,13 +981,19 @@
      ;; FORMALS shape — semantically different.
      (format "(fn [~a] ~a)" name (emit-expr body depth))]
     [(list 'formals (list args ellipsis?))
-     (define names (map (λ (p) (symbol->string (car p))) args))
-     ;; Use (fn-set ...) for round-trip fidelity: ellipsis is preserved
-     ;; only when present in the original. (module [args]) always
-     ;; implies ellipsis which over-translates.
+     ;; Each arg is (name default-or-#f). Preserve defaults so the
+     ;; emitted Nix is `name ? default` shape; bare-name shape if no
+     ;; default. Ellipsis preserved per original.
+     (define arg-strs
+       (map (λ (p)
+              (match p
+                [(list name #f) (symbol->string name)]
+                [(list name default)
+                 (format "(~a ~a)" name (emit-expr default depth))]))
+            args))
      (define args-str
-       (cond [ellipsis? (string-append (string-join names " ") " ...")]
-             [else (string-join names " ")]))
+       (cond [ellipsis? (string-append (string-join arg-strs " ") " ...")]
+             [else (string-join arg-strs " ")]))
      (format "(fn-set (~a)\n~a~a)"
              args-str
              (indent (add1 depth))
