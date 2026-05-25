@@ -318,6 +318,7 @@
 (struct seq-destructure (names rest-name)                    #:transparent)
 (struct deftype-form (name fields impls)                     #:transparent)
 (struct extend-type-form (type-name impls)                   #:transparent)
+(struct flake-input-form (input-name namespace path-segments) #:transparent)
 (struct type-impl    (protocol-name methods)                 #:transparent)
 (struct impl-method  (name params body)                      #:transparent)
 (struct let-binding (name type value)                       #:transparent)
@@ -412,6 +413,7 @@
  (struct-out nix-pipe) (struct-out nix-impl)
  (struct-out nix-derivation) (struct-out nix-flake)
  (struct-out nix-with-cfg)
+ (struct-out flake-input-form)
  ;; SQL AST
  (struct-out sql-table) (struct-out sql-column)
  (struct-out sql-select) (struct-out sql-insert) (struct-out sql-update) (struct-out sql-delete)
