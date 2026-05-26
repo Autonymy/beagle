@@ -1190,8 +1190,11 @@
   ;;   - single bare name → :name
   ;;   - dotted path → :a.b.c
   ;;   - string key with single (interp "ident") → bare ident
-  ;;     (matches idiomatic Nix attrset key shape; normalizes without
-  ;;     paren-wrapping)
+  ;;     (matches idiomatic Nix attrset key shape)
+  ;;   - string key with complex interp → (s ...) form so beagle emits
+  ;;     it as a real interpolation expression (inside ${} is expression
+  ;;     context; baking the raw string with \" escapes baked in would
+  ;;     produce invalid Nix syntax)
   ;;   - other quoted string → "string-content"
   (cond
     [(= (length path) 1)
@@ -1201,6 +1204,8 @@
         (cond
           [(simple-ident-interp-parts? parts-list)
            (extract-ident-interp-parts parts-list)]
+          [(parts-list-has-interp? parts-list)
+           (emit-str-interp parts-list 0)]
           [else
            (format "~v" (parts-list->raw-string parts-list))])])]
     [else
@@ -1210,9 +1215,16 @@
                       (map (λ (s)
                              (cond
                                [(string? s) s]
+                               [(parts-list-has-interp? (cadr s))
+                                (emit-str-interp (cadr s) 0)]
                                [else (format "~v" (parts-list->raw-string (cadr s)))]))
                            path)
                       "."))]))
+
+(define (parts-list-has-interp? parts-list)
+  ;; True if any part is an (interp ...) entry — meaning the string has
+  ;; real interpolation that should be emitted as (s ...), not baked in.
+  (ormap (λ (p) (and (pair? p) (eq? (car p) 'interp))) parts-list))
 
 (define (simple-ident-interp-parts? parts-list)
   ;; Single (interp "ident") with a bare-identifier expression.
@@ -1253,7 +1265,18 @@
                 [(list 'interp nix-expr)
                  (emit-interp-expr nix-expr)]))
             parts))
-     (format "(s ~a)" (string-join s-args " "))]))
+     (cond
+       ;; Single interp, no literal parts → the whole string is just
+       ;; the interpolated expression. Wrapping in an outer (s ...) when
+       ;; the inner is already a string-shaped beagle form (e.g. a
+       ;; (s ...) from a + concatenation) produces nested interpolation
+       ;; in the Nix output, which is malformed. Emit the inner directly.
+       [(and (= (length parts) 1)
+             (pair? (car parts))
+             (eq? (car (car parts)) 'interp))
+        (car s-args)]
+       [else
+        (format "(s ~a)" (string-join s-args " "))])]))
 
 (define (escape-literal-dollars s)
   ;; In a beagle string, "$${...}" is the Nix-style way to mark a literal
