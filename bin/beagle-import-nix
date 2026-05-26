@@ -29,6 +29,35 @@
          racket/path)
 
 ;; ============================================================================
+;; Source-dir tracking for path-token restoration
+;; ============================================================================
+;;
+;; nix-instantiate --parse resolves relative paths to absolute against the
+;; source file's directory: source `./pkgs` in /a/b/flake.nix becomes
+;; `/a/b/pkgs` in the normalized output. Round-tripping that absolute path
+;; into a twin flake breaks pure-mode eval, which forbids absolute paths
+;; outside the store.
+;;
+;; Restoration: track the source file's directory, strip it back off any
+;; emitted path that begins with it, and prepend `./` so the result is a
+;; valid Nix relative path. Symbolic links and `../`-style paths above
+;; source-dir are not handled — those are uncommon in real Nix code and
+;; can be added when a real case demands it.
+
+(define current-source-dir (make-parameter #f))
+
+(define (path->source-relative abs-path)
+  (define src-dir (current-source-dir))
+  (cond
+    [(not src-dir) abs-path]
+    [(string=? abs-path src-dir) "./"]
+    [(let ([prefix (string-append src-dir "/")])
+       (and (> (string-length abs-path) (string-length prefix))
+            (string=? (substring abs-path 0 (string-length prefix)) prefix)))
+     (string-append "./" (substring abs-path (add1 (string-length src-dir))))]
+    [else abs-path]))
+
+;; ============================================================================
 ;; Driver
 ;; ============================================================================
 
@@ -46,11 +75,17 @@
      (unless (file-exists? input-path)
        (eprintf "beagle-import-nix: file not found: ~a\n" input-path)
        (exit 1))
-     (define normalized (normalize-nix input-path))
-     (define ast (parse-normalized normalized))
-     (define ns-name (path->ns-name input-path))
-     (display (emit-bnix ast ns-name))
-     (newline)]))
+     (define src-dir
+       (let* ([complete (path->complete-path input-path)]
+              [dir (path-only complete)]
+              [s (path->string dir)])
+         (regexp-replace #rx"/$" s "")))
+     (parameterize ([current-source-dir src-dir])
+       (define normalized (normalize-nix input-path))
+       (define ast (parse-normalized normalized))
+       (define ns-name (path->ns-name input-path))
+       (display (emit-bnix ast ns-name))
+       (newline))]))
 
 (define (display-usage)
   (displayln "Usage: beagle-import-nix <file.nix> > file.bnix")
@@ -884,9 +919,11 @@
      (format "~v" (escape-literal-dollars s))]
     [(list 'path p)
      ;; Nix path literal. beagle/nix's (p "...") form emits as a Nix
-     ;; path. nix-instantiate normalizes relative paths to absolute,
-     ;; so we just preserve the absolute path as-is.
-     (format "(p ~v)" p)]
+     ;; path. nix-instantiate normalizes relative paths to absolute
+     ;; against the source-file directory; we restore source-form
+     ;; (./X instead of /full/src-dir/X) so pure-mode eval survives
+     ;; the round-trip. See current-source-dir + path->source-relative.
+     (format "(p ~v)" (path->source-relative p))]
     [(list 'str-interp parts)
      (emit-str-interp parts depth)]
     [(list 'int n)
