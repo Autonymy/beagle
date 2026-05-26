@@ -34,28 +34,40 @@
 ;;
 ;; nix-instantiate --parse resolves relative paths to absolute against the
 ;; source file's directory: source `./pkgs` in /a/b/flake.nix becomes
-;; `/a/b/pkgs` in the normalized output. Round-tripping that absolute path
-;; into a twin flake breaks pure-mode eval, which forbids absolute paths
-;; outside the store.
+;; `/a/b/pkgs` in the normalized output, source `../shared/x` in
+;; /a/b/c/foo.nix becomes `/a/b/shared/x`. Round-tripping those absolute
+;; paths into a twin flake breaks pure-mode eval, which forbids absolute
+;; paths outside the store.
 ;;
-;; Restoration: track the source file's directory, strip it back off any
-;; emitted path that begins with it, and prepend `./` so the result is a
-;; valid Nix relative path. Symbolic links and `../`-style paths above
-;; source-dir are not handled — those are uncommon in real Nix code and
-;; can be added when a real case demands it.
+;; Restoration uses Racket's find-relative-path to compute the relative
+;; path between source-dir and the absolute target — handles both `./X`
+;; (under source-dir) and `../X` (above source-dir) cases. Paths Racket
+;; can't relate (different drives, malformed input, etc.) are left
+;; absolute; tracked as a known gap.
 
 (define current-source-dir (make-parameter #f))
 
-(define (path->source-relative abs-path)
+(define (path->source-relative abs-path-str)
   (define src-dir (current-source-dir))
   (cond
-    [(not src-dir) abs-path]
-    [(string=? abs-path src-dir) "./"]
-    [(let ([prefix (string-append src-dir "/")])
-       (and (> (string-length abs-path) (string-length prefix))
-            (string=? (substring abs-path 0 (string-length prefix)) prefix)))
-     (string-append "./" (substring abs-path (add1 (string-length src-dir))))]
-    [else abs-path]))
+    [(not src-dir) abs-path-str]
+    [(string=? abs-path-str src-dir) "./"]
+    [else
+     (with-handlers ([exn:fail? (lambda (_) abs-path-str)])
+       (define rel (find-relative-path src-dir abs-path-str))
+       (define rel-str (path->string rel))
+       (cond
+         ;; find-relative-path returned an absolute path → couldn't relate
+         [(or (string=? rel-str abs-path-str)
+              (and (positive? (string-length rel-str))
+                   (char=? (string-ref rel-str 0) #\/)))
+          abs-path-str]
+         ;; Parent-relative (../...) — Nix accepts as-is, no leading ./ needed
+         [(regexp-match? #rx"^\\.\\.(/|$)" rel-str) rel-str]
+         ;; Same-dir (just "." somehow) — emit ./
+         [(string=? rel-str ".") "./"]
+         ;; Under source-dir — prepend ./ to make it explicit-relative
+         [else (string-append "./" rel-str)]))]))
 
 ;; ============================================================================
 ;; Driver
