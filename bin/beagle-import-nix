@@ -848,11 +848,26 @@
      (format "(- ~a)" (emit-expr arg depth))]
     [(list 'has-attr target path)
      ;; Nix's `target ? attr.path` → beagle/nix's (has base path-string).
-     ;; emit-nix renders this as `base ? path` verbatim, so a dotted
-     ;; path-string like "a.b.c" emits as `base ? a.b.c`.
+     ;; Path segments come from parse-attr-name as:
+     ;;   "name"                       — bare identifier
+     ;;   (list 'str (list "chunk"))   — quoted string (e.g. ? "/persist")
+     ;; emit-nix takes care of quoting if the path contains non-identifier
+     ;; chars; we just need to extract the raw segment text here.
      (define path-str
        (string-join
-         (map (λ (s) (if (string? s) s (format "~a" (cadr s)))) path)
+         (map (λ (s)
+                (cond
+                  [(string? s) s]
+                  [(and (pair? s) (eq? (car s) 'str))
+                   (define parts (cadr s))
+                   (cond
+                     [(and (= (length parts) 1) (string? (car parts)))
+                      (car parts)]
+                     [else
+                      (error 'beagle-import-nix
+                             "has-attr path: complex interpolated string not supported in ?")])]
+                  [else (format "~a" s)]))
+              path)
          "."))
      (format "(has ~a ~a)"
              (emit-expr target depth)
