@@ -374,6 +374,18 @@
       (current-namespace-param (car args))
       (void))))
 
+;; Other top-level meta-forms — no-op at runtime, used by tooling at
+;; compile time.
+(define (make-noop-meta name)
+  (make-raw name
+    (lambda (args env) (void))))
+
+(define DEFINE-MODE-OP   (make-noop-meta 'define-mode))
+(define DEFINE-TARGET-OP (make-noop-meta 'define-target))
+(define IMPORT-OP        (make-noop-meta 'import))
+(define REQUIRE-OP       (make-noop-meta 'require))
+(define DECLARE-EXTERN-OP (make-noop-meta 'declare-extern))
+
 ;; --- list primitives ------------------------------------------------------
 
 (define (list-primitive name racket-proc)
@@ -606,6 +618,11 @@
                           (define        . ,DEFINE-OP)
                           (def           . ,DEF-OP)
                           (ns            . ,NS-OP)
+                          (define-mode   . ,DEFINE-MODE-OP)
+                          (define-target . ,DEFINE-TARGET-OP)
+                          (import        . ,IMPORT-OP)
+                          (require       . ,REQUIRE-OP)
+                          (declare-extern . ,DECLARE-EXTERN-OP)
                           (set!          . ,SET!-OP)
                           (cons          . ,CONS-OP)
                           (car           . ,CAR-OP)

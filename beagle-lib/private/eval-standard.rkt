@@ -155,6 +155,85 @@
       (claim-substrate (cons args (claim-substrate)))
       (void))))
 
+;; --- defrecord: register a record constructor at runtime ---------------
+
+;; (defrecord NAME (' fields F1 F2 ...))
+;; At runtime, NAME becomes a constructor function that takes positional
+;; field values and returns a hash-map with :type → NAME and each field
+;; bound to its value. ->NAME is an alias. NAME-field accessors retrieve.
+
+(define (make-defrecord-op)
+  (make-raw-operative
+    'defrecord
+    (lambda (args call-env)
+      (unless (and (>= (length args) 2) (symbol? (car args)))
+        (error 'defrecord "expected (defrecord NAME (' fields F...))"))
+      (define name (car args))
+      (define fields-form (cadr args))
+      (define fields (extract-list-with-head fields-form 'fields))
+      ;; Constructor — positional fields → hash-map
+      (define ctor
+        (make-wrapped-operative name
+          (lambda field-vals
+            (cond
+              [(= (length field-vals) (length fields))
+               (define h (hash-set (hasheq) ':type name))
+               (for/fold ([acc h]) ([f (in-list fields)] [v (in-list field-vals)])
+                 (hash-set acc (string->keyword (symbol->string f)) v))]
+              [else
+               (error name "wrong arg count: expected ~a, got ~a"
+                      (length fields) (length field-vals))]))))
+      (env-define! call-env name ctor)
+      (env-define! call-env (string->symbol (format "->~a" name)) ctor)
+      ;; Accessors
+      (for ([f (in-list fields)])
+        (define acc-name (string->symbol (format "~a-~a" name f)))
+        (define kw (string->keyword (symbol->string f)))
+        (define acc-op
+          (make-wrapped-operative acc-name
+            (lambda (rec)
+              (cond
+                [(hash? rec) (hash-ref rec kw #f)]
+                [else (error acc-name "expected ~a record, got ~v" name rec)]))))
+        (env-define! call-env acc-name acc-op))
+      (void))))
+
+(define (extract-list-with-head form expected-head)
+  ;; Walk through (' EXPECTED items...) or (EXPECTED items...).
+  (cond
+    [(and (pair? form) (or (eq? (car form) (string->symbol "'"))
+                            (eq? (car form) 'quote)))
+     (define rest (cdr form))
+     (cond
+       [(and (= (length rest) 1) (pair? (car rest)))
+        (extract-list-with-head (car rest) expected-head)]
+       [else (extract-list-with-head rest expected-head)])]
+    [(and (pair? form) (eq? (car form) expected-head))
+     (cdr form)]
+    [(list? form) form]
+    [else '()]))
+
+;; --- defunion / defenum: minimal runtime stubs --------------------------
+
+(define (make-defunion-op)
+  (make-raw-operative
+    'defunion
+    (lambda (args call-env)
+      ;; The variants are themselves emitted as defrecords by the migration
+      ;; tool, so defunion at runtime is mostly a no-op (records the union).
+      (void))))
+
+(define (make-defenum-op)
+  (make-raw-operative
+    'defenum
+    (lambda (args call-env)
+      ;; (defenum NAME V1 V2 V3) — register each variant as a keyword value.
+      (when (and (pair? args) (symbol? (car args)))
+        (for ([v (in-list (cdr args))])
+          (when (symbol? v)
+            (env-define! call-env v (string->keyword (symbol->string v))))))
+      (void))))
+
 ;; --- match: pattern matching --------------------------------------------
 
 ;; Surface:
@@ -468,4 +547,7 @@
   (env-define! env 'keys     (make-keys-op))
   (env-define! env 'vals     (make-vals-op))
   (env-define! env 'nth      (make-nth-op))
+  (env-define! env 'defrecord (make-defrecord-op))
+  (env-define! env 'defunion  (make-defunion-op))
+  (env-define! env 'defenum   (make-defenum-op))
   env)
