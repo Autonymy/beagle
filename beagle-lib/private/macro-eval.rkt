@@ -9,15 +9,14 @@
 ;; literals, symbols, quote. Built-in env provides list ops, string ops,
 ;; comparison, and typed syntax constructors.
 ;;
-;; HOLD-WHY (2026-05): Currently 0 corpus usages of `(define-macro beagle ...)`
+;; HOLD-WHY: Currently 0 corpus usages of `(define-macro beagle ...)`
 ;; in the Racket-hosted beagle. This file *looks* deletable based on usage.
-;; It is NOT deletable — it's load-bearing infrastructure for Cyclone
-;; self-host (Phase 0+). The `proc` macro kind is Racket-evaluated; when
+;; It is NOT deletable — it's load-bearing infrastructure for the eventual
+;; Cyclone self-host. The `proc` macro kind is Racket-evaluated; when
 ;; beagle's compiler runs on Cyclone, `proc` macros lose their runtime.
 ;; The path-of-least-resistance answer is to make procedural macros
 ;; *beagle-evaluated* — which is what `define-macro beagle` + this file
-;; provide. Deleting this file means re-doing the work when Cyclone
-;; lands. See lab/plans/cyclone-self-host.md.
+;; provide. Deleting this file means re-doing the work when Cyclone lands.
 
 (require racket/list
          racket/string)

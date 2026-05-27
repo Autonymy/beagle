@@ -1,11 +1,9 @@
 ;; Beagle test tier manifest.
 ;;
-;; Three tiers (see lab/journal/synthesis/design-principle.md
-;; "Test-cadence decomposition" section for the principled rationale):
+;; Three tiers:
 ;;
 ;;   active  — blocks iteration. Active failures fail the build.
-;;   demoted — runs continuously, failures logged to lab/surface-debt.md,
-;;             doesn't block. Reconciled in batch when promotion criteria met.
+;;   demoted — runs continuously but advisory only; doesn't block.
 ;;   gated   — opt-in only via env var (BEAGLE_ORACLE=1, etc). Runner
 ;;             treats as "not run this session" rather than pass/fail.
 ;;

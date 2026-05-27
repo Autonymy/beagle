@@ -3,7 +3,7 @@
 #
 # Replaces direct `raco test beagle-test/tests/`. Reads tier classifications
 # from beagle-test/tiers.rktd; runs active + demoted tiers; blocks build
-# on active failures only; logs new demoted failures to lab/surface-debt.md.
+# on active failures only. Demoted failures are advisory.
 #
 # Usage:
 #   bin/beagle-test                         # run active + demoted

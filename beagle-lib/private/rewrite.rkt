@@ -15,8 +15,8 @@
 ;; Design decision (Racket-side, not Beagle-native): the framework needs
 ;; to read beagle source via the beagle reader and walk Racket sexprs.
 ;; Bridging Racket-side sexpr operations to Beagle would add complexity
-;; without proportionate value at this stage. Revisit when self-host work
-;; begins and Beagle AST values are exposed as Beagle data.
+;; without proportionate value at this stage. Revisit when Cyclone
+;; self-host work begins and Beagle AST values are exposed as Beagle data.
 
 (require racket/match
          racket/list

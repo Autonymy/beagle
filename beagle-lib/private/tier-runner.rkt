@@ -3,8 +3,7 @@
 ;; Tiered test runner backend for `bin/beagle-test`.
 ;;
 ;; Reads beagle-test/tiers.rktd, runs active + demoted tiers via `raco test`
-;; per-file, classifies output, prints tier-grouped summary. Reads total
-;; accumulated debt count from lab/surface-debt.md.
+;; per-file, classifies output, prints tier-grouped summary.
 ;;
 ;; Exit code: 0 if all active tests pass, 1 if any active failure.
 
@@ -35,7 +34,6 @@
 
 (define manifest-path  (build-path beagle-root "beagle-test" "tiers.rktd"))
 (define tests-dir      (build-path beagle-root "beagle-test" "tests"))
-(define debt-file-path (build-path beagle-root "lab" "surface-debt.md"))
 
 ;; --- manifest --------------------------------------------------------------
 
@@ -115,25 +113,6 @@
                   (if (eq? status 'fail) all-lines '()))]))
 
 ;; --- debt file -------------------------------------------------------------
-
-(define debt-counter-rx #px"^## Total debt: ([0-9]+) failures across ([0-9]+) entries")
-
-(define (read-total-debt)
-  (cond
-    [(not (file-exists? debt-file-path)) (values 0 0)]
-    [else
-     (call-with-input-file debt-file-path
-       (lambda (in)
-         (let loop ()
-           (define line (read-line in))
-           (cond
-             [(eof-object? line) (values 0 0)]
-             [else
-              (define m (regexp-match debt-counter-rx line))
-              (cond
-                [m (values (string->number (list-ref m 1))
-                           (string->number (list-ref m 2)))]
-                [else (loop)])]))))]))
 
 ;; --- output formatting ----------------------------------------------------
 
@@ -231,18 +210,15 @@
     (filter (lambda (r) (eq? (file-result-status r) 'fail)) demoted-results))
 
   ;; Debt visibility: surface BOTH this-run new failures AND total accumulated.
-  (define-values (total-debt total-entries) (read-total-debt))
   (cond
     [(positive? (length demoted-failures))
-     (printf "Demoted failures this run: ~a (in ~a)\n"
+     (printf "Demoted failures this run: ~a (in ~a)\n\n"
              (length demoted-failures)
              (string-join
               (map (lambda (r) (file-result-name r)) demoted-failures)
               ", "))]
     [else
-     (printf "Demoted failures this run: 0\n")])
-  (printf "Total accumulated debt: ~a failures across ~a entries (lab/surface-debt.md)\n\n"
-          total-debt total-entries)
+     (printf "Demoted failures this run: 0\n\n")])
 
   ;; Active failure detail (failing files only)
   (cond

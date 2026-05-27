@@ -380,7 +380,7 @@
 
 ;; --- threading macros expand at parse time ------------------------------------
 
-;; -> removed; ->> covers threading. See lab/journal/synthesis/design-principle.md.
+;; -> removed; ->> covers threading.
 
 (test-case "->> emits expanded form"
   (define out (compile '(def x (->> coll (map inc) (filter even?)))))

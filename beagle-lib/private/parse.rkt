@@ -1366,9 +1366,9 @@
     [(list 'when _ ...)
      (error 'beagle "when removed — use (if c body) for single body or (if c (do b1 b2 …)) for multi-body. The if-no-else form returns nil when condition is false, same as when did")]
     [(list 'when-some _ ...)
-     (error 'beagle "when-some removed — beagle's typed nullable-narrowing form is pending design (lab/journal/synthesis/design-principle.md). Until then, use (let [x v] (if x (do body)))")]
+     (error 'beagle "when-some removed — beagle's typed nullable-narrowing form is pending design. Until then, use (let [x v] (if x (do body)))")]
     [(list 'if-some _ ...)
-     (error 'beagle "if-some removed — beagle's typed nullable-narrowing form is pending design (lab/journal/synthesis/design-principle.md). Until then, use (let [x v] (if x then else))")]
+     (error 'beagle "if-some removed — beagle's typed nullable-narrowing form is pending design. Until then, use (let [x v] (if x then else))")]
     [(list 'when-let _ ...)
      (error 'beagle "when-let removed — beagle's typed nullable-narrowing form will land with the nil-semantics work (provisional name TBD; tracked in design-principle.md \"Open design questions\"). Until then, use (let [x v] (if x (do body))). Do NOT reintroduce when-let when the typed form arrives — the name carries Clojure semantics; the typed form should be beagle-native")]
     [(list 'if-let _ ...)
