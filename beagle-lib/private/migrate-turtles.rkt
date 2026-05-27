@@ -350,7 +350,9 @@
         (for/list ([v (in-list variants)])
           (cond
             [(symbol? v)
-             (list (list 'defrecord v (Q (list 'fields))))]
+             ;; Bare-symbol variant — refers to a pre-existing record.
+             ;; Don't emit a defrecord (it would shadow the real one).
+             '()]
             [(and (list? v) (= (length v) 2))
              (migrate-defrecord (list 'defrecord (car v) (cadr v)))]
             [else (error 'migrate-turtles "bad variant: ~v" v)]))))
