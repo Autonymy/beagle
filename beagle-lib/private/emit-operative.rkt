@@ -203,13 +203,58 @@
 (define (rkt-defn args)
   (define name (car args))
   (define rest (cdr args))
-  (define-values (params-form body-form) (skip-fn-annotations rest))
-  (define params (extract-params-list params-form))
-  (define body-exprs (extract-body-exprs body-form))
-  (format "(define (~a ~a) ~a)"
-          name
-          (string-join (map symbol->string params) " ")
-          (string-join (map rkt->string body-exprs) " ")))
+  (cond
+    [(and (pair? rest) (multi-arity-shape? (car rest)))
+     (rkt-multi-arity-defn name (car rest))]
+    [else
+     (define-values (params-form body-form) (skip-fn-annotations rest))
+     (define params (extract-params-list params-form))
+     (define body-exprs (extract-body-exprs body-form))
+     (format "(define (~a ~a) ~a)"
+             name
+             (string-join (map symbol->string params) " ")
+             (string-join (map rkt->string body-exprs) " "))]))
+
+(define (multi-arity-shape? form)
+  (cond
+    [(and (pair? form) (quote-head? (car form)))
+     (multi-arity-shape? (cdr form))]
+    [(and (pair? form) (eq? (car form) 'arities)) #t]
+    [(and (pair? form) (= (length form) 1) (pair? (car form)))
+     (multi-arity-shape? (car form))]
+    [else #f]))
+
+(define (extract-arities form)
+  (cond
+    [(and (pair? form) (quote-head? (car form)))
+     (extract-arities (cdr form))]
+    [(and (pair? form) (= (length form) 1) (pair? (car form)))
+     (extract-arities (car form))]
+    [(and (pair? form) (eq? (car form) 'arities))
+     (cdr form)]
+    [else '()]))
+
+(define (rkt-multi-arity-defn name arities-form)
+  ;; Racket case-lambda style: (define NAME (case-lambda [(p1) body1] [(p1 p2) body2]))
+  (define arities (extract-arities arities-form))
+  (define clauses
+    (for/list ([a (in-list arities)])
+      (cond
+        [(and (pair? a) (eq? (car a) 'arity))
+         (define-values (params-form body-form) (extract-arity-shape (cdr a)))
+         (define params (extract-params-list params-form))
+         (define body-exprs (extract-body-exprs body-form))
+         (format "[(~a) ~a]"
+                 (string-join (map symbol->string params) " ")
+                 (string-join (map rkt->string body-exprs) " "))]
+        [else (format "[() ~v]" a)])))
+  (format "(define ~a (case-lambda ~a))"
+          name (string-join clauses " ")))
+
+(define (extract-arity-shape items)
+  (cond
+    [(= (length items) 2) (values (car items) (cadr items))]
+    [else (error 'extract-arity-shape "bad arity: ~v" items)]))
 
 (define (rkt-define args)
   (format "(define ~a ~a)"
@@ -377,13 +422,33 @@
 (define (clj-defn args)
   (define name (car args))
   (define rest (cdr args))
-  (define-values (params-form body-form) (skip-fn-annotations rest))
-  (define params (extract-params-list params-form))
-  (define body-exprs (extract-body-exprs body-form))
-  (format "(defn ~a [~a] ~a)"
-          name
-          (string-join (map symbol->string params) " ")
-          (string-join (map clj->string body-exprs) " ")))
+  (cond
+    [(and (pair? rest) (multi-arity-shape? (car rest)))
+     (clj-multi-arity-defn name (car rest))]
+    [else
+     (define-values (params-form body-form) (skip-fn-annotations rest))
+     (define params (extract-params-list params-form))
+     (define body-exprs (extract-body-exprs body-form))
+     (format "(defn ~a [~a] ~a)"
+             name
+             (string-join (map symbol->string params) " ")
+             (string-join (map clj->string body-exprs) " "))]))
+
+(define (clj-multi-arity-defn name arities-form)
+  ;; Clojure: (defn NAME ([p1] body1) ([p1 p2] body2))
+  (define arities (extract-arities arities-form))
+  (define clauses
+    (for/list ([a (in-list arities)])
+      (cond
+        [(and (pair? a) (eq? (car a) 'arity))
+         (define-values (params-form body-form) (extract-arity-shape (cdr a)))
+         (define params (extract-params-list params-form))
+         (define body-exprs (extract-body-exprs body-form))
+         (format "([~a] ~a)"
+                 (string-join (map symbol->string params) " ")
+                 (string-join (map clj->string body-exprs) " "))]
+        [else (format "([] ~v)" a)])))
+  (format "(defn ~a ~a)" name (string-join clauses " ")))
 
 (define (clj-define args)
   (format "(def ~a ~a)" (clj->string (car args)) (clj->string (cadr args))))
