@@ -1,10 +1,17 @@
 #lang racket/base
 
-;; Shared reader logic for all #lang beagle/* variants.
-;; Provides the readtable that preserves [...], {...}, #{...}, #"...", @, ^{}.
+;; Shared reader logic for all #lang beagle/* variants — turtles surface.
+;;
+;; Reader rule: parentheses only for structure. No [], no {}, no #{}.
+;; Atom literals at the reader level: numbers, strings, symbols, keywords,
+;; characters, booleans, regex (#"..."), raw strings (#r"..."), heredocs
+;; (#<<TAG ... TAG).
+;;
+;; The turtles surface (plan 20260528021255) eliminated reader-level
+;; bracket distinctions. Pre-turtles brackets [], {}, #{} now raise reader
+;; errors with migration hints pointing at `bin/beagle-migrate-turtles`.
 
-(require beagle/private/types
-         racket/port
+(require racket/port
          racket/string
          racket/list)
 
@@ -21,41 +28,6 @@
          [(eof-object? next) (error 'beagle "unterminated regex literal")]
          [else (loop (cons next (cons #\\ acc)))])]
       [else (loop (cons c acc))])))
-
-(define (regex-dispatch ch port src line col pos)
-  (define pattern (read-regex-pattern port))
-  (define result (list '#%regex pattern))
-  (if src
-    (datum->syntax #f result (vector src line col pos
-                                     (+ 3 (string-length pattern))))
-    result))
-
-(define (read-until-close-brace port)
-  (let loop ([acc '()])
-    (skip-whitespace port)
-    (define c (peek-char port))
-    (cond
-      [(eof-object? c) (error 'beagle "unterminated map/set literal (missing `}`)")]
-      [(char=? c #\})
-       (read-char port)
-       (reverse acc)]
-      [else
-       (define val (read port))
-       (loop (cons val acc))])))
-
-(define (skip-whitespace port)
-  (let loop ()
-    (define c (peek-char port))
-    (when (and (char? c) (char-whitespace? c))
-      (read-char port)
-      (loop))))
-
-(define (curly-reader ch port src line col pos)
-  (define items (read-until-close-brace port))
-  (define result (cons MAP-TAG items))
-  (if src
-    (datum->syntax #f result (vector src line col pos #f))
-    result))
 
 (define (read-heredoc-tag port)
   (let loop ([acc '()])
@@ -151,12 +123,8 @@
         (parameterize ([current-readtable (make-readtable #f)])
           (if src (read-syntax src combined) (read combined)))])]
     [(and (char? next) (char=? next #\{))
-     (read-char port)
-     (define items (read-until-close-brace port))
-     (define result (cons SET-TAG items))
-     (if src
-       (datum->syntax #f result (vector src line col pos #f))
-       result)]
+     (error 'beagle
+            "`#{` set literal removed in turtles surface (use `(hash-set ...)`); run bin/beagle-migrate-turtles to migrate v0.15 source")]
     [(and (char? next) (char=? next #\"))
      (read-char port)
      (define pattern (read-regex-pattern port))
@@ -175,29 +143,6 @@
          (read-syntax src combined)
          (read combined)))]))
 
-(define (at-reader ch port src line col pos)
-  (define expr (read-syntax src port))
-  (define result (list 'deref expr))
-  (datum->syntax #f result (vector src line col pos #f)))
-
-(define (caret-reader ch port src line col pos)
-  (skip-whitespace port)
-  (define next (peek-char port))
-  (define meta-map
-    (cond
-      [(and (char? next) (char=? next #\{))
-       (read port)]
-      [(and (char? next) (char=? next #\:))
-       (define kw (read port))
-       (list MAP-TAG kw #t)]
-      [else
-       (error 'beagle "^ must be followed by {:map} or :keyword, got: ~a" next)]))
-  (define target (read port))
-  (define result (list '#%meta meta-map target))
-  (if src
-    (datum->syntax #f result (vector src line col pos #f))
-    result))
-
 (define (apostrophe-reader ch port src line col pos)
   ;; ' as a non-terminating-macro: when ' appears IN the middle of a
   ;; symbol token, it's already absorbed as part of the symbol (this
@@ -213,24 +158,53 @@
       (error 'beagle "expected form after '")
       (datum->syntax #f `(quote ,next-form) (list src line col pos #f))))
 
+(define (pipe-reader ch port src line col pos)
+  ;; Treat `|` as an ordinary identifier character so `|>` and `|>>`
+  ;; read as bare symbols. The default Racket reader uses `|...|` to
+  ;; delimit a quoted identifier, which interferes with the threading
+  ;; symbols. We override by reading until a non-symbol-char and
+  ;; returning a symbol.
+  (let loop ([acc (list #\|)])
+    (define c (peek-char port))
+    (cond
+      [(or (eof-object? c)
+           (char-whitespace? c)
+           (memq c '(#\( #\) #\[ #\] #\{ #\} #\" #\; #\, #\` #\')))
+       (define sym (string->symbol (list->string (reverse acc))))
+       (if src
+         (datum->syntax #f sym (vector src line col pos (length acc)))
+         sym)]
+      [else
+       (read-char port)
+       (loop (cons c acc))])))
+
+(define (bracket-error ch port src line col pos)
+  (error 'beagle
+         "`~a` removed in turtles surface (use `(vector ...)`, `(hash-map ...)`, params/body sub-forms, etc.); run bin/beagle-migrate-turtles to migrate v0.15 source"
+         ch))
+
+(define (curly-error ch port src line col pos)
+  (error 'beagle
+         "`{...}` map literal removed in turtles surface (use `(hash-map :k v ...)`); run bin/beagle-migrate-turtles to migrate v0.15 source"))
+
 (define beagle-readtable
   (make-readtable #f
-    #\{ 'terminating-macro curly-reader
-    #\} 'terminating-macro (lambda (ch port src line col pos)
-                             (error 'beagle "unexpected `}`"))
-    #\@ 'non-terminating-macro at-reader
-    #\^ 'non-terminating-macro caret-reader
+    #\[ 'terminating-macro bracket-error
+    #\] 'terminating-macro bracket-error
+    #\{ 'terminating-macro curly-error
+    #\} 'terminating-macro
+                            (lambda (ch port src line col pos)
+                              (error 'beagle "unexpected `}`"))
+    #\| 'non-terminating-macro pipe-reader
     #\' 'non-terminating-macro apostrophe-reader
     #\# 'non-terminating-macro hash-dispatch))
 
 (define (beagle-read in)
-  (parameterize ([read-square-bracket-with-tag '#%brackets]
-                 [current-readtable beagle-readtable])
+  (parameterize ([current-readtable beagle-readtable])
     (read in)))
 
 (define (beagle-read-syntax src in)
-  (parameterize ([read-square-bracket-with-tag '#%brackets]
-                 [current-readtable beagle-readtable])
+  (parameterize ([current-readtable beagle-readtable])
     (read-syntax src in)))
 
 (provide beagle-read beagle-read-syntax beagle-readtable)
