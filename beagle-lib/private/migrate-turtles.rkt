@@ -141,6 +141,10 @@
 
 (define (migrate-defn form)
   (match form
+    ;; Multi-arity: (defn NAME (clause1) (clause2) ...)
+    [(list 'defn (? symbol? name) clauses ...)
+     #:when (and (pair? clauses) (multi-arity-clause? (car clauses)))
+     (migrate-multi-arity-defn name clauses)]
     [(list 'defn (? symbol? name) param-form ': ret-type body ...)
      ;; Typed defn — emit claim + definition
      (define params (extract-defn-params param-form))
@@ -163,6 +167,65 @@
              (cons 'body (map migrate-expr body))))
      (list defn-form)]
     [_ (error 'migrate-turtles "unrecognized defn shape: ~v" form)]))
+
+;; A multi-arity clause is shaped (param-form ...rest) where param-form is
+;; itself bracketed (not a bare symbol). Bare-symbol first elements indicate
+;; single-arity defn with regular brackets.
+(define (multi-arity-clause? c)
+  (and (pair? c)
+       (or (bracketed? (car c))
+           (and (list? (car c))
+                (not (null? (car c)))
+                (or (bracketed? (car (car c)))
+                    (and (list? (car (car c)))
+                         (= (length (car (car c))) 3)
+                         (eq? (cadr (car (car c))) ':)))))
+       ;; Avoid misidentifying a single-arity body expression as a clause
+       (or (eq? (cadr c) ':)
+           (and (pair? (cdr c)) (or (null? (cddr c)) (not (eq? (cadr c) ':))))
+           ;; Last resort: ensure the form has the structure of multi-arity
+           #t)))
+
+(define (migrate-multi-arity-defn name clauses)
+  ;; Each clause is one of:
+  ;;   ([params] : RT body...)
+  ;;   ([params] body...)
+  ;; We produce a single defn with (arities ...) sub-form, each arity
+  ;; being (params P...) (body B...). Type info merges into a union-of-
+  ;; arrows claim if all arities are typed; otherwise we drop the claim
+  ;; (multi-arity untyped is rare and we won't try to infer).
+  (define arity-data
+    (for/list ([c (in-list clauses)])
+      (match c
+        [(list param-form ': ret-type body ...)
+         (list (extract-defn-params param-form)
+               (extract-param-types param-form)
+               ret-type
+               body
+               #t)]
+        [(list param-form body ...)
+         (list (extract-defn-params param-form)
+               (extract-param-types param-form)
+               'Any
+               body
+               #f)])))
+  (define all-typed? (andmap fifth arity-data))
+  (define claim-form
+    (and all-typed?
+         (list 'claim name '∈
+               (cons 'U
+                     (for/list ([a (in-list arity-data)])
+                       (list '→ (cons '#%list (map migrate-type (cadr a)))
+                                (migrate-type (caddr a))))))))
+  (define defn-form
+    (list 'defn name
+          (cons 'arities
+            (for/list ([a (in-list arity-data)])
+              (list (cons 'params (car a))
+                    (cons 'body (map migrate-expr (cadddr a))))))))
+  (if claim-form
+      (list claim-form defn-form)
+      (list defn-form)))
 
 (define (extract-defn-params param-form)
   ;; param-form is (#%brackets P1 P2 ...) where each Pi is either a bare
@@ -576,21 +639,34 @@
 
 ;; --- cond / match / try / with --------------------------------------------
 
-;; v0.15: (cond t1 r1 t2 r2 ... :else r)
+;; v0.15 shapes:
+;;   (cond t1 r1 t2 r2 ... :else r)         — flat pairs
+;;   (cond [t1 r1] [t2 r2] ... [:else r])   — bracketed pairs
 ;; turtles: (cond (t1 r1) (t2 r2) ... (:else r))
 (define (migrate-cond form)
   (define entries (cdr form))
-  (when (odd? (length entries))
-    (error 'migrate-turtles "odd cond entries: ~v" entries))
-  (define pairs
-    (let loop ([rest entries] [acc '()])
-      (cond
-        [(null? rest) (reverse acc)]
-        [else (loop (cddr rest)
-                    (cons (list (migrate-expr (car rest))
-                                (migrate-expr (cadr rest)))
-                          acc))])))
-  (cons 'cond pairs))
+  ;; Detect: if all entries are bracketed 2-lists, that's the bracketed-pair shape.
+  (cond
+    [(and (not (null? entries))
+          (andmap (lambda (e) (and (bracketed? e) (= (length (bracket-body e)) 2)))
+                  entries))
+     ;; bracketed-pair shape
+     (cons 'cond
+           (for/list ([e (in-list entries)])
+             (list (migrate-expr (car (bracket-body e)))
+                   (migrate-expr (cadr (bracket-body e))))))]
+    [else
+     (when (odd? (length entries))
+       (error 'migrate-turtles "odd cond entries: ~v" entries))
+     (define pairs
+       (let loop ([rest entries] [acc '()])
+         (cond
+           [(null? rest) (reverse acc)]
+           [else (loop (cddr rest)
+                       (cons (list (migrate-expr (car rest))
+                                   (migrate-expr (cadr rest)))
+                             acc))])))
+     (cons 'cond pairs)]))
 
 ;; v0.15: (match x [pattern result] [pattern result])
 ;; turtles: (match x (pattern result) (pattern result))
