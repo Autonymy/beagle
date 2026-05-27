@@ -176,18 +176,21 @@
   (define head (car expr))
   (define args (cdr expr))
   (case head
-    [(defn)    (rkt-defn args)]
-    [(define)  (rkt-define args)]
-    [(fn)      (rkt-fn args)]
-    [(let)     (rkt-let args)]
-    [(if)      (rkt-if args)]
-    [(cond)    (rkt-cond args)]
-    [(match)   (rkt-match args)]
-    [(claim)   "(void)"]  ; claims are compile-time-only
-    [(body)    (rkt-body args)]
-    [(set!)    (format "(set! ~a ~a)"
-                       (rkt->string (car args))
-                       (rkt->string (cadr args)))]
+    [(defn)         (rkt-defn args)]
+    [(define def)   (rkt-define args)]
+    [(fn)           (rkt-fn args)]
+    [(let)          (rkt-let args)]
+    [(if)           (rkt-if args)]
+    [(cond)         (rkt-cond args)]
+    [(match)        (rkt-match args)]
+    [(claim)        ""]  ; emit nothing for claims
+    [(ns define-mode) ""]
+    [(body)         (rkt-body args)]
+    [(set!)         (format "(set! ~a ~a)"
+                            (rkt->string (car args))
+                            (rkt->string (cadr args)))]
+    [(str)          (format "(string-append ~a)"
+                            (string-join (map rkt->string args) " "))]
     [else
      (cond
        [(eq? head QUOTE-OP)
@@ -339,15 +342,18 @@
   (define head (car expr))
   (define args (cdr expr))
   (case head
-    [(defn)   (clj-defn args)]
-    [(define) (clj-define args)]
-    [(fn)     (clj-fn args)]
-    [(let)    (clj-let args)]
-    [(if)     (clj-if args)]
-    [(cond)   (clj-cond args)]
-    [(match)  (clj-match args)]
-    [(claim)  ""]
-    [(body)   (clj-body args)]
+    [(defn)        (clj-defn args)]
+    [(define def)  (clj-define args)]
+    [(fn)          (clj-fn args)]
+    [(let)         (clj-let args)]
+    [(if)          (clj-if args)]
+    [(cond)        (clj-cond args)]
+    [(match)       (clj-match args)]
+    [(claim)       ""]
+    [(ns)          (format "(ns ~a)" (clj->string (car args)))]
+    [(define-mode) ""]
+    [(body)        (clj-body args)]
+    [(str)         (format "(str ~a)" (string-join (map clj->string args) " "))]
     [(vector) (format "[~a]" (string-join (map clj->string args) " "))]
     [(hash-map)
      (format "{~a}"
@@ -499,14 +505,20 @@
   (define head (car expr))
   (define args (cdr expr))
   (case head
-    [(defn)   (js-defn args indent)]
-    [(define) (js-define args indent)]
-    [(fn)     (js-fn args indent)]
-    [(let)    (js-let args indent)]
-    [(if)     (js-if args indent)]
-    [(cond)   (js-cond args indent)]
-    [(claim)  ""]
-    [(body)   (js-body args indent)]
+    [(defn)        (js-defn args indent)]
+    [(define def)  (js-define args indent)]
+    [(fn)          (js-fn args indent)]
+    [(let)         (js-let args indent)]
+    [(if)          (js-if args indent)]
+    [(cond)        (js-cond args indent)]
+    [(claim)       ""]
+    [(ns define-mode) ""]
+    [(body)        (js-body args indent)]
+    [(str)         (format "[~a].join('')"
+                           (string-join
+                             (for/list ([a (in-list args)])
+                               (format "String(~a)" (js->string a indent)))
+                             ", "))]
     [(vector) (format "[~a]" (string-join
                               (for/list ([a (in-list args)]) (js->string a indent))
                               ", "))]
@@ -689,13 +701,19 @@
   (define head (car expr))
   (define args (cdr expr))
   (case head
-    [(defn)   (nix-defn args)]
-    [(define) (nix-define args)]
-    [(fn)     (nix-fn args)]
-    [(let)    (nix-let args)]
-    [(if)     (nix-if args)]
-    [(claim)  ""]
-    [(body)   (nix-body args)]
+    [(defn)        (nix-defn args)]
+    [(define def)  (nix-define args)]
+    [(fn)          (nix-fn args)]
+    [(let)         (nix-let args)]
+    [(if)          (nix-if args)]
+    [(claim)       ""]
+    [(ns define-mode) ""]
+    [(body)        (nix-body args)]
+    [(str)         (format "(builtins.concatStringsSep \"\" [~a])"
+                           (string-join
+                             (for/list ([a (in-list args)])
+                               (format "(toString ~a)" (nix->string a)))
+                             " "))]
     [(vector) (format "[ ~a ]" (string-join (map nix->string args) " "))]
     [(hash-map) (nix-attrset args)]
     [(set!)
@@ -836,14 +854,20 @@
   (define head (car expr))
   (define args (cdr expr))
   (case head
-    [(defn)   (py-defn args indent)]
-    [(define) (py-define args indent)]
-    [(fn)     (py-fn args indent)]
-    [(let)    (py-let args indent)]
-    [(if)     (py-if args indent)]
-    [(cond)   (py-cond args indent)]
-    [(claim)  ""]
-    [(body)   (py-body args indent)]
+    [(defn)        (py-defn args indent)]
+    [(define def)  (py-define args indent)]
+    [(fn)          (py-fn args indent)]
+    [(let)         (py-let args indent)]
+    [(if)          (py-if args indent)]
+    [(cond)        (py-cond args indent)]
+    [(claim)       ""]
+    [(ns define-mode) ""]
+    [(body)        (py-body args indent)]
+    [(str)         (format "''.join([~a])"
+                           (string-join
+                             (for/list ([a (in-list args)])
+                               (format "str(~a)" (py->string a indent)))
+                             ", "))]
     [(vector) (format "[~a]" (string-join (for/list ([a (in-list args)]) (py->string a indent)) ", "))]
     [(hash-map)
      (format "{~a}"

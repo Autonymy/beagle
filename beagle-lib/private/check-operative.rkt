@@ -283,6 +283,11 @@
   (tenv-define! e 'display (type-arrow (list ANY) NIL-TYPE))
   (tenv-define! e 'newline (type-arrow '() NIL-TYPE))
   (tenv-define! e 'println (type-arrow (list ANY) NIL-TYPE))
+  ;; string ops
+  (tenv-define! e 'str (type-arrow (list ANY) STR))
+  (tenv-define! e 'symbol->string (type-arrow (list ANY) STR))
+  (tenv-define! e 'string->symbol (type-arrow (list STR) (type-prim 'Symbol)))
+  (tenv-define! e 'number->string (type-arrow (list NUM) STR))
   ;; constructors
   (tenv-define! e 'vector   (type-arrow (list ANY) (type-app 'Vec (list ANY))))
   (tenv-define! e 'hash-map (type-arrow (list ANY) (type-app 'Map (list ANY ANY))))
@@ -347,6 +352,9 @@
     [(cond)     (check-cond args env errors)]
     [(match)    (check-match args env errors)]
     [(define)   (check-define args env errors)]
+    [(def)      (check-define args env errors)]
+    [(ns)       (values NIL-TYPE errors)]            ; namespace decl — no type effect
+    [(define-mode) (values NIL-TYPE errors)]         ; mode marker — no type effect
     [(set!)     (check-set! args env errors)]
     [else
      (cond

@@ -347,6 +347,24 @@
       (env-set! env name (evaluate (cadr args) env))
       (void))))
 
+;; `def`: alias for `define` — Clojure-shaped surface uses `def`.
+;; (def NAME VALUE)
+(define DEF-OP
+  (make-raw 'def
+    (lambda (args env)
+      (apply-operative DEFINE-OP args env))))
+
+;; `ns`: namespace declaration. Top-level meta-form; records the namespace
+;; for tooling purposes and returns void.
+(define current-namespace-param (make-parameter 'beagle.user))
+(define NS-OP
+  (make-raw 'ns
+    (lambda (args env)
+      (unless (and (= (length args) 1) (symbol? (car args)))
+        (error 'ns "expected (ns NAMESPACE-SYMBOL), got ~v" args))
+      (current-namespace-param (car args))
+      (void))))
+
 ;; --- list primitives ------------------------------------------------------
 
 (define (list-primitive name racket-proc)
@@ -404,6 +422,21 @@
 (define STRING->SYMBOL-OP (make-wrapped 'string->symbol string->symbol))
 (define NUMBER->STRING-OP (make-wrapped 'number->string number->string))
 
+;; `str`: Clojure-style string concatenation (any argument coerced to string).
+(define STR-OP
+  (make-wrapped 'str
+    (lambda items
+      (apply string-append
+        (for/list ([i (in-list items)])
+          (cond
+            [(string? i) i]
+            [(symbol? i) (symbol->string i)]
+            [(number? i) (number->string i)]
+            [(boolean? i) (if i "true" "false")]
+            [(eq? i 'nil) ""]
+            [(char? i) (string i)]
+            [else (format "~a" i)]))))))
+
 ;; --- environment access ---------------------------------------------------
 
 ;; Expose the current environment as a first-class value. Useful for
@@ -438,6 +471,8 @@
                           (body          . ,BODY-OP)
                           (if            . ,IF-OP)
                           (define        . ,DEFINE-OP)
+                          (def           . ,DEF-OP)
+                          (ns            . ,NS-OP)
                           (set!          . ,SET!-OP)
                           (cons          . ,CONS-OP)
                           (car           . ,CAR-OP)
@@ -470,6 +505,7 @@
                           (symbol->string . ,SYMBOL->STRING-OP)
                           (string->symbol . ,STRING->SYMBOL-OP)
                           (number->string . ,NUMBER->STRING-OP)
+                          (str            . ,STR-OP)
                           (current-env   . ,CURRENT-ENV-OP)
                           (make-environment . ,MAKE-ENVIRONMENT-OP)))])
     (env-define! e (car entry) (cdr entry)))
