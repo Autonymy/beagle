@@ -88,6 +88,7 @@
     [(symbol? t)
      (cond
        [(memq t PRIM-NAMES) (type-prim t)]
+       [(capitalized-name? t) (type-prim t)]   ; user-defined types (defrecord/defunion/defenum)
        [else (type-var t)])]
     [(pair? t)
      (case (car t)
@@ -97,6 +98,13 @@
        [else (parse-app t)])]
     [else
      (error 'parse-type "unsupported type form: ~v" t)]))
+
+(define (capitalized-name? sym)
+  (and (symbol? sym)
+       (let ([s (symbol->string sym)])
+         (and (> (string-length s) 0)
+              (let ([c (string-ref s 0)])
+                (and (char-alphabetic? c) (char-upper-case? c)))))))
 
 (define (parse-arrow t)
   ;; (→ (' params T1 T2) (returns RT))
@@ -202,6 +210,14 @@
           (= (length (type-app-args expected)) (length (type-app-args actual)))
           (andmap type-compatible?
                   (type-app-args expected) (type-app-args actual)))]
+    ;; A variant matches its parent union (e.g. Ok / Err match Result).
+    [(and (type-prim? expected) (type-prim? actual)
+          (variant-of? (type-prim-name actual) (type-prim-name expected)))
+     #t]
+    ;; A variant matches a (Result T E)-shaped parametric union.
+    [(and (type-app? expected) (type-prim? actual)
+          (variant-of? (type-prim-name actual) (type-app-ctor expected)))
+     #t]
     [(and (type-arrow? expected) (type-arrow? actual))
      (and (= (length (type-arrow-params expected))
              (length (type-arrow-params actual)))
@@ -443,6 +459,20 @@
      ;; Operator type is Any — skip arity/arg checks, just walk args.
      (define errs (check-args args env errors))
      (values ANY-TYPE errs)]
+    [(and (type-union? op-type)
+          (andmap type-arrow? (type-union-alts op-type)))
+     ;; Multi-arity operator: union of arrows. Find one matching arity
+     ;; (variadic-Any or exact-match) and check against it.
+     (define alts (type-union-alts op-type))
+     (define n (length args))
+     (define matching
+       (or (findf (lambda (a)
+                    (or (and (= (length (type-arrow-params a)) 1)
+                             (type-any? (car (type-arrow-params a))))
+                        (= (length (type-arrow-params a)) n)))
+                  alts)
+           (car alts)))
+     (check-arrow-call head matching args env errors)]
     [else
      (define errs
        (check-args args env (err! errors head "calling non-arrow type: ~a" (type->string op-type))))
@@ -594,11 +624,18 @@
      (error 'check-defn "unrecognized shape: ~v" args)]))
 
 (define (extract-params-list params-form)
-  ;; params-form: (' params A B) or (params A B)
+  ;; Accept (' HEAD A B...), (HEAD A B...), or fall through to '().
+  ;; HEAD is the label inside the quoted form (params / fields / vars / etc.).
   (cond
-    [(and (pair? params-form) (eq? (car params-form) QUOTE-OP))
-     (extract-params-list (cdr params-form))]
-    [(and (pair? params-form) (eq? (car params-form) 'params))
+    [(and (pair? params-form) (or (eq? (car params-form) QUOTE-OP)
+                                   (eq? (car params-form) 'quote)))
+     (define rest (cdr params-form))
+     (cond
+       [(and (= (length rest) 1) (pair? (car rest)))
+        (extract-params-list (car rest))]
+       [else (extract-params-list rest)])]
+    [(and (pair? params-form) (symbol? (car params-form)))
+     ;; (HEAD A B...) — drop the head label, return the tail
      (cdr params-form)]
     [(null? params-form) '()]
     [else '()]))
@@ -650,15 +687,37 @@
      (define-values (_ e1) (check-expr (car args) env errors))
      (define-values (t1 e2) (check-expr (cadr args) env e1))
      (define-values (t2 e3) (check-expr (caddr args) env e2))
-     (cond
-       [(type-equal? t1 t2) (values t1 e3)]
-       [else (values (type-union (list t1 t2)) e3)])]
+     (values (unify-types (list t1 t2)) e3)]
     [(= (length args) 2)
      (define-values (_ e1) (check-expr (car args) env errors))
      (define-values (t1 e2) (check-expr (cadr args) env e1))
-     (values (type-union (list t1 NIL-TYPE)) e2)]
+     (values (unify-types (list t1 NIL-TYPE)) e2)]
+    [(= (length args) 1)
+     ;; (if test) — predicate-only form, returns Bool
+     (define-values (_ e1) (check-expr (car args) env errors))
+     (values (type-prim 'Bool) e1)]
     [else
-     (values ANY-TYPE (err! errors args "if shape unrecognized"))]))
+     (values ANY-TYPE (err! errors args "if shape unrecognized: expected 1-3 args"))]))
+
+(define (unify-types ts)
+  ;; Deduplicate and flatten unions.
+  (define flat
+    (let loop ([rest ts] [acc '()])
+      (cond
+        [(null? rest) (reverse acc)]
+        [(type-union? (car rest))
+         (loop (cdr rest) (append (reverse (type-union-alts (car rest))) acc))]
+        [else (loop (cdr rest) (cons (car rest) acc))])))
+  (define unique
+    (for/fold ([acc '()]) ([t (in-list flat)])
+      (cond
+        [(ormap (lambda (a) (type-equal? a t)) acc) acc]
+        [else (cons t acc)])))
+  (define result (reverse unique))
+  (cond
+    [(null? result) NIL-TYPE]
+    [(null? (cdr result)) (car result)]
+    [else (type-union result)]))
 
 (define (check-cond args env errors)
   ;; Each arg is (case TEST RESULT). Walk all, return union of result types.
@@ -676,12 +735,7 @@
          (define-values (rt e2) (check-expr result env e1))
          (values (cons rt rts) e2)]
         [else (values rts (err! errs c "cond clause not (case TEST RESULT)"))])))
-  (define unified
-    (cond
-      [(null? result-types) NIL-TYPE]
-      [(null? (cdr result-types)) (car result-types)]
-      [else (type-union (reverse result-types))]))
-  (values unified errs))
+  (values (unify-types (reverse result-types)) errs))
 
 (define (check-match args env errors)
   ;; (match SCRUT (arm PATTERN RESULT)...)
@@ -704,12 +758,7 @@
             (define-values (rt e2) (check-expr result body-env errs))
             (values (cons rt rts) e2)]
            [else (values rts (err! errs a "match arm not (arm PATTERN RESULT)"))])))
-     (define unified
-       (cond
-         [(null? result-types) NIL-TYPE]
-         [(null? (cdr result-types)) (car result-types)]
-         [else (type-union (reverse result-types))]))
-     (values unified errs)]))
+     (values (unify-types (reverse result-types)) errs)]))
 
 (define (pattern-captures pat)
   (cond
@@ -783,18 +832,37 @@
      (values NIL-TYPE errors)]
     [else (values NIL-TYPE errors)]))
 
+;; Union-membership registry: union-name → set-of-variant-names.
+;; Mutated by defunion at type-check time; consulted by type-compatible?
+;; to recognize variants as subtypes of their union.
+(define union-members (make-hasheq))
+
+(define (register-union-members! name variants)
+  (hash-set! union-members name variants))
+
+(define (variant-of? variant-name union-name)
+  (define members (hash-ref union-members union-name #f))
+  (and members (memq variant-name members) #t))
+
 (define (check-defunion args env errors)
   ;; (defunion NAME (' variants V1 V2 …))
-  ;; (defunion (Name T1 T2) …)  parametric
+  ;; (defunion (Name T1 T2) …)            parametric
   ;; (defunion :throwable Name …)
-  (define name
+  (define-values (name rest)
     (cond
-      [(symbol? (car args)) (car args)]
-      [(keyword-symbol? (car args)) (cadr args)]
-      [(and (pair? (car args)) (symbol? (car (car args)))) (car (car args))]
-      [else #f]))
+      [(symbol? (car args)) (values (car args) (cdr args))]
+      [(keyword-symbol? (car args)) (values (cadr args) (cddr args))]
+      [(and (pair? (car args)) (symbol? (car (car args))))
+       (values (car (car args)) (cdr args))]
+      [else (values #f '())]))
   (when (symbol? name)
-    (tenv-define! env name (type-prim name)))
+    (tenv-define! env name (type-prim name))
+    ;; Extract variant names from `(' variants V1 V2 …)`
+    (define variant-names
+      (cond
+        [(pair? rest) (extract-params-list (car rest))]
+        [else '()]))
+    (register-union-members! name variant-names))
   (values NIL-TYPE errors))
 
 (define (check-defenum args env errors)
