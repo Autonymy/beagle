@@ -203,8 +203,15 @@
     [(and (type-var? a) (type-var? b))
      (eq? (type-var-name a) (type-var-name b))]
     [(and (type-union? a) (type-union? b))
+     ;; Set-equality (order-independent): each alt in a matches some alt in b
+     ;; and vice versa.
      (and (= (length (type-union-alts a)) (length (type-union-alts b)))
-          (andmap type-equal? (type-union-alts a) (type-union-alts b)))]
+          (andmap (lambda (x) (ormap (lambda (y) (type-equal? x y))
+                                      (type-union-alts b)))
+                  (type-union-alts a))
+          (andmap (lambda (y) (ormap (lambda (x) (type-equal? x y))
+                                      (type-union-alts a)))
+                  (type-union-alts b)))]
     [else #f]))
 
 (define (any-type? t)
@@ -215,14 +222,20 @@
 (define (type-compatible? expected actual)
   ;; Is `actual` assignable to a slot of type `expected`?
   ;; - Any matches everything in both directions (recursively through apps).
-  ;; - Union on expected: any member must match.
-  ;; - Union on actual: every member must match expected.
+  ;; - Both unions: every alt of actual must match SOME alt of expected.
+  ;; - Union on expected (non-union actual): actual must match some alt.
+  ;; - Union on actual (non-union expected): every alt must match expected.
   ;; - Parametric apps (Vec Int) (Vec Any) compatible if ctor matches and
   ;;   each arg pair is compatible.
   ;; - Otherwise, type-equal? (no subtyping yet).
   (cond
     [(any-type? expected) #t]
     [(any-type? actual) #t]
+    [(and (type-union? expected) (type-union? actual))
+     (andmap (lambda (a)
+               (ormap (lambda (e) (type-compatible? e a))
+                      (type-union-alts expected)))
+             (type-union-alts actual))]
     [(type-union? expected)
      (ormap (lambda (alt) (type-compatible? alt actual))
             (type-union-alts expected))]
