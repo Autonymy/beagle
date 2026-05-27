@@ -26,7 +26,8 @@
          racket/port
          racket/system
          racket/format
-         racket/path)
+         racket/path
+         racket/file)
 
 ;; ============================================================================
 ;; Source-dir tracking for path-token restoration
@@ -125,17 +126,116 @@
 ;; ============================================================================
 
 (define (normalize-nix path)
+  ;; Pre-process: substitute float literals with a marker string before
+  ;; nix-instantiate sees them. `nix-instantiate --parse` strips the
+  ;; fractional part from float literals (`2.0` → `2`), which then
+  ;; round-trips as int and breaks NixOS options that expect floats
+  ;; (e.g. monitor scale). The marker survives the parse as a string;
+  ;; the tokenizer below recognises `__BNIX_FLOAT_X_Y__` strings and
+  ;; emits them as float tokens.
+  (define raw (file->string path))
+  (define encoded (encode-floats raw))
+  ;; Write the temp file in the SAME directory as the source so that
+  ;; nix-instantiate resolves relative paths (./X, ../X) identically to
+  ;; the original — otherwise `./pkgs` resolves against /var/tmp and we
+  ;; emit wildly wrong path-restoration like `../../var/tmp/pkgs`.
+  (define src-dir-path (path-only (path->complete-path path)))
+  (define temp-file (make-temporary-file "bnix-import-~a.nix" #f src-dir-path))
+  (with-output-to-file temp-file #:exists 'replace
+    (lambda () (display encoded)))
   (define-values (proc out in err)
     (subprocess #f #f (current-error-port) (find-nix-instantiate)
-                "--parse" path))
+                "--parse" (path->string temp-file)))
   (close-output-port in)
   (define result (port->string out))
   (close-input-port out)
   (subprocess-wait proc)
+  (delete-file temp-file)
   (unless (zero? (subprocess-status proc))
     (error 'beagle-import-nix
            "nix-instantiate --parse failed for ~a" path))
   result)
+
+(define (encode-floats source)
+  ;; Walk source character-by-character, tracking string state. Only
+  ;; substitute float literals when OUTSIDE a string — otherwise things
+  ;; like `"192.168.1.1"` would be mangled.
+  (define out (open-output-string))
+  (define len (string-length source))
+  (define (find-digit-end i)
+    (let l ([j i])
+      (cond [(>= j len) j]
+            [(char-numeric? (string-ref source j)) (l (add1 j))]
+            [else j])))
+  (let loop ([i 0])
+    (cond
+      [(>= i len) (get-output-string out)]
+      [else
+       (define c (string-ref source i))
+       (cond
+         ;; Enter "..." string — copy verbatim until matching unescaped "
+         [(char=? c #\")
+          (write-char c out)
+          (let scan ([j (add1 i)])
+            (cond
+              [(>= j len) (loop j)]
+              [(and (char=? (string-ref source j) #\\) (< (add1 j) len))
+               (write-char (string-ref source j) out)
+               (write-char (string-ref source (add1 j)) out)
+               (scan (+ j 2))]
+              [(char=? (string-ref source j) #\")
+               (write-char #\" out)
+               (loop (add1 j))]
+              [else
+               (write-char (string-ref source j) out)
+               (scan (add1 j))]))]
+         ;; Enter ''..'' multiline string — copy until closing ''
+         [(and (char=? c #\') (< (add1 i) len)
+               (char=? (string-ref source (add1 i)) #\'))
+          (write-char #\' out)
+          (write-char #\' out)
+          (let scan ([j (+ i 2)])
+            (cond
+              [(>= j len) (loop j)]
+              [(and (char=? (string-ref source j) #\')
+                    (< (add1 j) len)
+                    (char=? (string-ref source (add1 j)) #\'))
+               (write-char #\' out)
+               (write-char #\' out)
+               (loop (+ j 2))]
+              [else
+               (write-char (string-ref source j) out)
+               (scan (add1 j))]))]
+         ;; Possible float literal: digits . digits, with no identifier
+         ;; chars on either side.
+         [(and (char-numeric? c)
+               (let ([prev (if (> i 0) (string-ref source (sub1 i)) #\space)])
+                 (not (or (char-alphabetic? prev) (char=? prev #\_)))))
+          (define int-end (find-digit-end i))
+          (cond
+            [(and (< int-end len)
+                  (char=? (string-ref source int-end) #\.)
+                  (< (add1 int-end) len)
+                  (char-numeric? (string-ref source (add1 int-end))))
+             (define frac-end (find-digit-end (add1 int-end)))
+             (cond
+               [(or (>= frac-end len)
+                    (let ([next (string-ref source frac-end)])
+                      (not (or (char-alphabetic? next) (char=? next #\_)
+                               (char=? next #\.)))))
+                (define int-part (substring source i int-end))
+                (define frac-part (substring source (add1 int-end) frac-end))
+                (fprintf out "\"__BNIX_FLOAT_~a_~a__\"" int-part frac-part)
+                (loop frac-end)]
+               [else
+                (write-char c out)
+                (loop (add1 i))])]
+            [else
+             (write-char c out)
+             (loop (add1 i))])]
+         [else
+          (write-char c out)
+          (loop (add1 i))])])))
 
 (define (find-nix-instantiate)
   (or (find-executable-path "nix-instantiate")
@@ -260,7 +360,20 @@
             [else (loop (add1 i) (cons (tok 'op "-") acc))])]
          [(char=? ch #\")
           (define-values (parts-list next) (read-string-literal str (add1 i) #\"))
-          (loop next (cons (tok 'str parts-list) acc))]
+          ;; Decode float marker (see encode-floats in normalize-nix):
+          ;; "__BNIX_FLOAT_X_Y__" → float token X.Y.
+          (cond
+            [(and (= (length parts-list) 1)
+                  (string? (car parts-list))
+                  (let ([m (regexp-match #px"^__BNIX_FLOAT_(\\d+)_(\\d+)__$"
+                                         (car parts-list))])
+                    m))
+             => (lambda (m)
+                  (loop next (cons (tok 'float (format "~a.~a"
+                                                       (cadr m) (caddr m)))
+                                   acc)))]
+            [else
+             (loop next (cons (tok 'str parts-list) acc))])]
          [(char=? ch #\')
           ;; Multi-line string ''...'' — nix-instantiate --parse usually
           ;; converts these to "..." with escapes, but handle just in case.
