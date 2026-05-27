@@ -52,9 +52,12 @@
   (define out (open-output-string))
   (define dispatch (target->dispatch target))
   (dispatch 'preamble out)
+  (define before (get-output-string out))
   (for ([f (in-list forms)])
+    (define check-len (string-length (get-output-string out)))
     (dispatch 'form f out)
-    (display "\n\n" out))
+    (when (> (string-length (get-output-string out)) check-len)
+      (display "\n\n" out)))
   (dispatch 'postamble out)
   (get-output-string out))
 
@@ -475,8 +478,10 @@
     [(form)
      (define f (car rest))
      (define out (cadr rest))
-     (display (js->string f 0) out)
-     (display ";" out)]))
+     (define s (js->string f 0))
+     (cond
+       [(string=? s "") (void)]                       ; claim etc. — emit nothing
+       [else (display s out) (display ";" out)])]))
 
 (define (js->string expr indent)
   (cond

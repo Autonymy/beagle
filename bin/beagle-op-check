@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# beagle-op-check: type-check a beagle source file against the operative model.
+#
+# Usage:
+#   bin/beagle-op-check <source.b{gl,clj,cljs,js,nix,sql,py}>
+#
+# Reports type errors (one per line) to stderr; exits 0 if clean, 1 if any.
+
+set -euo pipefail
+source "$(dirname "$0")/_beagle-racket"
+
+if [[ $# -ne 1 ]]; then
+    echo "usage: beagle-op-check <source>" >&2
+    exit 2
+fi
+
+src="$1"
+if [[ ! -f "$src" ]]; then
+    echo "beagle-op-check: file not found: $src" >&2
+    exit 1
+fi
+
+"$RACKET" -e "
+(require beagle/private/pipeline beagle/private/check-operative)
+(define errs (check-source (vector-ref (current-command-line-arguments) 0)))
+(cond
+  [(null? errs)
+   (displayln \"OK\")
+   (exit 0)]
+  [else
+   (for ([e (in-list errs)])
+     (eprintf \"~a~n\" (type-error-message e)))
+   (exit 1)])
+" -- "$src"
