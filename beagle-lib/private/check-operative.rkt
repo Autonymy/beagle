@@ -87,8 +87,11 @@
   (cond
     [(symbol? t)
      (cond
+       [(nullable-symbol? t)
+        ;; T? → (U T Nil)
+        (type-union (list (parse-type (un-nullable t)) NIL-TYPE))]
        [(memq t PRIM-NAMES) (type-prim t)]
-       [(capitalized-name? t) (type-prim t)]   ; user-defined types (defrecord/defunion/defenum)
+       [(capitalized-name? t) (type-prim t)]   ; user-defined types
        [else (type-var t)])]
     [(pair? t)
      (case (car t)
@@ -98,6 +101,19 @@
        [else (parse-app t)])]
     [else
      (error 'parse-type "unsupported type form: ~v" t)]))
+
+(define (nullable-symbol? sym)
+  (and (symbol? sym)
+       (let ([s (symbol->string sym)])
+         (and (> (string-length s) 1)
+              (char=? (string-ref s (- (string-length s) 1)) #\?)
+              ;; Don't treat predicate names (odd?, even?) as types
+              (let ([c (string-ref s 0)])
+                (and (char-alphabetic? c) (char-upper-case? c)))))))
+
+(define (un-nullable sym)
+  (define s (symbol->string sym))
+  (string->symbol (substring s 0 (- (string-length s) 1))))
 
 (define (capitalized-name? sym)
   (and (symbol? sym)
@@ -191,6 +207,11 @@
           (andmap type-equal? (type-union-alts a) (type-union-alts b)))]
     [else #f]))
 
+(define (any-type? t)
+  ;; Recognize both type-any and (type-prim 'Any).
+  (or (type-any? t)
+      (and (type-prim? t) (eq? (type-prim-name t) 'Any))))
+
 (define (type-compatible? expected actual)
   ;; Is `actual` assignable to a slot of type `expected`?
   ;; - Any matches everything in both directions (recursively through apps).
@@ -200,8 +221,8 @@
   ;;   each arg pair is compatible.
   ;; - Otherwise, type-equal? (no subtyping yet).
   (cond
-    [(type-any? expected) #t]
-    [(type-any? actual) #t]
+    [(any-type? expected) #t]
+    [(any-type? actual) #t]
     [(type-union? expected)
      (ormap (lambda (alt) (type-compatible? alt actual))
             (type-union-alts expected))]
