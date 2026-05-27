@@ -127,8 +127,7 @@
     [(and (pair? form) (eq? (car form) 'declare-extern))
      (migrate-declare-extern form)]
     [(and (pair? form) (eq? (car form) 'define-macro))
-     ;; macros: leave shape alone but migrate sub-expressions
-     (list (cons 'define-macro (map migrate-expr (cdr form))))]
+     (migrate-define-macro form)]
     [else
      (list (migrate-expr form))]))
 
@@ -295,6 +294,70 @@
      (cons (list 'defunion (cons name tvars) (cons 'variants variant-names))
            variant-records)]
     [_ (error 'migrate-turtles "unrecognized defunion shape: ~v" form)]))
+
+;; --- define-macro migration -----------------------------------------------
+
+;; v0.15 shapes:
+;;   (define-macro safe   NAME [params] template)
+;;   (define-macro proc   NAME [(p : T) ...] : RT body)
+;;   (define-macro beagle NAME [(p : T) ...] : RT body)
+;;
+;; turtles (first cut):
+;;   safe   → (define-macro safe NAME (params p...) template)
+;;   proc   → (define-macro proc NAME (params p...) ∈ RT body)
+;;   beagle → same as proc but kind=beagle
+;;
+;; Note: the macro BODY/template is left as data (only structural migration
+;; of brackets). The macro's compile-time output language doesn't change
+;; here — fixing macros to emit turtles-surface output is a follow-up.
+
+(define (migrate-define-macro form)
+  (match form
+    [(list 'define-macro 'safe (? symbol? name) param-form template)
+     (define params (extract-defn-params param-form))
+     (list (list 'define-macro 'safe name
+                 (cons 'params params)
+                 (migrate-quote-aware template)))]
+    [(list 'define-macro (and kind (or 'proc 'beagle)) (? symbol? name)
+           param-form ': ret-type body ...)
+     (define params (extract-defn-params param-form))
+     (list (list 'define-macro kind name
+                 (cons 'params params)
+                 '∈ (migrate-type ret-type)
+                 (cons 'body (map migrate-quote-aware body))))]
+    [_ (error 'migrate-turtles "unrecognized define-macro shape: ~v" form)]))
+
+;; Macro bodies often contain quoted data that should be left structurally
+;; intact (it represents literal output syntax). We still need to migrate
+;; bracket/map/set tags to data constructors, but we don't transform `let`,
+;; `defn` etc. inside quotes.
+(define (migrate-quote-aware expr)
+  (cond
+    [(and (pair? expr) (eq? (car expr) 'quote))
+     ;; Inside quote, only tag-strip; leave shape alone.
+     (list 'quote (strip-tags-only (cadr expr)))]
+    [(and (pair? expr) (eq? (car expr) 'quasiquote))
+     (list 'quasiquote (migrate-quasiquote (cadr expr)))]
+    [(pair? expr) (migrate-expr expr)]
+    [else expr]))
+
+(define (strip-tags-only d)
+  (cond
+    [(bracketed? d) (cons 'vector (map strip-tags-only (bracket-body d)))]
+    [(map-tagged? d) (cons 'hash-map (map strip-tags-only (map-body d)))]
+    [(set-tagged? d) (cons 'hash-set (map strip-tags-only (set-body d)))]
+    [(pair? d) (cons (strip-tags-only (car d)) (strip-tags-only (cdr d)))]
+    [else d]))
+
+(define (migrate-quasiquote d)
+  (cond
+    [(and (pair? d) (or (eq? (car d) 'unquote) (eq? (car d) 'unquote-splicing)))
+     (list (car d) (migrate-quote-aware (cadr d)))]
+    [(bracketed? d) (cons 'vector (map migrate-quasiquote (bracket-body d)))]
+    [(map-tagged? d) (cons 'hash-map (map migrate-quasiquote (map-body d)))]
+    [(set-tagged? d) (cons 'hash-set (map migrate-quasiquote (set-body d)))]
+    [(pair? d) (cons (migrate-quasiquote (car d)) (migrate-quasiquote (cdr d)))]
+    [else d]))
 
 ;; --- declare-extern migration ---------------------------------------------
 
