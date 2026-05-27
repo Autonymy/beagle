@@ -42,7 +42,9 @@
 (define PIPE-2 (string->symbol "|>>"))
 (define QUOTE-OP (string->symbol "'"))
 
-(define (Q payload) (list QUOTE-OP payload))
+;; Variadic `'` helper — splat list elements as operands.
+;; `(Q '(params x y))` → `(' params x y)`
+(define (Q items) (cons QUOTE-OP items))
 
 (define (migrate-and-read v015-text)
   (forms-after-lang (migrate-turtles-text v015-text)))

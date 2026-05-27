@@ -37,14 +37,19 @@
 
 ;; --- quote-operator helpers ----------------------------------------------
 
-;; The data-operator `'` is a literal symbol in the output. We use a
-;; distinct internal constant because `'` is special-character-y and we
-;; want zero ambiguity in the codebase about what symbol we mean.
+;; The data-operator `'` is a variadic list-constructor operator. It
+;; collects its raw operands into a list and returns them as data.
+;; Source: `(' params x y)` reads as a list with `'` in head position
+;; and `params`, `x`, `y` as the operands; it produces the data list
+;; (params x y) when evaluated.
+;;
+;; The helper here takes a Racket list of items and emits the
+;; variadic `'` form ('-sym ITEMS...).
 (define QUOTE-OP (string->symbol "'"))
 
-(define (Q payload)
-  ;; Wrap PAYLOAD as (' PAYLOAD) — quoted data form.
-  (list QUOTE-OP payload))
+(define (Q items)
+  ;; Splat ITEMS as operands of the `'` operator.
+  (cons QUOTE-OP items))
 
 ;; --- reader ---------------------------------------------------------------
 
