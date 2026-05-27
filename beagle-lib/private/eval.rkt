@@ -531,6 +531,7 @@
 (define (initial-env)
   (define e (make-env #f))
   (for ([entry (in-list `((,QUOTE-OP-SYM . ,QUOTE-OP)
+                          (quote         . ,QUOTE-OP)      ; alias for ' (Racket reader compat)
                           (vau           . ,VAU-OP)
                           (wrap          . ,WRAP-OP)
                           (unwrap        . ,UNWRAP-OP)
