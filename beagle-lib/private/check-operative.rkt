@@ -93,6 +93,11 @@
   '(Int Float Bool String Keyword Symbol Nil Any Number Promise NixType
     Vec List Map Set Maybe Result Form Syntax Expr))
 
+;; Parameter holding the current type env during parse-type, so a
+;; capitalized symbol can resolve to a previously-declared named
+;; refinement / alias / record instead of always becoming a bare prim.
+(define current-type-env (make-parameter #f))
+
 (define (parse-type t)
   (cond
     [(symbol? t)
@@ -101,7 +106,16 @@
         ;; T? → (U T Nil)
         (type-union (list (parse-type (un-nullable t)) NIL-TYPE))]
        [(memq t PRIM-NAMES) (type-prim t)]
-       [(capitalized-name? t) (type-prim t)]   ; user-defined types
+       [(capitalized-name? t)
+        ;; Look up any previously-declared named type (alias / refine).
+        ;; Fall back to a bare prim if undeclared — preserves the gradual
+        ;; behavior of nominal type names.
+        (define env (current-type-env))
+        (define existing (and env (tenv-lookup env t)))
+        (cond
+          [(or (type-refined? existing) (type-alias? existing) (type-param? existing))
+           existing]
+          [else (type-prim t)])]
        [else (type-var t)])]
     [(pair? t)
      (case (car t)
@@ -677,12 +691,115 @@
                   [got (in-list arg-types)]
                   [a-expr (in-list args)])
          (cond
-           [(type-compatible? want got) e]
+           [(type-compatible? want got)
+            ;; Representation OK. If the slot is refined and the
+            ;; argument is a literal, run the static refinement check.
+            (check-refinement-static head want a-expr args e)]
            [else
             (err! e a-expr
                   "~a: argument expected ~a, got ~a"
                   head (type->string want) (type->string got))]))]))
   (values returns final-errs))
+
+;; Static refinement check: if `want` carries refinement predicates and
+;; the argument is a literal we can evaluate, substitute the literal
+;; (and earlier literal arguments) into each predicate and reject if
+;; it evaluates to #f. Non-literal arguments and undecidable predicates
+;; are silently allowed — the predicate stays as a runtime obligation.
+;;
+;; Walks param → refined → alias chains so a (param amount Positive) with
+;; Positive itself a (refine Int (where (> self 0))) still gets checked.
+(define (check-refinement-static head want a-expr all-args errors)
+  (define-values (preds binder)
+    (collect-preds want))
+  (cond
+    [(null? preds) errors]
+    [else
+     (for/fold ([e errors]) ([p (in-list preds)])
+       (define result (try-eval-refinement-pred p binder a-expr head))
+       (case result
+         [(violated)
+          (err! e a-expr "~a: refinement (~a) violated by ~a"
+                head p a-expr)]
+         [else e]))]))
+
+;; Walk through param/refined/alias layers, collecting all predicates.
+;; Returns (values preds binder) where binder is the name to substitute
+;; in each predicate (a param's name, else 'self).
+(define (collect-preds t)
+  (let loop ([t t] [preds '()] [binder 'self])
+    (cond
+      [(type-param? t)
+       (define new-binder (type-param-name t))
+       (define p-here (type-param-preds t))
+       ;; param's own preds use the param's name; deeper preds need to be
+       ;; reinterpreted under the param's binder too (since a refined base
+       ;; uses 'self but a containing param renames that to its own name).
+       (loop (type-param-base t)
+             (append preds p-here)
+             new-binder)]
+      [(type-refined? t)
+       ;; A refined's preds reference 'self, but if we're already inside a
+       ;; param-binder, we need to substitute 'self → param-name in those
+       ;; preds before adding them.
+       (define p-here
+         (if (eq? binder 'self)
+             (type-refined-preds t)
+             (map (lambda (p) (subst-symbol p 'self binder))
+                  (type-refined-preds t))))
+       (loop (type-refined-base t)
+             (append preds p-here)
+             binder)]
+      [(type-alias? t)
+       (loop (type-alias-target t) preds binder)]
+      [else
+       (values preds binder)])))
+
+;; Try to statically evaluate a refinement predicate against a literal
+;; argument. Returns 'violated, 'satisfied, or 'unknown.
+;; Substitutes the binder name (param's name or 'self) with the argument
+;; expression and evaluates if the result is a pure-literal comparison.
+(define (try-eval-refinement-pred pred binder a-expr _head)
+  (define sub-pred (subst-symbol pred binder a-expr))
+  (define v (try-eval-literal sub-pred))
+  (case v
+    [(true)  'satisfied]
+    [(false) 'violated]
+    [else    'unknown]))
+
+;; Substitute NEW for every occurrence of OLD in EXPR (s-expr walk).
+(define (subst-symbol expr old new)
+  (cond
+    [(eq? expr old) new]
+    [(pair? expr) (cons (subst-symbol (car expr) old new)
+                        (subst-symbol (cdr expr) old new))]
+    [else expr]))
+
+;; Try to evaluate a fully-constant predicate. Returns 'true, 'false, or 'unknown.
+;; Only handles a small set of pure-numeric comparisons; anything else → unknown.
+(define (try-eval-literal e)
+  (cond
+    [(and (pair? e) (memq (car e) '(> >= < <= = == != not=))
+          (= (length e) 3)
+          (number? (cadr e))
+          (number? (caddr e)))
+     (define a (cadr e))
+     (define b (caddr e))
+     (define result
+       (case (car e)
+         [(>)  (> a b)]
+         [(>=) (>= a b)]
+         [(<)  (< a b)]
+         [(<=) (<= a b)]
+         [(= ==) (= a b)]
+         [(!= not=) (not (= a b))]))
+     (if result 'true 'false)]
+    [(and (pair? e) (eq? (car e) 'not) (= (length e) 2))
+     (case (try-eval-literal (cadr e))
+       [(true) 'false]
+       [(false) 'true]
+       [else 'unknown])]
+    [else 'unknown]))
 
 (define (check-args args env errors)
   ;; Walk args, returning final errors; doesn't return per-arg types.
@@ -720,7 +837,7 @@
                       (lambda (e)
                         (values ANY-TYPE
                                 (err! errors args "bad type form: ~a" (exn-message e))))])
-       (define t (parse-type type-form))
+       (define t (parameterize ([current-type-env env]) (parse-type type-form)))
        (when (symbol? name) (tenv-define! env name t))
        (values NIL-TYPE errors))]
     [(and (>= (length args) 3) (metadata-key? (cadr args)))
@@ -1051,7 +1168,8 @@
   (cond
     [(and (= (length args) 3) (eq? (cadr args) ':type) (symbol? (car args)))
      (with-handlers ([exn:fail? (lambda (_) (void))])
-       (tenv-define! env (car args) (parse-type (caddr args))))
+       (tenv-define! env (car args)
+                     (parameterize ([current-type-env env]) (parse-type (caddr args)))))
      (values NIL-TYPE errors)]
     [else (values NIL-TYPE errors)]))
 
@@ -1176,7 +1294,8 @@
        (cond
          [(and (= (length args) 3) (eq? (cadr args) ':type) (symbol? (car args)))
           (with-handlers ([exn:fail? (lambda (_) (void))])
-            (tenv-define! env (car args) (parse-type (caddr args))))]
+            (tenv-define! env (car args)
+                          (parameterize ([current-type-env env]) (parse-type (caddr args)))))]
          [else (void)])]
       [else (void)]))
   ;; Pass 2
