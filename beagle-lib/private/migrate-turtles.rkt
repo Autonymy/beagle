@@ -283,8 +283,11 @@
       (list defn-form)))
 
 (define (extract-defn-params param-form)
-  ;; param-form is (#%brackets P1 P2 ...) where each Pi is either a bare
-  ;; symbol or (name : Type).
+  ;; param-form is (#%brackets P1 P2 ...) where each Pi is one of:
+  ;;   - bare symbol         x
+  ;;   - typed              (x : Type)
+  ;;   - with default value (x DEFAULT)  — Nix-module pattern, default ignored
+  ;;                                       for the param-name extraction
   (define entries (cond
                     [(bracketed? param-form) (bracket-body param-form)]
                     [(list? param-form) param-form]
@@ -293,6 +296,7 @@
     (cond
       [(symbol? p) p]
       [(and (list? p) (= (length p) 3) (eq? (cadr p) ':)) (car p)]
+      [(and (list? p) (= (length p) 2) (symbol? (car p))) (car p)]
       [else
        (error 'migrate-turtles "unrecognized param shape: ~v" p)])))
 
