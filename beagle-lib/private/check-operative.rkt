@@ -1207,9 +1207,10 @@
   (and members (memq variant-name members) #t))
 
 (define (check-defunion args env errors)
-  ;; (defunion NAME (' variants V1 V2 …))
-  ;; (defunion (Name T1 T2) …)            parametric
-  ;; (defunion :throwable Name …)
+  ;; Current: (defunion NAME (V1 field…) (V2 field…) …)
+  ;;          (defunion :throwable NAME …)
+  ;;          (defunion (Name T1 T2) …)            parametric
+  ;; Back-compat: (defunion NAME (' variants V1 V2 …)) labeled head shape.
   (define-values (name rest)
     (cond
       [(symbol? (car args)) (values (car args) (cdr args))]
@@ -1219,20 +1220,43 @@
       [else (values #f '())]))
   (when (symbol? name)
     (tenv-define! env name (type-prim name))
-    ;; Extract variant names from `(' variants V1 V2 …)`
-    (define variant-names
-      (cond
-        [(pair? rest) (extract-params-list (car rest))]
-        [else '()]))
+    (define variant-names (extract-variant-names rest))
     (register-union-members! name variant-names))
   (values NIL-TYPE errors))
 
+;; Pull variant names from the trailing operands of defunion. Each
+;; operand is either a bare symbol (name-only variant) or a list whose
+;; head is the variant name. Legacy `(variants V1 V2 …)` shape also
+;; accepted for transitional inputs.
+(define (extract-variant-names rest)
+  (cond
+    [(and (= (length rest) 1) (pair? (car rest))
+          (or (eq? (car (car rest)) 'variants)
+              (eq? (car (car rest)) '#%brackets)
+              (eq? (car (car rest)) QUOTE-OP)
+              (eq? (car (car rest)) 'quote)))
+     (extract-params-list (car rest))]
+    [else
+     (for/list ([v (in-list rest)])
+       (cond
+         [(symbol? v) v]
+         [(and (pair? v) (symbol? (car v))) (car v)]
+         [else (error 'check-defunion "bad variant: ~v" v)]))]))
+
 (define (check-defenum args env errors)
-  ;; (defenum NAME V1 V2 V3 …)
+  ;; Current: (defenum NAME [V1 V2 V3 …])  — bracket vector of bare names
+  ;; Back-compat: (defenum NAME V1 V2 V3 …) flat, (defenum NAME (variants …))
   (cond
     [(and (pair? args) (symbol? (car args)))
      (tenv-define! env (car args) (type-prim (car args)))
-     (for ([v (in-list (cdr args))])
+     (define variants
+       (cond
+         [(and (= (length args) 2) (pair? (cadr args))
+               (or (eq? (car (cadr args)) '#%brackets)
+                   (eq? (car (cadr args)) 'variants)))
+          (cdr (cadr args))]
+         [else (cdr args)]))
+     (for ([v (in-list variants)])
        (when (symbol? v) (tenv-define! env v (type-prim 'Keyword))))
      (values NIL-TYPE errors)]
     [else (values NIL-TYPE errors)]))

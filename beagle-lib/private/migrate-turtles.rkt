@@ -74,12 +74,17 @@
   (cons BRACKET-OP items))
 
 (define (F items)
-  ;; Field list — head-tagged structural role (defrecord fields).
-  (cons 'fields items))
+  ;; Field list — a bare vector `[a b c …]`.
+  ;; Was `(fields …)`; labeled head removed because the vector's slot
+  ;; in defrecord already carries the role (head+slot = role rule).
+  (cons BRACKET-OP items))
 
 (define (V items)
-  ;; Variant list — head-tagged structural role (defunion/defenum variants).
-  (cons 'variants items))
+  ;; Variant list for defenum — a bare vector `[V1 V2 …]`.
+  ;; Was `(variants …)`; labeled head removed (same rule).
+  ;; defunion uses trailing operands directly (no wrapper at all);
+  ;; see migrate-defunion for that path.
+  (cons BRACKET-OP items))
 
 (define (FNS items)
   ;; Function list — head-tagged structural role (letfn fns).
@@ -381,32 +386,46 @@
 
 ;; v0.15: (defunion NAME (V1 [fields...]) (V2 [fields...]))
 ;; v0.15: (defunion :throwable NAME (V1 [fields...]) ...)
-;; turtles (first cut): (defunion NAME (variants V1 V2 ...))
-;; plus per-variant defrecord + claims.
+;; current: (defunion NAME (V1 field…) (V2 field…) …)
+;; Variants are bare trailing operands — each variant is a head-tagged
+;; form whose head is the variant name. No (variants …) wrapper.
+;; Plus per-variant defrecord + claims when variants carry fields.
 
 (define (migrate-defunion form)
-  ;; turtles+quote: (defunion NAME (' (variants V1 V2 ...))) + variant defrecords
+  ;; Build a variant operand `(VARIANT-NAME field…)` from the source
+  ;; variant form. Bare-symbol variants stay as bare names (no fields).
+  (define (variant-operand v)
+    (cond
+      [(symbol? v) v]
+      [(and (list? v) (= (length v) 2))
+       ;; (V1 [field…])  — pull bare names out of the field bracket
+       (define fields-form (cadr v))
+       (define field-names
+         (cond
+           [(bracketed? fields-form) (bracket-body fields-form)]
+           [(list? fields-form) fields-form]
+           [else '()]))
+       (define bare-names
+         (for/list ([f (in-list field-names)])
+           (cond
+             [(symbol? f) f]
+             [(and (list? f) (= (length f) 3) (eq? (cadr f) ':)) (car f)]
+             [else (error 'migrate-turtles "bad variant field: ~v" f)])))
+       (cons (car v) bare-names)]
+      [else (error 'migrate-turtles "bad variant: ~v" v)]))
   (define (handle-variants name throwable? variants)
-    (define variant-names
-      (for/list ([v (in-list variants)])
-        (cond
-          [(symbol? v) v]
-          [(and (list? v) (pair? v)) (car v)]
-          [else (error 'migrate-turtles "bad variant: ~v" v)])))
+    (define variant-forms (map variant-operand variants))
     (define variant-records
       (apply append
         (for/list ([v (in-list variants)])
           (cond
-            [(symbol? v)
-             ;; Bare-symbol variant — refers to a pre-existing record.
-             ;; Don't emit a defrecord (it would shadow the real one).
-             '()]
+            [(symbol? v) '()]
             [(and (list? v) (= (length v) 2))
              (migrate-defrecord (list 'defrecord (car v) (cadr v)))]
             [else (error 'migrate-turtles "bad variant: ~v" v)]))))
     (cons (if throwable?
-            (list 'defunion ':throwable name (V variant-names))
-            (list 'defunion name (V variant-names)))
+            (list* 'defunion ':throwable name variant-forms)
+            (list* 'defunion name variant-forms))
           variant-records))
   (match form
     [(list 'defunion ':throwable (? symbol? name) variants ...)
@@ -414,13 +433,8 @@
     [(list 'defunion (? symbol? name) variants ...)
      (handle-variants name #f variants)]
     [(list 'defunion (list (? symbol? name) (? symbol? tvars) ...) variants ...)
-     ;; Parametric defunion: (defunion (Result T E) (Ok ...) (Err ...))
-     (define variant-names
-       (for/list ([v (in-list variants)])
-         (cond
-           [(symbol? v) v]
-           [(and (list? v) (pair? v)) (car v)]
-           [else (error 'migrate-turtles "bad variant: ~v" v)])))
+     ;; Parametric defunion: (defunion (Result T E) (Ok …) (Err …))
+     (define variant-forms (map variant-operand variants))
      (define variant-records
        (apply append
          (for/list ([v (in-list variants)])
@@ -429,9 +443,7 @@
              [(and (list? v) (= (length v) 2))
               (migrate-defrecord (list 'defrecord (car v) (cadr v)))]
              [else (error 'migrate-turtles "bad variant: ~v" v)]))))
-     ;; Parametric header (Result T E) stays as-is (list with operator
-     ;; in head position — the name is the operator from a reader view).
-     (cons (list 'defunion (cons name tvars) (V variant-names))
+     (cons (list* 'defunion (cons name tvars) variant-forms)
            variant-records)]
     [_ (error 'migrate-turtles "unrecognized defunion shape: ~v" form)]))
 
