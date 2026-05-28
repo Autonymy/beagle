@@ -1013,16 +1013,20 @@
              (nix->string (caddr args)))]
     [else "/* assoc needs 3 args */ null"]))
 
-;; (ms SEG1 SEG2 …) → ''SEG1SEG2…'' — Nix indented string (raw segments).
+;; (ms SEG1 SEG2 …) → ''\nSEG1SEG2…'' — Nix indented string.
 ;; Each SEG is either a literal string (verbatim, with ${ escaped to ''${
 ;; and '' escaped to ''') or an expression (wrapped as ${EXPR}).
+;; Always emit a leading newline after the opening ''; Nix's
+;; indented-string rule strips exactly one such newline, so the actual
+;; first character of the content is whatever the input string starts
+;; with (preserving leading-newline content if any).
 (define (nix-ms args)
   (define parts
     (for/list ([a (in-list args)])
       (cond
         [(string? a) (escape-ind-string a)]
         [else (format "$~a{~a}" "" (nix->string a))])))
-  (format "''~a''" (apply string-append parts)))
+  (format "''\n~a''" (apply string-append parts)))
 
 ;; Indented-string escape rules:
 ;;   ${  → ''${    (literal $ followed by {)

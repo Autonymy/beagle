@@ -63,6 +63,16 @@
 (struct type-any    ()                  #:transparent)
 (struct type-nil    ()                  #:transparent)
 
+;; Public Contracts (companion paper):
+;;   type-param     — head-tagged signature binder. NAME is in scope of
+;;                    `where` predicates that follow in the same arrow.
+;;   type-refined   — refinement layered onto BASE; PREDS is a list of
+;;                    raw predicate s-exprs to evaluate against the value.
+;;   type-alias     — named alias for representation only (no predicate).
+(struct type-param   (name base preds)  #:transparent) ; (param NAME T (where P)…)
+(struct type-refined (base preds)       #:transparent) ; (refine T (where P))
+(struct type-alias   (target)           #:transparent) ; (alias T)
+
 (define ANY-TYPE (type-any))
 (define NIL-TYPE (type-nil))
 
@@ -98,9 +108,43 @@
        [(->) (parse-arrow t)]
        [(forall) (parse-forall t)]
        [(U) (parse-union t)]
+       [(refine) (parse-refine t)]
+       [(alias)  (parse-alias t)]
+       [(param)  (parse-param t)]
        [else (parse-app t)])]
     [else
      (error 'parse-type "unsupported type form: ~v" t)]))
+
+;; (refine BASE (where P) (where P2) …) → type-refined
+(define (parse-refine t)
+  (match t
+    [(list 'refine base-form rest ...)
+     (define preds (collect-wheres rest))
+     (type-refined (parse-type base-form) preds)]
+    [_ (error 'parse-type "bad refine: ~v" t)]))
+
+;; (alias TARGET) → type-alias
+(define (parse-alias t)
+  (match t
+    [(list 'alias target-form)
+     (type-alias (parse-type target-form))]
+    [_ (error 'parse-type "bad alias: ~v" t)]))
+
+;; (param NAME TYPE (where P)…) → type-param
+(define (parse-param t)
+  (match t
+    [(list 'param (? symbol? name) base-form rest ...)
+     (define preds (collect-wheres rest))
+     (type-param name (parse-type base-form) preds)]
+    [_ (error 'parse-type "bad param: ~v" t)]))
+
+;; Walks (where P) forms only; ignores anything else. Returns a list of
+;; raw predicate s-exprs. `where` is sugar over storing the predicate;
+;; the s-expr is kept un-evaluated for later substitution/check.
+(define (collect-wheres forms)
+  (for/list ([f (in-list forms)]
+             #:when (and (pair? f) (eq? (car f) 'where) (= (length f) 2)))
+    (cadr f)))
 
 (define (nullable-symbol? sym)
   (and (symbol? sym)
@@ -123,14 +167,19 @@
                 (and (char-alphabetic? c) (char-upper-case? c)))))))
 
 (define (parse-arrow t)
-  ;; Flat-arrow (current): (→ T1 T2 ... RT) — last operand is return type.
-  ;; Tightened (back-compat): (→ (' T1 T2) RT)
-  ;; Pre-tightening (back-compat): (→ (' params T1 T2) (returns RT))
+  ;; Three accepted shapes:
+  ;;   1. Pre-tightening: (-> (' T1 T2) RT) or (-> (' params T1 T2) (returns RT))
+  ;;   2. Flat positional: (-> T1 T2 … RT)
+  ;;   3. Public-contracts: (-> (param N1 T1 (where P)?)…
+  ;;                            (where CROSS-ARG-P)?…
+  ;;                            RT)
+  ;;      with (param …) and floating (where …) operands. The return
+  ;;      type is the last non-`param`, non-`where` operand.
   (define operands (cdr t))
   (cond
     [(null? operands)
      (error 'parse-type "arrow type expects at least a return type")]
-    ;; Pre-tightening / tightened: 2 operands where the first is a '-list
+    ;; Shape 1: 2 operands where the first is a '-list / labeled params
     [(and (= (length operands) 2)
           (pair? (car operands))
           (or (eq? (car (car operands)) QUOTE-OP)
@@ -139,12 +188,60 @@
      (define param-types (parse-params-form (car operands)))
      (define return-type (parse-returns-form (cadr operands)))
      (type-arrow param-types return-type)]
+    ;; Shape 3: any operand is a (param …) form → public-contracts shape.
+    [(ormap (lambda (op) (and (pair? op) (eq? (car op) 'param))) operands)
+     (parse-arrow-with-params operands)]
     [else
-     ;; Flat — last operand is RT, the rest are param types.
+     ;; Shape 2: flat positional. Last operand is RT.
      (define n (length operands))
      (define param-types (map parse-type (take operands (- n 1))))
      (define return-type (parse-type (list-ref operands (- n 1))))
      (type-arrow param-types return-type)]))
+
+;; Walk a public-contracts arrow's operands left-to-right, collecting
+;; `param` types and `where` (cross-argument) predicates as they appear.
+;; The last non-`param`, non-`where` operand is the return type.
+;; Refinements per-param are absorbed by parse-param itself.
+(define (parse-arrow-with-params operands)
+  (define-values (params cross-where-preds rt-form)
+    (let loop ([rest operands] [params '()] [wheres '()])
+      (cond
+        [(null? rest)
+         (error 'parse-type "arrow with `param`s but no return type")]
+        [(null? (cdr rest))
+         ;; last operand — return type (must not be param or where)
+         (define op (car rest))
+         (when (and (pair? op) (eq? (car op) 'param))
+           (error 'parse-type "arrow return cannot be a `param` form: ~v" op))
+         (when (and (pair? op) (eq? (car op) 'where))
+           (error 'parse-type "arrow return cannot be a `where` form: ~v" op))
+         (values (reverse params) (reverse wheres) op)]
+        [else
+         (define op (car rest))
+         (cond
+           [(and (pair? op) (eq? (car op) 'param))
+            (loop (cdr rest) (cons (parse-param op) params) wheres)]
+           [(and (pair? op) (eq? (car op) 'where) (= (length op) 2))
+            (loop (cdr rest) params (cons (cadr op) wheres))]
+           [else
+            (error 'parse-type
+                   "operand in `param`-containing arrow must be (param …), (where …), or the return type: ~v"
+                   op)])])))
+  ;; Attach cross-arg where-preds to the LAST param (so all earlier param
+  ;; names are in scope). If there are no params, attach to the return.
+  (define enriched-params
+    (cond
+      [(null? cross-where-preds) params]
+      [(null? params)
+       (error 'parse-type "cross-argument `where` requires at least one param")]
+      [else
+       (define last-p (last params))
+       (define rest-ps (drop-right params 1))
+       (define enriched
+         (struct-copy type-param last-p
+                      [preds (append (type-param-preds last-p) cross-where-preds)]))
+       (append rest-ps (list enriched))]))
+  (type-arrow enriched-params (parse-type rt-form)))
 
 (define (parse-params-form form)
   ;; Tightened: (' T1 T2)
@@ -207,6 +304,17 @@
     ;; Nil and (type-prim 'Nil) are equivalent
     [(and (type-nil? a) (type-prim? b) (eq? (type-prim-name b) 'Nil)) #t]
     [(and (type-prim? a) (eq? (type-prim-name a) 'Nil) (type-nil? b)) #t]
+    ;; Public-contracts: structural transparency for refinement layers.
+    ;; A refinement narrows membership of the base — for assignability
+    ;; we compare the BASE shape; predicates carry assignment direction
+    ;; (refined ⊆ base; base ⊄ refined) but type-equal? is set-equality
+    ;; on representation, not predicate equivalence.
+    [(type-param? a)    (type-equal? (type-param-base a) b)]
+    [(type-param? b)    (type-equal? a (type-param-base b))]
+    [(type-refined? a)  (type-equal? (type-refined-base a) b)]
+    [(type-refined? b)  (type-equal? a (type-refined-base b))]
+    [(type-alias? a)    (type-equal? (type-alias-target a) b)]
+    [(type-alias? b)    (type-equal? a (type-alias-target b))]
     [(and (type-arrow? a) (type-arrow? b))
      (and (= (length (type-arrow-params a)) (length (type-arrow-params b)))
           (andmap type-equal?
@@ -247,6 +355,18 @@
   (cond
     [(any-type? expected) #t]
     [(any-type? actual) #t]
+    ;; Public-contracts unwrap: assignability flows through param/refined/alias.
+    ;; Direction asymmetry: a refined actual flows into a base expected
+    ;; (refined ⊆ base); a refined expected does NOT accept a bare base
+    ;; (the caller must supply evidence). For static typing we are
+    ;; permissive — refinement predicates are checked separately by the
+    ;; refinement-check pass; type-compatible? handles representation only.
+    [(type-param? expected)   (type-compatible? (type-param-base expected) actual)]
+    [(type-param? actual)     (type-compatible? expected (type-param-base actual))]
+    [(type-refined? expected) (type-compatible? (type-refined-base expected) actual)]
+    [(type-refined? actual)   (type-compatible? expected (type-refined-base actual))]
+    [(type-alias? expected)   (type-compatible? (type-alias-target expected) actual)]
+    [(type-alias? actual)     (type-compatible? expected (type-alias-target actual))]
     [(and (type-union? expected) (type-union? actual))
      (andmap (lambda (a)
                (ormap (lambda (e) (type-compatible? e a))
