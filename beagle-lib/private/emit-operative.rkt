@@ -112,10 +112,10 @@
     [else (list form)]))
 
 (define (extract-let-pairs form)
-  ;; Tightened: (← N V N V …) — flat by adjacency.
-  ;; Back-compat: (' bindings (bind X V)…)
+  ;; Tightened: (<- N V N V …) — flat by adjacency.
+  ;; Back-compat: (' bindings (bind X V)…), and the old ← glyph
   (cond
-    [(and (pair? form) (eq? (car form) '←))
+    [(and (pair? form) (or (eq? (car form) '<-) (eq? (car form) '←)))
      ;; flat pairs
      (let loop ([rest (cdr form)] [acc '()])
        (cond
@@ -997,8 +997,11 @@
      (define s (symbol->string k))
      (cond
        [(and (> (string-length s) 0) (char=? (string-ref s 0) #\:))
+        ;; :foo — literal Nix attribute name
         (substring s 1)]
-       [else s])]
+       [else
+        ;; bare symbol — Nix dynamic key: "${var}"
+        (format "\"$~a{~a}\"" "" s)])]
     [else (format "~v" k)]))
 
 ;; ============================================================================
