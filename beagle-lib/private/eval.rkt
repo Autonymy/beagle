@@ -615,20 +615,10 @@
 (define STRING->SYMBOL-OP (make-wrapped 'string->symbol string->symbol))
 (define NUMBER->STRING-OP (make-wrapped 'number->string number->string))
 
-;; `str`: Clojure-style string concatenation (any argument coerced to string).
-(define STR-OP
-  (make-wrapped 'str
-    (lambda items
-      (apply string-append
-        (for/list ([i (in-list items)])
-          (cond
-            [(string? i) i]
-            [(symbol? i) (symbol->string i)]
-            [(number? i) (number->string i)]
-            [(boolean? i) (if i "true" "false")]
-            [(eq? i 'nil) ""]
-            [(char? i) (string i)]
-            [else (format "~a" i)]))))))
+;; `str` (Clojure-style string concat) removed from the live Nix loop.
+;; Use `s` (Nix interpolated-string literal form) — it's what the importer
+;; produces and matches Nix's `"…${…}…"` syntax. The portable-target
+;; stdlib catalog still names `str` for cross-target reactivation.
 
 (define STRING-LENGTH-OP (make-wrapped 'string-length string-length))
 (define STRING-UPCASE-OP (make-wrapped 'string-upcase string-upcase))
@@ -788,7 +778,7 @@
                           (symbol->string . ,SYMBOL->STRING-OP)
                           (string->symbol . ,STRING->SYMBOL-OP)
                           (number->string . ,NUMBER->STRING-OP)
-                          (str            . ,STR-OP)
+                          ;; `str` retired in favor of `s` (see comment near STR-OP).
                           (string-length  . ,STRING-LENGTH-OP)
                           (string-upcase  . ,STRING-UPCASE-OP)
                           (string-downcase . ,STRING-DOWNCASE-OP)

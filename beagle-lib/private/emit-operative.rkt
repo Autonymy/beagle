@@ -858,11 +858,9 @@
     [(get)         (nix-get args)]
     [(get-or)      (nix-get-or args)]
     [(assoc)       (nix-assoc args)]
-    [(str)         (format "(builtins.concatStringsSep \"\" [~a])"
-                           (string-join
-                             (for/list ([a (in-list args)])
-                               (format "(toString ~a)" (nix->string a)))
-                             " "))]
+    ;; `str` retired from the Nix emitter — use `(s …)` for Nix
+    ;; interpolated strings. (See eval.rkt comment near the removed
+    ;; STR-OP for the rationale.)
     [(vector) (format "[ ~a ]" (string-join (map nix->string args) " "))]
     [(hash-map) (nix-attrset args)]
     [(hash-set) (format "[ ~a ]" (string-join (map nix->string args) " "))]
