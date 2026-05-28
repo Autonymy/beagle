@@ -9,9 +9,12 @@ model with explicit-mutation discipline.
 eval.rkt              bootstrap evaluator + ~70 primitive operatives
 eval-standard.rkt     standard forms: fn, defn, let, cond, match, claim,
                       defrecord, defunion, at, set-at!, hash-map ops, etc.
-check-operative.rkt   type checker against operative signatures
+check-operative.rkt   type checker — refinements, public-contracts,
+                      named binders (param), `(refine T (where P))`
 macro-expand.rkt      compile-time evaluation of pure operatives
-emit-operative.rkt    backend emission for 7 targets
+emit-operative.rkt    Nix backend emission (live). Dormant target
+                      backends live in dormant/ and only register when
+                      explicitly required.
 pipeline.rkt          end-to-end: read → expand → check → emit (or run)
 ```
 
@@ -19,9 +22,10 @@ CLI tools in `bin/`:
 
 ```
 beagle-op-check       type-check a source file
-beagle-op-compile     check + emit for a target (--target rkt|clj|cljs|js|nix|py|sql)
+beagle-op-compile     check + emit for the file's #lang target (Nix is live;
+                      others require BEAGLE_ALL_TARGETS=1)
 beagle-op-run         expand + evaluate via operative interpreter
-beagle-migrate-turtles  convert v0.15 surface to turtles (one-shot tool)
+beagle-migrate-turtles  convert v0.15 surface to current surface (one-shot)
 ```
 
 ## The model in one paragraph

@@ -38,13 +38,16 @@ mkdir -p "$DIR"
 cd "$DIR"
 
 # --- Target → lang/extension ---
+# Nix is the live target; non-Nix targets are dormant and need
+# BEAGLE_ALL_TARGETS=1 at runtime, but the scaffolding can still
+# be generated against them.
 case "$TARGET" in
-    clj)  LANG="beagle";      EXT="bclj" ;;
-    cljs) LANG="beagle/cljs"; EXT="bcljs" ;;
-    js)   LANG="beagle/js";   EXT="bjs" ;;
     nix)  LANG="beagle/nix";  EXT="bnix" ;;
-    sql)  LANG="beagle/sql";  EXT="bsql" ;;
-    *)    echo "unknown target: $TARGET (use clj, cljs, js, nix, sql)" >&2; exit 1 ;;
+    clj)  LANG="beagle";      EXT="bclj"  ;; # dormant
+    cljs) LANG="beagle/cljs"; EXT="bcljs" ;; # dormant
+    js)   LANG="beagle/js";   EXT="bjs"   ;; # dormant
+    sql)  LANG="beagle/sql";  EXT="bsql"  ;; # dormant
+    *)    echo "unknown target: $TARGET (nix is live; clj/cljs/js/sql are dormant)" >&2; exit 1 ;;
 esac
 
 # --- Write example source ---

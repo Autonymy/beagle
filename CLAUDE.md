@@ -374,7 +374,7 @@ usage.
   no broader pattern. Use `defprotocol` + `extend-type` (type dispatch)
   or `match` (value dispatch).
 - **`deftype`** — bundled `defrecord` + protocol impls into one form.
-  Two distinct concepts: use `(defrecord Name [fields])` for the data
+  Two distinct concepts: use `(defrecord Name (fields …))` for the data
   shape and `(extend-type Name Protocol (method ...))` for the protocol
   attachment.
 - **`->`** — first-arg threading. Positional convenience, not semantic

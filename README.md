@@ -149,7 +149,7 @@ Requires [Racket](https://racket-lang.org/) 8.x+.
 git clone https://github.com/tompassarelli/beagle
 cd beagle
 raco pkg install --link beagle-lib/ beagle-test/ beagle/
-bin/beagle-test    # ~1190 active-tier tests
+bin/beagle-test    # Nix-tier active-tier tests (~55s)
 ```
 
 For NixOS users dogfooding their config:
@@ -236,11 +236,12 @@ generate from itself:
 
 ## Status
 
-`#lang beagle` v0.15.0 — 1190 active-tier tests passing. **No v1.0
-until others have used it in anger.** The author dogfoods on a 220-file
-NixOS config ([firnos](https://github.com/tompassarelli/firnos)) —
-schema-typed end-to-end, system builds from `flake.bnix` directly.
-Production-grade for one user, ready-for-adventure for others.
+`#lang beagle` v0.15.0 — Nix-tier active loop is green; dormant-tier
+opt-in via `BEAGLE_ALL_TARGETS=1`. **No v1.0 until others have used it
+in anger.** The author dogfoods on a 220-file NixOS config
+([firnos](https://github.com/tompassarelli/firnos)) — schema-typed
+end-to-end, system builds from `flake.bnix` directly. Production-grade
+for one user, ready-for-adventure for others.
 
 If you're a NixOS user who wants to try it: clone [firnos](https://github.com/tompassarelli/firnos)
 for a real working example, or scaffold from scratch — `beagle init`,
