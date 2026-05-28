@@ -386,6 +386,28 @@
 (define REQUIRE-OP       (make-noop-meta 'require))
 (define DECLARE-EXTERN-OP (make-noop-meta 'declare-extern))
 
+;; module: Nix's `(module (' params P) (body ...))` — at runtime just
+;; evaluates the body in a child env with params bound to Anys (so that
+;; running a Nix module gives a hashmap result; module is structural
+;; for Nix emission, not for the operative interpreter).
+(define MODULE-OP
+  (make-raw 'module
+    (lambda (args env)
+      (cond
+        [(= (length args) 2)
+         (define body-form (cadr args))
+         (define new-env (env-extend env))
+         (evaluate body-form new-env)]
+        [else (void)]))))
+
+(define FLAKE-OP
+  (make-raw 'flake
+    (lambda (args env)
+      ;; (flake VALUE) — evaluate VALUE in env, return it
+      (cond
+        [(= (length args) 1) (evaluate (car args) env)]
+        [else (void)]))))
+
 ;; --- list primitives ------------------------------------------------------
 
 (define (list-primitive name racket-proc)
@@ -653,6 +675,8 @@
                           (import        . ,IMPORT-OP)
                           (require       . ,REQUIRE-OP)
                           (declare-extern . ,DECLARE-EXTERN-OP)
+                          (module        . ,MODULE-OP)
+                          (flake         . ,FLAKE-OP)
                           (set!          . ,SET!-OP)
                           (cons          . ,CONS-OP)
                           (car           . ,CAR-OP)
