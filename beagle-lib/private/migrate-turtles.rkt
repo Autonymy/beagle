@@ -552,15 +552,22 @@
                        [(bracketed? param-form) (bracket-body param-form)]
                        [(list? param-form) param-form]
                        [else '()]))
-     (define names
+     ;; Preserve full param shape so defaults survive to the emitter:
+     ;;   bare symbol      → symbol
+     ;;   (name default)   → (name default-migrated)
+     ;;   `...`            → `...`
+     (define params
        (for/list ([p (in-list entries)])
          (cond
            [(eq? p '...) p]
            [(symbol? p) p]
-           [(and (list? p) (= (length p) 2) (symbol? (car p))) (car p)]
-           [(and (list? p) (= (length p) 3) (eq? (cadr p) ':)) (car p)]
+           [(and (list? p) (= (length p) 2) (symbol? (car p)))
+            (list (car p) (migrate-expr (cadr p)))]
+           [(and (list? p) (= (length p) 3) (eq? (cadr p) ':))
+            ;; Typed param — drop the type, keep the name (Nix is dynamic)
+            (car p)]
            [else (error 'migrate-turtles "unrecognized fn-set param: ~v" p)])))
-     (list* 'module (Q names) (map migrate-expr body))]
+     (list* 'module (Q params) (map migrate-expr body))]
     [_ (error 'migrate-turtles "unrecognized fn-set shape: ~v" form)]))
 
 ;; --- let migration --------------------------------------------------------

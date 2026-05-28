@@ -835,9 +835,10 @@
     [(let)         (nix-let args)]
     [(if)          (nix-if args)]
     [(claim)       ""]
-    [(ns define-mode define-target import require declare-extern) ""]
+    [(ns define-mode define-target require declare-extern) ""]
     [(defrecord defunion defenum) ""]
     [(body)        (nix-body args)]
+    [(import)      (format "(import ~a)" (string-join (map nix->string args) " "))]
     [(module)      (nix-module args)]
     [(flake)       (nix-flake args)]
     [(with)        (nix-with args)]
@@ -907,12 +908,17 @@
      (define raw-params (extract-params-list params-form))
      (define rest? (memq '... raw-params))
      (define params (filter (lambda (p) (not (eq? p '...))) raw-params))
+     (define param-strs
+       (for/list ([p (in-list params)])
+         (cond
+           [(symbol? p) (symbol->string p)]
+           [(and (pair? p) (= (length p) 2) (symbol? (car p)))
+            (format "~a ? ~a" (symbol->string (car p)) (nix->string (cadr p)))]
+           [else (format "~a" p)])))
      (define pattern
        (if rest?
-           (format "{ ~a, ... }"
-                   (string-join (map symbol->string params) ", "))
-           (format "{ ~a }"
-                   (string-join (map symbol->string params) ", "))))
+           (format "{ ~a, ... }" (string-join param-strs ", "))
+           (format "{ ~a }" (string-join param-strs ", "))))
      (define body-str
        (cond
          [(= (length body-exprs) 1) (nix->string (car body-exprs))]
