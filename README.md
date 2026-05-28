@@ -9,24 +9,11 @@ Typed Racket) sit in [`beagle-lib/private/dormant/`](beagle-lib/private/dormant/
 parked, not deleted, reactivate with `BEAGLE_ALL_TARGETS=1`. The live
 loop is Nix only.
 
-## Why the surface looks the way it does
-
-The load-bearing decision is **compute-by-default**: forms run unless
-marked inert; map keys are keywords (`:enable`); inert data is written
-explicitly via `'(…)`. This is what makes the repair pipeline possible
-— a statically analyzable surface is the prerequisite for typed AST,
-confidence-ranked repair, oracle-verified fixes, and refinement
-checks. The colons are the visible cost of the property that buys the
-entire analysis story.
-
-→ [`docs/compute-by-default.md`](docs/compute-by-default.md) — the full argument
-
 ## Design notes
 
 - [`docs/motivation.md`](docs/motivation.md) — the bet: typed-Lisp-for-AI threading the needle between sprawl and bloat
 - [`docs/principles.md`](docs/principles.md) — seven load-bearing surface principles
 - [`docs/lock-in.md`](docs/lock-in.md) — form changes require measurable deltas on documented benchmarks
-- [`docs/compute-by-default.md`](docs/compute-by-default.md) — why evaluation-by-default and colons-for-keys are non-negotiable
 - [`docs/research.md`](docs/research.md) — frozen results from the lab (E1–E22)
 
 ## Targets
