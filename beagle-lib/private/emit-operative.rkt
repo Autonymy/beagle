@@ -112,20 +112,31 @@
     [else (list form)]))
 
 (define (extract-let-pairs form)
-  ;; (' bindings (bind X V)...) → ((X V)...)
+  ;; Tightened: (← N V N V …) — flat by adjacency.
+  ;; Back-compat: (' bindings (bind X V)…)
   (cond
+    [(and (pair? form) (eq? (car form) '←))
+     ;; flat pairs
+     (let loop ([rest (cdr form)] [acc '()])
+       (cond
+         [(null? rest) (reverse acc)]
+         [(null? (cdr rest)) (reverse acc)]
+         [else (loop (cddr rest)
+                     (cons (list (car rest) (cadr rest)) acc))]))]
     [(and (pair? form) (quote-head? (car form)))
      (define rest (cdr form))
      (cond
+       [(and (pair? rest) (eq? (car rest) 'bindings))
+        (for/list ([b (in-list (cdr rest))]
+                   #:when (and (pair? b) (eq? (car b) 'bind) (= (length b) 3)))
+          (list (cadr b) (caddr b)))]
        [(and (= (length rest) 1) (pair? (car rest)))
         (extract-let-pairs (car rest))]
        [else (extract-let-pairs rest)])]
     [(and (pair? form) (eq? (car form) 'bindings))
-     (for/list ([b (in-list (cdr form))])
-       (cond
-         [(and (pair? b) (eq? (car b) 'bind) (= (length b) 3))
-          (list (cadr b) (caddr b))]
-         [else (error 'emit "bad let binding: ~v" b)]))]
+     (for/list ([b (in-list (cdr form))]
+                #:when (and (pair? b) (eq? (car b) 'bind) (= (length b) 3)))
+       (list (cadr b) (caddr b)))]
     [else '()]))
 
 (define (mangle name target)
@@ -317,29 +328,53 @@
     [else (error 'rkt-if "bad if: ~v" args)]))
 
 (define (rkt-cond args)
-  (define clauses
-    (for/list ([c (in-list args)])
+  (define clauses (cond-clauses args))
+  (define rkt-clauses
+    (for/list ([p (in-list clauses)])
+      (define t (car p)) (define r (cadr p))
       (cond
-        [(and (pair? c) (eq? (car c) 'case) (= (length c) 3))
-         (define t (cadr c)) (define r (caddr c))
-         (cond
-           [(eq? t ':else) (format "[else ~a]" (rkt->string r))]
-           [else (format "[~a ~a]" (rkt->string t) (rkt->string r))])]
-        [else (error 'rkt-cond "bad clause: ~v" c)])))
-  (format "(cond ~a)" (string-join clauses " ")))
+        [(eq? t ':else) (format "[else ~a]" (rkt->string r))]
+        [else (format "[~a ~a]" (rkt->string t) (rkt->string r))])))
+  (format "(cond ~a)" (string-join rkt-clauses " ")))
+
+(define (cond-clauses args)
+  ;; Tightened: flat (TEST RESULT TEST RESULT …).
+  ;; Back-compat: (case TEST RESULT) wrappers.
+  (cond
+    [(and (pair? args) (pair? (car args)) (eq? (caar args) 'case))
+     (for/list ([c (in-list args)])
+       (list (cadr c) (caddr c)))]
+    [else
+     (let loop ([rest args] [acc '()])
+       (cond
+         [(null? rest) (reverse acc)]
+         [(null? (cdr rest)) (reverse acc)]
+         [else (loop (cddr rest)
+                     (cons (list (car rest) (cadr rest)) acc))]))]))
+
+(define (match-arms args)
+  ;; Tightened: flat (PAT RESULT PAT RESULT …).
+  ;; Back-compat: (arm PAT RESULT) wrappers.
+  (cond
+    [(and (pair? args) (pair? (car args)) (eq? (caar args) 'arm))
+     (for/list ([a (in-list args)])
+       (list (cadr a) (caddr a)))]
+    [else
+     (let loop ([rest args] [acc '()])
+       (cond
+         [(null? rest) (reverse acc)]
+         [(null? (cdr rest)) (reverse acc)]
+         [else (loop (cddr rest)
+                     (cons (list (car rest) (cadr rest)) acc))]))]))
 
 (define (rkt-match args)
-  ;; (match SCRUT (arm PAT RESULT)...)
   (define scrut (car args))
-  (define arms (cdr args))
+  (define arms (match-arms (cdr args)))
   (define racket-clauses
-    (for/list ([a (in-list arms)])
-      (cond
-        [(and (pair? a) (eq? (car a) 'arm) (= (length a) 3))
-         (format "[~a ~a]"
-                 (rkt-pattern->string (cadr a))
-                 (rkt->string (caddr a)))]
-        [else (error 'rkt-match "bad arm: ~v" a)])))
+    (for/list ([p (in-list arms)])
+      (format "[~a ~a]"
+              (rkt-pattern->string (car p))
+              (rkt->string (cadr p)))))
   (format "(match ~a ~a)"
           (rkt->string scrut)
           (string-join racket-clauses " ")))
@@ -502,27 +537,23 @@
     [else (error 'clj-if "bad if: ~v" args)]))
 
 (define (clj-cond args)
+  (define clauses (cond-clauses args))
   (define pairs
-    (for/list ([c (in-list args)])
+    (for/list ([p (in-list clauses)])
+      (define t (car p)) (define r (cadr p))
       (cond
-        [(and (pair? c) (eq? (car c) 'case) (= (length c) 3))
-         (define t (cadr c)) (define r (caddr c))
-         (cond
-           [(eq? t ':else) (format ":else ~a" (clj->string r))]
-           [else (format "~a ~a" (clj->string t) (clj->string r))])])))
+        [(eq? t ':else) (format ":else ~a" (clj->string r))]
+        [else (format "~a ~a" (clj->string t) (clj->string r))])))
   (format "(cond ~a)" (string-join pairs " ")))
 
 (define (clj-match args)
-  ;; Clojure has match in core.match. Emit (clojure.core.match/match SCRUT [PAT RESULT]...)
   (define scrut (car args))
-  (define arms (cdr args))
+  (define arms (match-arms (cdr args)))
   (define clauses
-    (for/list ([a (in-list arms)])
-      (cond
-        [(and (pair? a) (eq? (car a) 'arm) (= (length a) 3))
-         (format "~a ~a"
-                 (clj-pattern->string (cadr a))
-                 (clj->string (caddr a)))])))
+    (for/list ([p (in-list arms)])
+      (format "~a ~a"
+              (clj-pattern->string (car p))
+              (clj->string (cadr p)))))
   (format "(match ~a ~a)" (clj->string scrut) (string-join clauses " ")))
 
 (define (clj-pattern->string p)
@@ -738,20 +769,19 @@
 
 (define (js-cond args indent)
   ;; Emit as nested ternary chain.
-  (let loop ([clauses args])
+  (define clauses (cond-clauses args))
+  (let loop ([rest clauses])
     (cond
-      [(null? clauses) "null"]
+      [(null? rest) "null"]
       [else
-       (define c (car clauses))
+       (define p (car rest))
+       (define t (car p)) (define r (cadr p))
        (cond
-         [(and (pair? c) (eq? (car c) 'case) (= (length c) 3))
-          (define t (cadr c)) (define r (caddr c))
-          (cond
-            [(eq? t ':else) (js->string r indent)]
-            [else (format "(~a ? ~a : ~a)"
-                          (js->string t indent)
-                          (js->string r indent)
-                          (loop (cdr clauses)))])])])))
+         [(eq? t ':else) (js->string r indent)]
+         [else (format "(~a ? ~a : ~a)"
+                       (js->string t indent)
+                       (js->string r indent)
+                       (loop (cdr rest)))])])))
 
 (define (js-body args indent)
   (cond
@@ -1089,20 +1119,19 @@
     [else (error 'py-if "bad if: ~v" args)]))
 
 (define (py-cond args indent)
-  (let loop ([clauses args])
+  (define clauses (cond-clauses args))
+  (let loop ([rest clauses])
     (cond
-      [(null? clauses) "None"]
+      [(null? rest) "None"]
       [else
-       (define c (car clauses))
+       (define p (car rest))
+       (define t (car p)) (define r (cadr p))
        (cond
-         [(and (pair? c) (eq? (car c) 'case) (= (length c) 3))
-          (define t (cadr c)) (define r (caddr c))
-          (cond
-            [(eq? t ':else) (py->string r indent)]
-            [else (format "(~a if ~a else ~a)"
-                          (py->string r indent)
-                          (py->string t indent)
-                          (loop (cdr clauses)))])])])))
+         [(eq? t ':else) (py->string r indent)]
+         [else (format "(~a if ~a else ~a)"
+                       (py->string r indent)
+                       (py->string t indent)
+                       (loop (cdr rest)))])])))
 
 (define (py-body args indent)
   (cond
