@@ -6,14 +6,14 @@ BIN="$BEAGLE_DIR/bin"
 
 usage() {
     cat >&2 <<'EOF'
-beagle — typed authoring layer for Clojure/ClojureScript
+beagle — typed authoring layer for Nix (dormant targets: Clj, CLJS, JS, Py, Rkt, SQL)
 
 Usage: beagle <command> [args...]
 
 Commands:
   check [--profile 0|1|2|3] [FILE-OR-DIR...]
                             Type-check without emitting (batch)
-  build [FILE-OR-DIR...]    Compile to Clojure (batch)
+  build [FILE-OR-DIR...]    Compile to target (Nix by default)
   fix [--dry-run|--apply] [FILE-OR-DIR...]
                             Auto-fix high-confidence type errors
   sig <fn-name> <path...>   Print a function's typed signature
