@@ -112,12 +112,31 @@
         (error 'let "expected (let bindings-form body...), got ~v args" (length args)))
       (define bindings-form (car args))
       (define body-exprs (cdr args))
-      ;; Create a fresh child env and evaluate the binding-list in it.
-      ;; The binding-list is `(← N V N V …)`; `←` walks pairs and binds
-      ;; in whichever env it's evaluated in — so binding lands in new-env.
+      ;; Current surface: bindings-form is a vector literal [N V N V …]
+      ;; (reader-tagged as (#%brackets …)). Walk the pairs sequentially,
+      ;; binding each name in the growing child env so later bindings can
+      ;; reference earlier ones.
       (define new-env (env-extend call-env))
-      (evaluate bindings-form new-env)
+      (define operands (extract-larrow-operands bindings-form))
+      (bind-pairs! 'let operands new-env)
       (evaluate-all body-exprs new-env))))
+
+;; Walk flat name/value pairs, evaluating each value in the env at that
+;; point and defining the name. Sequential, not parallel — the second
+;; binding sees the first.
+(define (bind-pairs! who pairs env)
+  (when (odd? (length pairs))
+    (error who "odd number of operands in binding vector: ~v" pairs))
+  (let loop ([rest pairs])
+    (cond
+      [(null? rest) (void)]
+      [else
+       (define name (car rest))
+       (unless (symbol? name)
+         (error who "binding name must be a symbol, got ~v" name))
+       (define val (evaluate (cadr rest) env))
+       (env-define! env name val)
+       (loop (cddr rest))])))
 
 ;; --- cond: multi-way conditional ----------------------------------------
 
@@ -354,10 +373,17 @@
                          (lambda (sig) (loop (recur-signal-values sig)))])
           (evaluate-all body-exprs new-env))))))
 
-;; Extract operands from a (← …) form. Falls through gracefully if the
-;; head isn't `←` (back-compat with the pre-binding-operator shape).
+;; Extract operands from a binding form. The current surface is a
+;; vector literal: `[name1 val1 name2 val2 …]`. `<-` is removed.
+;; Older `(<- …)` and `(' bindings …)` shapes still recognized for the
+;; migrator's transitional runs; the canonical form is the vector.
 (define (extract-larrow-operands form)
   (cond
+    ;; Current: vector literal `[name val …]`
+    [(and (pair? form) (eq? (car form) '#%brackets))
+     (cdr form)]
+    ;; Legacy `<-` head — kept as a back-compat accept; emit no longer
+    ;; produces this shape.
     [(and (pair? form) (eq? (car form) '<-))
      (cdr form)]
     ;; Pre-binding-operator: (' bindings (bind X V)…)
@@ -373,10 +399,12 @@
                   [else '()])))]
        [(and (= (length rest) 1) (pair? (car rest)) (eq? (caar rest) 'bindings))
         (extract-larrow-operands (car form))]
-       [else
-        ;; (' N V N V …) — the older intermediate shape we just emitted
-        rest])]
+       [else rest])]
     [else '()]))
+
+;; Reserved: future `(param x Int)` wrapped form for the rare typed
+;; local-binding case. Default and common case is the bare vector.
+;; Do NOT implement until justified by real use; this is a sealed door.
 
 (define (make-recur-op)
   (make-raw-operative

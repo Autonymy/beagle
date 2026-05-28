@@ -273,9 +273,10 @@
         #f))))
 
 (define (extract-params params-data)
-  ;; Tightened: params-data is just the list of names `(x y z)` returned
-  ;; by evaluating `(' x y z)` at the call site.
-  ;; Back-compat: old shape `(params x y z)` still accepted.
+  ;; Current surface: params-data is a list of names. The vector literal
+  ;; `[a b c]` evaluates to the symbol list `(a b c)` here (data-literal
+  ;; semantics per role-locality §5; contents inert, no constructor call).
+  ;; Back-compat: old `(params x y z)` labeled head still accepted.
   (cond
     [(null? params-data) '()]
     [(and (pair? params-data) (eq? (car params-data) 'params))
@@ -713,8 +714,11 @@
   (define e (make-env #f))
   (for ([entry (in-list `((,QUOTE-OP-SYM . ,QUOTE-OP)
                           (quote         . ,QUOTE-OP)      ; alias for ' (Racket reader compat)
-                          (<-            . ,LARROW-OP)     ; binding operator
-                          (params        . ,PARAMS-OP)     ; role: parameter list
+                          ;; `<-` removed: bindings now use vector literal
+                          ;; `[name val …]` directly (its slot in let/loop/
+                          ;; doseq/for/fn/defn/module carries the role).
+                          ;; `params` removed: bare vector in the param slot
+                          ;; IS the param list; no labeled wrapper needed.
                           (fields        . ,FIELDS-OP)     ; role: field list
                           (variants      . ,VARIANTS-OP)   ; role: variant list
                           (fns           . ,FNS-OP)        ; role: letfn fn list

@@ -84,9 +84,18 @@
   (or (eq? sym QUOTE-OP) (eq? sym 'quote)))
 
 (define (extract-params-list form)
-  ;; Role-local: structural sub-lists are head-tagged (params|fields|variants|fns|arities|vars|path A B...).
-  ;; Back-compat shapes still accepted: (' A B...), (' LABEL A B...), Racket-quoted (quote (...)).
+  ;; Current surface: bare vector [a b c …] (reader-tagged as (#%brackets …)).
+  ;; Position-as-role: the parser/operative dispatches by the enclosing head
+  ;; (defn/fn/module) and the vector IS the param list — no `(params …)`
+  ;; wrapper needed.
+  ;;
+  ;; Back-compat shapes accepted for unmigrated test inputs:
+  ;;   - (params A B …) labeled head (pre-vectors-for-bindings tightening)
+  ;;   - (' A B …) raw quote-headed (pre-labeled-heads tightening)
+  ;;   - (fields|variants|vars|path|arities|fns A B…) other labels
   (cond
+    [(and (pair? form) (eq? (car form) '#%brackets))
+     (cdr form)]
     [(and (pair? form) (symbol? (car form))
           (memq (car form) '(params fields vars variants path arities fns)))
      (cdr form)]
@@ -94,11 +103,9 @@
      (define rest (cdr form))
      (cond
        [(and (= (length rest) 1) (pair? (car rest)))
-        ;; (quote (PAYLOAD-LIST)) — Racket-style single-arg quote
         (extract-params-list (car rest))]
        [(and (pair? rest) (symbol? (car rest))
              (memq (car rest) '(params fields vars variants path arities fns)))
-        ;; pre-tightening label inside `'`
         (cdr rest)]
        [else rest])]
     [(null? form) '()]
@@ -111,17 +118,21 @@
     [else (list form)]))
 
 (define (extract-let-pairs form)
-  ;; Tightened: (<- N V N V …) — flat by adjacency.
-  ;; Back-compat: (' bindings (bind X V)…), and the old ← glyph
+  ;; Current surface: bare vector [N V N V …] (reader-tagged as
+  ;; (#%brackets …)). Walk pairs by adjacency.
+  ;; Back-compat: (<- …) head and legacy (' bindings …) shape.
+  (define (pair-up rest)
+    (let loop ([rest rest] [acc '()])
+      (cond
+        [(null? rest) (reverse acc)]
+        [(null? (cdr rest)) (reverse acc)]
+        [else (loop (cddr rest)
+                    (cons (list (car rest) (cadr rest)) acc))])))
   (cond
+    [(and (pair? form) (eq? (car form) '#%brackets))
+     (pair-up (cdr form))]
     [(and (pair? form) (or (eq? (car form) '<-) (eq? (car form) '←)))
-     ;; flat pairs
-     (let loop ([rest (cdr form)] [acc '()])
-       (cond
-         [(null? rest) (reverse acc)]
-         [(null? (cdr rest)) (reverse acc)]
-         [else (loop (cddr rest)
-                     (cons (list (car rest) (cadr rest)) acc))]))]
+     (pair-up (cdr form))]
     [(and (pair? form) (quote-head? (car form)))
      (define rest (cdr form))
      (cond

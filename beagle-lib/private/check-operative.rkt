@@ -920,27 +920,25 @@
      (error 'check-defn "unrecognized shape: ~v" args)]))
 
 (define (extract-params-list params-form)
-  ;; Role-local: structural sub-lists are head-tagged (params|fields|variants|fns|arities|vars|path A B...).
-  ;; Back-compat: (' A B...), (' LABEL A B...), and Racket (quote ...) still accepted.
+  ;; Current surface: bare vector [a b c …] (reader-tagged as (#%brackets …)).
+  ;; Position-as-role: the param vector stands alone — no `(params …)`
+  ;; wrapper. Back-compat shapes accepted for unmigrated test inputs.
   (cond
+    [(and (pair? params-form) (eq? (car params-form) '#%brackets))
+     (cdr params-form)]
     [(and (pair? params-form) (symbol? (car params-form))
           (memq (car params-form) '(params fields vars variants path arities fns)))
-     ;; role-local labeled form — drop the head
      (cdr params-form)]
     [(and (pair? params-form) (or (eq? (car params-form) QUOTE-OP)
                                    (eq? (car params-form) 'quote)))
      (define rest (cdr params-form))
      (cond
        [(and (= (length rest) 1) (pair? (car rest)))
-        ;; (quote (PAYLOAD-LIST)) shape from Racket reader
         (extract-params-list (car rest))]
        [(and (pair? rest) (symbol? (car rest))
              (memq (car rest) '(params fields vars variants path arities fns)))
-        ;; pre-tightening label inside `'`
         (cdr rest)]
-       [else
-        ;; tightened — `(' A B...)` returns (A B...)
-        rest])]
+       [else rest])]
     [(null? params-form) '()]
     [else '()]))
 

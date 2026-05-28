@@ -53,21 +53,25 @@
 ;; The helper here takes a Racket list of items and emits the
 ;; variadic `'` form ('-sym ITEMS...).
 (define QUOTE-OP (string->symbol "'"))
-(define LARROW-OP '<-)
+(define BRACKET-OP '#%brackets)
 
 (define (Q items)
   ;; Splat ITEMS as operands of the `'` operator (inert data).
   ;; Reserved for code-as-data / paths / inert lists.
-  ;; STRUCTURAL roles use their own labeled heads (P, F, V, …).
   (cons QUOTE-OP items))
 
 (define (L items)
-  ;; Splat ITEMS as operands of the `<-` operator (binding list).
-  (cons LARROW-OP items))
+  ;; Binding zone — a bare vector literal `[name val name val …]`.
+  ;; Was `(<- …)`; binding head removed in favor of position-as-role
+  ;; (the vector is the binding zone because it sits in let/loop/doseq/
+  ;; for's first operand slot).
+  (cons BRACKET-OP items))
 
 (define (P items)
-  ;; Parameter list — head-tagged structural role (defn/fn/module params).
-  (cons 'params items))
+  ;; Parameter list — a bare vector literal `[a b c …]`.
+  ;; Was `(params …)`; labeled head removed because the vector's slot
+  ;; in defn/fn/module already carries the role.
+  (cons BRACKET-OP items))
 
 (define (F items)
   ;; Field list — head-tagged structural role (defrecord fields).
