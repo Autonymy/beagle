@@ -1,6 +1,6 @@
 #lang racket/base
 
-;; End-to-end pipeline tests: read source → check → emit → (optionally) run.
+;; End-to-end pipeline tests: read source -> check -> emit -> (optionally) run.
 
 (require rackunit
          racket/file
@@ -21,9 +21,9 @@
 
 (test-case "read-source-string parses #lang line + forms"
   (define-values (lang forms)
-    (read-source-string "#lang beagle/clj\n(+ 1 2)\n(claim foo ∈ Int)"))
+    (read-source-string "#lang beagle/clj\n(+ 1 2)\n(claim foo :type Int)"))
   (check-equal? lang "#lang beagle/clj")
-  (check-equal? forms '((+ 1 2) (claim foo ∈ Int))))
+  (check-equal? forms '((+ 1 2) (claim foo :type Int))))
 
 ;; --- detect-target ------------------------------------------------------
 
@@ -98,7 +98,7 @@
   ;; Need a structural mismatch the gradual checker catches: arity error.
   (with-temp-source
     "#lang beagle/rkt
-(claim f ∈ (→ (' params Int Int) (returns Int)))
+(claim f :type (-> (' params Int Int) (returns Int)))
 (defn f (' params a b) (body (+ a b)))
 (f 1 2 3)\n"
     (lambda (path)

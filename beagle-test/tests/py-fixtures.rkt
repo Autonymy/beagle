@@ -67,7 +67,7 @@
   (check-true (string-contains? out "sorted(xs)"))
   (check-true (string-contains? out "reversed(xs)")))
 
-;; --- classes (defrecord → dataclass) ---------------------------------------
+;; --- classes (defrecord -> dataclass) ---------------------------------------
 
 (test-case "py-classes fixture — defrecord emits frozen dataclass"
   (define out (py-fixture "py-classes.bpy"))
@@ -85,7 +85,7 @@
 
 ;; --- comprehensions --------------------------------------------------------
 
-(test-case "py-comprehensions fixture — for → list comprehension"
+(test-case "py-comprehensions fixture — for -> list comprehension"
   (define out (py-fixture "py-comprehensions.bpy"))
   (check-true (string-contains? out "[(x * x) for x in xs]"))
   (check-true (string-contains? out "for x in xs if "))
@@ -97,7 +97,7 @@
 
 ;; --- exceptions / deferror / try-catch -------------------------------------
 
-(test-case "py-exceptions fixture — deferror → class hierarchy, try/except"
+(test-case "py-exceptions fixture — deferror -> class hierarchy, try/except"
   (define out (py-fixture "py-exceptions.bpy"))
   (check-true (string-contains? out "class DomainError(Exception):"))
   (check-true (string-contains? out "class Overflow(DomainError):"))
@@ -107,11 +107,11 @@
   (check-true (string-contains? out "except ZeroDivisionError as e:"))
   (check-true (string-contains? out "except ValueError as e:")))
 
-;; --- stdlib modules (math, json) — slashed names → dotted ------------------
+;; --- stdlib modules (math, json) — slashed names -> dotted ------------------
 
-(test-case "py-stdlib-modules fixture — slashed-name → dotted Python"
+(test-case "py-stdlib-modules fixture — slashed-name -> dotted Python"
   (define out (py-fixture "py-stdlib-modules.bpy"))
-  ;; math/sqrt → math.sqrt (not math/sqrt, which would be invalid Python)
+  ;; math/sqrt -> math.sqrt (not math/sqrt, which would be invalid Python)
   (check-true (string-contains? out "math.pi"))
   (check-true (string-contains? out "math.sqrt(n)"))
   (check-true (string-contains? out "math.floor(n)"))
@@ -123,7 +123,7 @@
 
 ;; --- match / defunion / cond -----------------------------------------------
 
-(test-case "py-match fixture — defunion → ADT, match → match/case"
+(test-case "py-match fixture — defunion -> ADT, match -> match/case"
   (define out (py-fixture "py-match.bpy"))
   (check-true (string-contains? out "class Shape:"))
   (check-true (string-contains? out "class Circle(Shape):"))
@@ -132,7 +132,7 @@
   (check-true (string-contains? out "match s:"))
   (check-true (string-contains? out "case Circle(r):"))
   (check-true (string-contains? out "case Rect(w, h):"))
-  ;; cond → if/elif/else
+  ;; cond -> if/elif/else
   (check-true (string-contains? out "if (n == 0):"))
   (check-true (string-contains? out "elif (n == 1):"))
   (check-true (string-contains? out "else:")))
@@ -145,7 +145,7 @@
   (check-true (string-contains? out "def distance(p):"))
   (check-true (string-contains? out "def classify(n):"))
   (check-true (string-contains? out "def factorial(n):"))
-  ;; loop/recur → while loop or recursion
+  ;; loop/recur -> while loop or recursion
   (check-true (or (string-contains? out "while ")
                   (string-contains? out "return factorial")))
   ;; try/catch

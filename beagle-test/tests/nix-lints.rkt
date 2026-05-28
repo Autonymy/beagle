@@ -26,35 +26,35 @@
 (define (lints-include? str warning-rx)
   (regexp-match? warning-rx str))
 
-(test-case "(lib/mkIf false ...) → dead code warning"
+(test-case "(lib/mkIf false ...) -> dead code warning"
   (define out (lint-output "(def x : Any (lib/mkIf false {:foo 1}))"))
   (check-true (lints-include? out #rx"dead code")))
 
-(test-case "(lib/mkIf true ...) → always-on warning"
+(test-case "(lib/mkIf true ...) -> always-on warning"
   (define out (lint-output "(def x : Any (lib/mkIf true {:foo 1}))"))
   (check-true (lints-include? out #rx"always-on")))
 
-(test-case "(lib/mkIf X X) → typo warning"
+(test-case "(lib/mkIf X X) -> typo warning"
   (define out (lint-output "(def x : Any (lib/mkIf y y))"))
   (check-true (lints-include? out #rx"likely a typo")))
 
-(test-case "lib/mkOption with :type bool but no :default → warning"
+(test-case "lib/mkOption with :type bool but no :default -> warning"
   (define out (lint-output "(def x : Any (lib/mkOption {:type lib/types.bool :description \"x\"}))"))
   (check-true (lints-include? out #rx"will throw at eval time")))
 
-(test-case "lib/mkOption missing :description → warning"
+(test-case "lib/mkOption missing :description -> warning"
   (define out (lint-output "(def x : Any (lib/mkOption {:type lib/types.str :default \"x\"}))"))
   (check-true (lints-include? out #rx"missing :description")))
 
-(test-case "(merge {} X) → no-op warning"
+(test-case "(merge {} X) -> no-op warning"
   (define out (lint-output "(def x : Any (merge {} other))"))
   (check-true (lints-include? out #rx"no-op")))
 
-(test-case "(concat [] X) → no-op warning"
+(test-case "(concat [] X) -> no-op warning"
   (define out (lint-output "(def x : Any (concat [] other))"))
   (check-true (lints-include? out #rx"no-op")))
 
-(test-case "(s \"hi\") with no interp → use plain literal"
+(test-case "(s \"hi\") with no interp -> use plain literal"
   (define out (lint-output "(def x : Any (s \"hello\"))"))
   (check-true (lints-include? out #rx"plain string literal")))
 

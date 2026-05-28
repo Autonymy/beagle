@@ -303,7 +303,7 @@
 
 ;; case removed — use (match x [v1 body1] [v2 body2] [_ default]) or
 ;; (match x [(or v1 v2) shared-body] [_ default]). Case-fold optimization
-;; in the Clojure emitter lowers literal-only match → native (case ...).
+;; in the Clojure emitter lowers literal-only match -> native (case ...).
 ;; See "match: or-pattern + case-fold optimization" tests below.
 
 ;; --- constructor calls -------------------------------------------------------

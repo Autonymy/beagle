@@ -1,6 +1,6 @@
 #lang racket/base
 
-;; Tests for v0.15 → turtles migration tool.
+;; Tests for v0.15 -> turtles migration tool.
 ;;
 ;; Each test reads a v0.15 source string, runs the migrator, and asserts the
 ;; output matches the expected turtles surface (parens only, claims paired).
@@ -41,12 +41,12 @@
 (define PIPE-1 (string->symbol "|>"))
 (define PIPE-2 (string->symbol "|>>"))
 (define QUOTE-OP (string->symbol "'"))
-(define LARROW-OP '←)
+(define LARROW-OP '<-)
 
 ;; Variadic `'` helper — splat list elements as operands. (Inert data.)
 (define (Q items) (cons QUOTE-OP items))
 
-;; Variadic `←` helper — splat list elements as binding operands.
+;; Variadic `<-` helper — splat list elements as binding operands.
 (define (L items) (cons LARROW-OP items))
 
 (define (migrate-and-read v015-text)
@@ -61,7 +61,7 @@
 (check-migrate
   "#lang beagle
 (defn add [(x : Int) (y : Int)] : Int (+ x y))"
-  `((claim add ∈ (→ Int Int Int))
+  `((claim add :type (-> Int Int Int))
     (defn add ,(Q '(x y)) (+ x y)))
   "defn with typed params and return type")
 
@@ -74,7 +74,7 @@
 (check-migrate
   "#lang beagle
 (defn add [(x : Int) (y : Int)] : Int (+ x y) (println \"side\"))"
-  `((claim add ∈ (→ Int Int Int))
+  `((claim add :type (-> Int Int Int))
     (defn add ,(Q '(x y)) (+ x y) (println "side")))
   "defn with multi-body")
 
@@ -83,7 +83,7 @@
 (check-migrate
   "#lang beagle
 (def x : Int 42)"
-  '((claim x ∈ Int)
+  '((claim x :type Int)
     (def x 42))
   "def with type annotation")
 
@@ -98,18 +98,18 @@
 (check-migrate
   "#lang beagle
 (defn f [] : Int (let [x 1 y 2] (+ x y)))"
-  `((claim f ∈ (→ Int))
+  `((claim f :type (-> Int))
     (defn f ,(Q '())
       (let ,(L '(x 1 y 2)) (+ x y))))
-  "let with flat-pair brackets → ← binding")
+  "let with flat-pair brackets -> <- binding")
 
 (check-migrate
   "#lang beagle
 (defn f [] : Int (let ((x 1) (y 2)) (+ x y)))"
-  `((claim f ∈ (→ Int))
+  `((claim f :type (-> Int))
     (defn f ,(Q '())
       (let ,(L '(x 1 y 2)) (+ x y))))
-  "let with paren-of-pairs → ← binding")
+  "let with paren-of-pairs -> <- binding")
 
 ;; --- vector / hash-map / hash-set ----------------------------------------
 
@@ -150,7 +150,7 @@
 (check-migrate
   "#lang beagle
 (declare-extern foo [Int -> String])"
-  `((declare-extern foo ∈ (→ Int String)))
+  `((declare-extern foo :type (-> Int String)))
   "declare-extern with function type")
 
 ;; --- defrecord ------------------------------------------------------------
@@ -159,9 +159,9 @@
   "#lang beagle
 (defrecord Point [(x : Int) (y : Int)])"
   `((defrecord Point ,(Q '(x y)))
-    (claim Point.x ∈ Int)
-    (claim Point.y ∈ Int))
-  "defrecord with typed fields → fields + per-field claims")
+    (claim Point.x :type Int)
+    (claim Point.y :type Int))
+  "defrecord with typed fields -> fields + per-field claims")
 
 ;; --- cond / match --------------------------------------------------------
 
@@ -169,7 +169,7 @@
   "#lang beagle
 (defn classify [(n : Int)] : String
   (cond (< n 0) \"neg\" (= n 0) \"zero\" :else \"pos\"))"
-  `((claim classify ∈ (→ Int String))
+  `((claim classify :type (-> Int String))
     (defn classify
       ,(Q '(n))
       (cond (< n 0) "neg" (= n 0) "zero" :else "pos")))

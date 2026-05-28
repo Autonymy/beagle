@@ -255,7 +255,7 @@
              '(def y (debug 1 2 3))))
   (define f (car (program-forms p)))
   (check-true (def-form? f))
-  ;; (debug 1 2 3) → (println (1 2 3)) where (1 2 3) is the list literal
+  ;; (debug 1 2 3) -> (println (1 2 3)) where (1 2 3) is the list literal
   (define value (def-form-value f))
   (check-true (call-form? value))
   (check-eq?  (call-form-fn value) 'println))
@@ -266,7 +266,7 @@
              '(def y (call-it + 1 2 3))))
   (define f (car (program-forms p)))
   (define value (def-form-value f))
-  ;; (call-it + 1 2 3) → (+ 1 2 3)
+  ;; (call-it + 1 2 3) -> (+ 1 2 3)
   (check-true (call-form? value))
   (check-eq?  (call-form-fn value) '+)
   (check-equal? (length (call-form-args value)) 3))

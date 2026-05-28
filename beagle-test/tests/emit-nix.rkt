@@ -275,7 +275,7 @@
   ;; nix-emit swallows the parse error and returns #f when the program fails.
   (check-false (nix-emit "(def x : Any (unsafe-nix \"hello\"))")))
 
-;; --- qualified calls: / → . --------------------------------------------------
+;; --- qualified calls: / -> . --------------------------------------------------
 
 (test-case "pkgs/ call emits as pkgs.fn"
   (define out (nix-emit "(define-target nix) (pkgs/writeScriptBin \"hello\" \"body\")"))
@@ -291,7 +291,7 @@
   (check-true (and out (string-contains? out "pkgs.hello")))
   (check-false (string-contains? out "pkgs/hello")))
 
-;; --- not → ! -----------------------------------------------------------------
+;; --- not -> ! -----------------------------------------------------------------
 
 (test-case "not emits ! prefix operator"
   (define out (nix-emit "(define-target nix) (not true)"))

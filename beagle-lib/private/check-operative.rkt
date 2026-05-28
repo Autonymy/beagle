@@ -95,8 +95,8 @@
        [else (type-var t)])]
     [(pair? t)
      (case (car t)
-       [(→) (parse-arrow t)]
-       [(∀) (parse-forall t)]
+       [(->) (parse-arrow t)]
+       [(forall) (parse-forall t)]
        [(U) (parse-union t)]
        [else (parse-app t)])]
     [else
@@ -593,7 +593,7 @@
   ;; (claim NAME ∈ TYPE) — record the type.
   ;; (claim NAME :KEY VALUE) — metadata; no type effect.
   (cond
-    [(and (= (length args) 3) (eq? (cadr args) '∈))
+    [(and (= (length args) 3) (eq? (cadr args) ':type))
      (define name (car args))
      (define type-form (caddr args))
      (with-handlers ([exn:fail?
@@ -675,7 +675,7 @@
   ;; Tightened: args (after NAME) is (params-form EXPR1 EXPR2 ...) or
   ;; (∈ TYPE params-form EXPR1 EXPR2 ...). Returns (params-form body-exprs-list).
   (cond
-    [(and (>= (length args) 3) (eq? (car args) '∈))
+    [(and (>= (length args) 3) (eq? (car args) ':type))
      (values (caddr args) (cdddr args))]
     [(>= (length args) 1)
      (values (car args) (cdr args))]
@@ -930,7 +930,7 @@
 (define (check-declare-extern args env errors)
   ;; (declare-extern NAME ∈ TYPE)
   (cond
-    [(and (= (length args) 3) (eq? (cadr args) '∈) (symbol? (car args)))
+    [(and (= (length args) 3) (eq? (cadr args) ':type) (symbol? (car args)))
      (with-handlers ([exn:fail? (lambda (_) (void))])
        (tenv-define! env (car args) (parse-type (caddr args))))
      (values NIL-TYPE errors)]
@@ -1055,7 +1055,7 @@
       [(and (pair? f) (eq? (car f) 'claim))
        (define args (cdr f))
        (cond
-         [(and (= (length args) 3) (eq? (cadr args) '∈) (symbol? (car args)))
+         [(and (= (length args) 3) (eq? (cadr args) ':type) (symbol? (car args)))
           (with-handlers ([exn:fail? (lambda (_) (void))])
             (tenv-define! env (car args) (parse-type (caddr args))))]
          [else (void)])]

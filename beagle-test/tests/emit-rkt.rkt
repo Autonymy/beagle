@@ -150,51 +150,51 @@
 
 ;; --- core call translations ------------------------------------------------
 
-(test-case "println → displayln"
+(test-case "println -> displayln"
   (define out (rkt-emit "(define-target rkt) (println \"hello\")"))
   (check-true (string-contains? out "(displayln \"hello\")")))
 
-(test-case "first → car"
+(test-case "first -> car"
   (define out (rkt-emit-forms '(define-target rkt) `(def x (first ,(br 1 2 3)))))
   (check-true (string-contains? out "(car")))
 
-(test-case "rest → cdr"
+(test-case "rest -> cdr"
   (define out (rkt-emit-forms '(define-target rkt) `(def x (rest ,(br 1 2 3)))))
   (check-true (string-contains? out "(cdr")))
 
-(test-case "count → length"
+(test-case "count -> length"
   (define out (rkt-emit-forms '(define-target rkt) `(def x (count ,(br 1 2 3)))))
   (check-true (string-contains? out "(length")))
 
-(test-case "empty? → null?"
+(test-case "empty? -> null?"
   (define out (rkt-emit-forms '(define-target rkt) `(def x (empty? ,(br)))))
   (check-true (string-contains? out "(null?")))
 
-(test-case "nil? → not"
+(test-case "nil? -> not"
   (define out (rkt-emit "(define-target rkt) (def x (nil? y))"))
   (check-true (string-contains? out "(not y)")))
 
-(test-case "= → equal?"
+(test-case "= -> equal?"
   (define out (rkt-emit "(define-target rkt) (def x (= 1 2))"))
   (check-true (string-contains? out "(equal? 1 2)")))
 
-(test-case "filter → filter"
+(test-case "filter -> filter"
   (define out (rkt-emit "(define-target rkt) (def x (filter odd? xs))"))
   (check-true (string-contains? out "(filter odd?")))
 
-(test-case "conj → append + list"
+(test-case "conj -> append + list"
   (define out (rkt-emit-forms '(define-target rkt) `(def x (conj ,(br 1 2) 3))))
   (check-true (string-contains? out "(append")))
 
-(test-case "str → format ~a for coercion"
+(test-case "str -> format ~a for coercion"
   (define out (rkt-emit "(define-target rkt) (def x (str \"hi \" 42))"))
   (check-true (string-contains? out "format")))
 
-;; inc/dec → add1/sub1 emit-rkt translations removed — inc/dec dropped
+;; inc/dec -> add1/sub1 emit-rkt translations removed — inc/dec dropped
 ;; from beagle surface; use (+ x 1) / (- x 1) directly. The Racket emit
 ;; produces (+ 5 1) literally, which Racket also accepts.
 
-(test-case "string/upper-case as value ref → string-upcase"
+(test-case "string/upper-case as value ref -> string-upcase"
   (define out (rkt-emit "(define-target rkt) (def f string/upper-case)"))
   (check-true (string-contains? out "string-upcase")))
 
@@ -216,41 +216,41 @@
 
 ;; --- nil / true / false literals -------------------------------------------
 
-(test-case "nil → #f"
+(test-case "nil -> #f"
   (define out (rkt-emit "(define-target rkt) (def x nil)"))
   (check-true (string-contains? out "#f")))
 
-(test-case "true → #t"
+(test-case "true -> #t"
   (define out (rkt-emit "(define-target rkt) (def x true)"))
   (check-true (string-contains? out "#t")))
 
 ;; --- type emission ---------------------------------------------------------
 
-(test-case "Int → Integer"
+(test-case "Int -> Integer"
   (define out (rkt-emit "(define-target rkt) (def x : Int 42)"))
   (check-true (string-contains? out "Integer")))
 
-(test-case "Float → Flonum"
+(test-case "Float -> Flonum"
   (define out (rkt-emit "(define-target rkt) (def x : Float 3.14)"))
   (check-true (string-contains? out "Flonum")))
 
-(test-case "Bool → Boolean"
+(test-case "Bool -> Boolean"
   (define out (rkt-emit "(define-target rkt) (def x : Bool true)"))
   (check-true (string-contains? out "Boolean")))
 
-(test-case "(Vec Int) → (Listof Integer)"
+(test-case "(Vec Int) -> (Listof Integer)"
   (define out (rkt-emit "(define-target rkt) (defn f [(xs : (Vec Int))] : Int (first xs))"))
   (check-true (string-contains? out "(Listof Integer)")))
 
-(test-case "(Map String Int) → (HashTable String Integer)"
+(test-case "(Map String Int) -> (HashTable String Integer)"
   (define out (rkt-emit "(define-target rkt) (defn f [(m : (Map String Int))] : Int (get m \"k\"))"))
   (check-true (string-contains? out "(HashTable String Integer)")))
 
-(test-case "String? → (Option String)"
+(test-case "String? -> (Option String)"
   (define out (rkt-emit "(define-target rkt) (defn f [(x : String?)] : String (if (nil? x) \"\" x))"))
   (check-true (string-contains? out "(Option String)")))
 
-(test-case "(U A B) → (U A B)"
+(test-case "(U A B) -> (U A B)"
   (define out (rkt-emit "(define-target rkt) (defn f [(x : (U Int String))] : Int 0)"))
   (check-true (string-contains? out "(U Integer String)")))
 
@@ -293,11 +293,11 @@
 
 ;; --- string stdlib ---------------------------------------------------------
 
-(test-case "string/join → string-join"
+(test-case "string/join -> string-join"
   (define out (rkt-emit-forms '(define-target rkt) `(def x (string/join ,(br "a" "b") ","))))
   (check-true (string-contains? out "(string-join")))
 
-(test-case "string/upper-case → string-upcase"
+(test-case "string/upper-case -> string-upcase"
   (define out (rkt-emit "(define-target rkt) (def x (string/upper-case \"hi\"))"))
   (check-true (string-contains? out "(string-upcase")))
 

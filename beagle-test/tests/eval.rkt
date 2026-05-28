@@ -83,17 +83,17 @@
 ;; --- the data operator `'` ----------------------------------------------
 
 (test-case "'  is variadic and does not evaluate"
-  ;; (' 1 2 3) → (1 2 3)
+  ;; (' 1 2 3) -> (1 2 3)
   (check-equal? (E (Q-form 1 2 3)) '(1 2 3))
-  ;; (' x y z) → (x y z) — symbols are not looked up
+  ;; (' x y z) -> (x y z) — symbols are not looked up
   (check-equal? (E (Q-form 'x 'y 'z)) '(x y z))
-  ;; (' (+ 1 1) 3) → ((+ 1 1) 3) — inner expression NOT evaluated
+  ;; (' (+ 1 1) 3) -> ((+ 1 1) 3) — inner expression NOT evaluated
   (check-equal? (E (Q-form '(+ 1 1) 3)) '((+ 1 1) 3)))
 
 (test-case "list vs ' distinction"
-  ;; (list (+ 1 1) 3) → (2 3) — list evaluates args
+  ;; (list (+ 1 1) 3) -> (2 3) — list evaluates args
   (check-equal? (E '(list (+ 1 1) 3)) '(2 3))
-  ;; (' (+ 1 1) 3) → ((+ 1 1) 3) — ' does not
+  ;; (' (+ 1 1) 3) -> ((+ 1 1) 3) — ' does not
   (check-equal? (E (Q-form '(+ 1 1) 3)) '((+ 1 1) 3)))
 
 (test-case "' with no operands returns empty list"

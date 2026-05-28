@@ -31,7 +31,7 @@
   (check-not-false (parse-type 'Bool)))
 
 (test-case "parse arrow type"
-  (define t (parse-type `(→ ,(Q-form 'params 'Int 'Int) (returns 'Int))))
+  (define t (parse-type `(-> ,(Q-form 'params 'Int 'Int) (returns 'Int))))
   (check-not-false t))
 
 (test-case "parse parametric"
@@ -55,7 +55,7 @@
 
 (test-case "defn with matching claim — no errors"
   (check-ok
-    `(claim add ∈ (→ ,(Q-form 'params 'Int 'Int) (returns Int)))
+    `(claim add :type (-> ,(Q-form 'params 'Int 'Int) (returns Int)))
     `(defn add ,(Q-form 'params 'a 'b) (body (+ a b)))))
 
 (test-case "defn without claim — type defaults to Any (no errors)"
@@ -64,19 +64,19 @@
 
 (test-case "call respects arity"
   (check-ok
-    `(claim add ∈ (→ ,(Q-form 'params 'Int 'Int) (returns Int)))
+    `(claim add :type (-> ,(Q-form 'params 'Int 'Int) (returns Int)))
     `(defn add ,(Q-form 'params 'a 'b) (body (+ a b)))
     `(add 1 2)))
 
 (test-case "call with wrong arity errors"
   (check-err #rx"expected 2 argument"
-    `(claim add ∈ (→ ,(Q-form 'params 'Int 'Int) (returns Int)))
+    `(claim add :type (-> ,(Q-form 'params 'Int 'Int) (returns Int)))
     `(defn add ,(Q-form 'params 'a 'b) (body (+ a b)))
     `(add 1)))
 
 (test-case "call with extra args errors"
   (check-err #rx"expected 2 argument"
-    `(claim add ∈ (→ ,(Q-form 'params 'Int 'Int) (returns Int)))
+    `(claim add :type (-> ,(Q-form 'params 'Int 'Int) (returns Int)))
     `(defn add ,(Q-form 'params 'a 'b) (body (+ a b)))
     `(add 1 2 3)))
 

@@ -1,7 +1,7 @@
 #lang racket/base
 
 ;; Integration test demonstrating the full operative pipeline:
-;; read → expand → check → emit (per target).
+;; read -> expand -> check -> emit (per target).
 ;;
 ;; A single source program with:
 ;;   - a macro definition
@@ -42,7 +42,7 @@
 
 (defrecord Point (' fields x y))
 
-(claim distance ∈ (→ (' params Int Int) (returns Int)))
+(claim distance :type (-> (' params Int Int) (returns Int)))
 (defn distance (' params dx dy)
   (body (+ (square dx) (square dy))))
 
@@ -51,7 +51,7 @@
               (case (= n 0) "zero")
               (case :else "positive"))))
 
-(claim p ∈ Point)
+(claim p :type Point)
 (def p (Point 3 4))
 
 (println (distance 3 4))

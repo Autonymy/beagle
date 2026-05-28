@@ -191,31 +191,31 @@
       ;; Just return the raw arguments as a list. No evaluation.
       args)))
 
-;; --- the binding operator `←` --------------------------------------------
+;; --- the binding operator `<-` --------------------------------------------
 
-;; `←` walks alternating name/value pairs from its raw arguments:
+;; `<-` walks alternating name/value pairs from its raw arguments:
 ;;   - names are taken raw (not evaluated)
 ;;   - values are evaluated in the current env
 ;;   - each name is bound to its evaluated value in the current env
 ;;
-;; `←` is the head of let/loop/doseq/for binding lists. When let creates a
-;; child env and evaluates the (←-headed) binding-list operand in that
+;; `<-` is the head of let/loop/doseq/for binding lists. When let creates a
+;; child env and evaluates the (<--headed) binding-list operand in that
 ;; child env, the bindings land in the child env naturally — no special
-;; path required. `←` has identical semantics regardless of context: it
+;; path required. `<-` has identical semantics regardless of context: it
 ;; binds in whichever env it's evaluated in.
-(define LARROW-SYM '←)
+(define LARROW-SYM '<-)
 (define LARROW-OP
   (make-raw LARROW-SYM
     (lambda (args env)
       (when (odd? (length args))
-        (error '← "odd number of operands in binding list: ~v" args))
+        (error '<- "odd number of operands in binding list: ~v" args))
       (let loop ([rest args])
         (cond
           [(null? rest) (void)]
           [else
            (define name (car rest))
            (unless (symbol? name)
-             (error '← "binding name must be a symbol, got ~v" name))
+             (error '<- "binding name must be a symbol, got ~v" name))
            (define val (evaluate (cadr rest) env))
            (env-define! env name val)
            (loop (cddr rest))])))))
@@ -696,7 +696,7 @@
   (define e (make-env #f))
   (for ([entry (in-list `((,QUOTE-OP-SYM . ,QUOTE-OP)
                           (quote         . ,QUOTE-OP)      ; alias for ' (Racket reader compat)
-                          (←             . ,LARROW-OP)     ; binding operator
+                          (<-            . ,LARROW-OP)     ; binding operator
                           (vau           . ,VAU-OP)
                           (wrap          . ,WRAP-OP)
                           (unwrap        . ,UNWRAP-OP)

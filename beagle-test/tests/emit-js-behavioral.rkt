@@ -122,7 +122,7 @@
      "main();"
      "3\n4")
 
-   (check-js-output "record with → Object.freeze is immutable"
+   (check-js-output "record with -> Object.freeze is immutable"
      (list '(defrecord Point [(x : Int) (y : Int)])
            `(defn main [] : Nil
               (let [p (->Point 1 2)
@@ -232,13 +232,13 @@ console.assert(threw, 'frozen record should reject mutation');
 
    ;; --- for / map / filter --------------------------------------------------
 
-   (check-js-output "for → map"
+   (check-js-output "for -> map"
      (list '(defn double-all [(xs : (Vec Int))] : (Vec Int)
               (for [x xs] (* x 2))))
      "console.log(JSON.stringify(double_all([1,2,3])));"
      "[2,4,6]")
 
-   (check-js-output "for with :when → filter + map"
+   (check-js-output "for with :when -> filter + map"
      (list '(defn positives [(xs : (Vec Int))] : (Vec Int)
               (for [x xs :when (> x 0)] x)))
      "console.log(JSON.stringify(positives([-1, 0, 1, 2, -3])));"
@@ -601,19 +601,19 @@ console.assert(my__x === 2, 'my_x should be 2, got ' + my__x);
 
    ;; --- special float values (Inf/NaN) ----------------------------------------
 
-   (check-js-output "+inf.0 → Infinity at runtime"
+   (check-js-output "+inf.0 -> Infinity at runtime"
      (list '(def x : Float +inf.0)
            '(defn main [] : Nil (println x)))
      "main();"
      "Infinity")
 
-   (check-js-output "-inf.0 → -Infinity at runtime"
+   (check-js-output "-inf.0 -> -Infinity at runtime"
      (list '(def x : Float -inf.0)
            '(defn main [] : Nil (println x)))
      "main();"
      "-Infinity")
 
-   (check-js-output "+nan.0 → NaN at runtime"
+   (check-js-output "+nan.0 -> NaN at runtime"
      (list '(def x : Float +nan.0)
            '(defn main [] : Nil (println x)))
      "main();"

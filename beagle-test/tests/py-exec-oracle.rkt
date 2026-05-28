@@ -126,7 +126,7 @@ PY
   (check-true ok? err)
   (check-equal? out "True\nTrue\n5.0\n0\n42\n-1\n"))
 
-(test-case "py-stdlib-modules — slashed-name → dotted Python runs"
+(test-case "py-stdlib-modules — slashed-name -> dotted Python runs"
   (define-values (ok? out err)
     (emit-and-run "py-stdlib-modules" #<<PY
 # Confirms math.pi, math.sqrt etc. actually run — would have caught

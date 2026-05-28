@@ -9,22 +9,22 @@
 ;; at every use site.
 ;;
 ;; Key shapes (post-tightening, plan 20260528235000):
-;;   defn:       (defn NAME (' X...) EXPR...)
-;;               + (claim NAME ∈ (→ (' T...) RT))
-;;   fn:         (fn (' X...) EXPR...) or (fn ∈ TYPE (' X...) EXPR...)
-;;   defrecord:  (defrecord NAME (' F1 F2 ...))  + per-field claims
-;;   defunion:   (defunion NAME (' V1 V2 ...))   + per-variant defrecords
-;;   defenum:    (defenum NAME (' V1 V2 ...))
-;;   → :         (→ (' T1 T2 ...) RT)
-;;   ∀ :         (∀ (' T1 T2 ...) BODY-TYPE)
-;;   at:         (at TARGET (' :K1 :K2 :K3))
-;;   let:        (let (' NAME VAL ...) BODY...)
-;;   loop:       (loop (' NAME VAL ...) BODY...)
-;;   doseq:      (doseq (' NAME COLL) BODY...)
-;;   for:        (for (' NAME COLL) BODY...)
-;;   cond:       (cond TEST RESULT TEST RESULT ...)
-;;   match:      (match SCRUT PAT RESULT PAT RESULT ...)
-;;   multi-arity: (defn NAME (' (' P...) B...) (' (' P...) B...) ...)
+;;   defn:        (defn NAME (' X...) EXPR...)
+;;                + (claim NAME :type (-> T... RT))
+;;   fn:          (fn (' X...) EXPR...)  or  (fn :type TYPE (' X...) EXPR...)
+;;   defrecord:   (defrecord NAME (' F1 F2 ...))  + per-field claims
+;;   defunion:    (defunion NAME (' V1 V2 ...))   + per-variant defrecords
+;;   defenum:     (defenum NAME (' V1 V2 ...))
+;;   -> :         (-> T1 T2 ... RT)  — flat, last is return
+;;   forall:      (forall (' T1 T2 ...) BODY-TYPE)
+;;   at:          (at TARGET (' :K1 :K2 :K3))
+;;   let:         (let (<- NAME VAL ...) BODY...)
+;;   loop:        (loop (<- NAME VAL ...) BODY...)
+;;   doseq:       (doseq (<- NAME COLL) BODY...)
+;;   for:         (for (<- NAME COLL) BODY...)
+;;   cond:        (cond TEST RESULT TEST RESULT ...)
+;;   match:       (match SCRUT PAT RESULT PAT RESULT ...)
+;;   multi-arity: (defn NAME (' P...) B... (' P...) B... ...)
 ;;
 ;; This is a one-shot tool. After v0.16 ships, the corpus is in turtles
 ;; surface and this tool can be deleted.
@@ -53,14 +53,14 @@
 ;; The helper here takes a Racket list of items and emits the
 ;; variadic `'` form ('-sym ITEMS...).
 (define QUOTE-OP (string->symbol "'"))
-(define LARROW-OP '←)
+(define LARROW-OP '<-)
 
 (define (Q items)
   ;; Splat ITEMS as operands of the `'` operator (inert data).
   (cons QUOTE-OP items))
 
 (define (L items)
-  ;; Splat ITEMS as operands of the `←` operator (binding list).
+  ;; Splat ITEMS as operands of the `<-` operator (binding list).
   (cons LARROW-OP items))
 
 ;; --- reader ---------------------------------------------------------------
@@ -201,7 +201,7 @@
      (define params (extract-defn-params param-form))
      (define param-types (extract-param-types param-form))
      (define claim-form
-       (list 'claim name '∈
+       (list 'claim name ':type
              (make-fn-type-form param-types ret-type)))
      (define defn-form
        (list* 'defn name
@@ -221,7 +221,7 @@
 ;; Flat function type: (→ T1 T2 RT) — last operand is the return type.
 ;; Single-return-value commitment makes flat work cleanly.
 (define (make-fn-type-form param-types ret-type)
-  (list* '→
+  (list* '->
          (append (map migrate-type param-types)
                  (list (migrate-type ret-type)))))
 
@@ -267,7 +267,7 @@
   (define all-typed? (andmap fifth arity-data))
   (define claim-form
     (and all-typed?
-         (list 'claim name '∈
+         (list 'claim name ':type
                (cons 'U
                      (for/list ([a (in-list arity-data)])
                        (make-fn-type-form (cadr a) (caddr a)))))))
@@ -316,7 +316,7 @@
 (define (migrate-def form)
   (match form
     [(list 'def (? symbol? name) ': type value)
-     (list (list 'claim name '∈ (migrate-type type))
+     (list (list 'claim name ':type (migrate-type type))
            (list 'def name (migrate-expr value)))]
     [(list 'def (? symbol? name) value)
      (list (list 'def name (migrate-expr value)))]
@@ -345,7 +345,7 @@
                   #:when (and (list? f) (= (length f) 3) (eq? (cadr f) ':)))
          (list 'claim
                (string->symbol (format "~a.~a" name (car f)))
-               '∈
+               ':type
                (migrate-type (caddr f)))))
      (cons (list 'defrecord name (Q field-names))
            field-claims)]
@@ -437,7 +437,7 @@
      (define params (extract-defn-params param-form))
      (list (list 'define-macro kind name
                  (cons 'params params)
-                 '∈ (migrate-type ret-type)
+                 ':type (migrate-type ret-type)
                  (cons 'body (map migrate-quote-aware body))))]
     [_ (error 'migrate-turtles "unrecognized define-macro shape: ~v" form)]))
 
@@ -484,9 +484,9 @@
 (define (migrate-declare-extern form)
   (match form
     [(list 'declare-extern (? symbol? name) ': type)
-     (list (list 'declare-extern name '∈ (migrate-type type)))]
+     (list (list 'declare-extern name ':type (migrate-type type)))]
     [(list 'declare-extern (? symbol? name) type)
-     (list (list 'declare-extern name '∈ (migrate-type type)))]
+     (list (list 'declare-extern name ':type (migrate-type type)))]
     [_ (list form)]))
 
 ;; --- expression migration -------------------------------------------------
@@ -596,7 +596,7 @@
      ;; typed fn (tightened)
      (define params (extract-defn-params param-form))
      (define param-types (extract-param-types param-form))
-     (list* 'fn '∈
+     (list* 'fn ':type
             (make-fn-type-form param-types ret-type)
             (Q params)
             (map migrate-expr body))]
@@ -609,7 +609,7 @@
                (Q params)
                (map migrate-expr body))]
        [else
-        (list* 'fn '∈
+        (list* 'fn ':type
                (make-fn-type-form types 'Any)
                (Q params)
                (map migrate-expr body))])]
@@ -706,7 +706,7 @@
               (define params (extract-defn-params param-form))
               (define param-types (extract-param-types param-form))
               (list
-                (list 'claim name '∈
+                (list 'claim name ':type
                       (make-fn-type-form param-types ret-type))
                 (list 'fn-def name
                       (Q (cons 'params params))
@@ -881,12 +881,12 @@
        [variadic-pos
         (define fixed (take params (- (length params) (length variadic-pos))))
         (define rest-type (cadr variadic-pos))
-        (list* '→
+        (list* '->
                (append (map migrate-type fixed)
                        (list '& (migrate-type rest-type))
                        (list (migrate-type ret))))]
        [else
-        (list* '→
+        (list* '->
                (append (map migrate-type params)
                        (list (migrate-type ret))))])]))
 

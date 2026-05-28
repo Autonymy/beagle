@@ -60,7 +60,7 @@
   ;; Tightened: (fn params-form EXPR...) or (fn ∈ TYPE params-form EXPR...).
   ;; Returns (values params-form body-exprs-list).
   (cond
-    [(and (>= (length args) 3) (eq? (car args) '∈))
+    [(and (>= (length args) 3) (eq? (car args) ':type))
      (values (caddr args) (cdddr args))]
     [(>= (length args) 1)
      (values (car args) (cdr args))]
@@ -358,7 +358,7 @@
 ;; head isn't `←` (back-compat with the pre-binding-operator shape).
 (define (extract-larrow-operands form)
   (cond
-    [(and (pair? form) (eq? (car form) '←))
+    [(and (pair? form) (eq? (car form) '<-))
      (cdr form)]
     ;; Pre-binding-operator: (' bindings (bind X V)…)
     [(and (pair? form) (or (eq? (car form) (string->symbol "'"))
@@ -495,15 +495,17 @@
 ;; → : function type — `(→ (' params T1 T2) (returns RT))`
 (define (make-arrow-op)
   (make-raw-operative
-    '→
+    '->
     (lambda (args call-env)
-      (unless (= (length args) 2)
-        (error '→
-               "expected (→ params-form returns-form), got ~v args"
-               (length args)))
-      (list 'arrow-type
-            (evaluate (car args) call-env)
-            (evaluate (cadr args) call-env)))))
+      ;; Flat-arrow: (-> T T ... RT). Last operand is return type;
+      ;; others are param types.
+      (when (null? args)
+        (error '-> "expected at least a return type"))
+      (define evaluated (for/list ([a (in-list args)]) (evaluate a call-env)))
+      (define n (length evaluated))
+      (define params (take evaluated (- n 1)))
+      (define return (list-ref evaluated (- n 1)))
+      (list 'arrow-type params return))))
 
 ;; returns : (returns RT) wrapper — used inside → and as a sub-form in defn.
 (define (make-returns-op)
@@ -517,10 +519,10 @@
 ;; ∀ : universal quantifier — `(∀ (' vars T1 T2) BODY-TYPE)`
 (define (make-forall-op)
   (make-raw-operative
-    '∀
+    'forall
     (lambda (args call-env)
       (unless (= (length args) 2)
-        (error '∀ "expected (∀ vars body-type), got ~v args" (length args)))
+        (error 'forall "expected (forall vars body-type), got ~v args" (length args)))
       (list 'forall-type
             (evaluate (car args) call-env)
             (evaluate (cadr args) call-env)))))
@@ -528,15 +530,8 @@
 ;; ∈ : membership / annotation marker — `(claim NAME ∈ TYPE)`.
 ;; `claim` extracts these from its raw args; if ∈ ever evaluates as a
 ;; top-level call, it returns a tagged in-claim value.
-(define (make-in-op)
-  (make-raw-operative
-    '∈
-    (lambda (args call-env)
-      (cond
-        [(= (length args) 2)
-         (list 'in (car args) (evaluate (cadr args) call-env))]
-        [else
-         (error '∈ "expected (∈ X T), got ~v args" (length args))]))))
+;; `∈` is gone — type annotation now uses the `:type` keyword inside claim,
+;; fn, foreign-*, etc. (treated like any other metadata key).
 
 ;; --- vector / hash-map / hash-set constructors --------------------------
 
@@ -723,10 +718,9 @@
   (env-define! env 'cond     (make-cond-op))
   (env-define! env 'claim    (make-claim-op))
   (env-define! env 'match    (make-match-op))
-  (env-define! env '→        (make-arrow-op))
+  (env-define! env '->       (make-arrow-op))
   (env-define! env 'returns  (make-returns-op))
-  (env-define! env '∀        (make-forall-op))
-  (env-define! env '∈        (make-in-op))
+  (env-define! env 'forall   (make-forall-op))
   (env-define! env 'vector   (make-vector-op))
   (env-define! env 'hash-map (make-hash-map-op))
   (env-define! env 'hash-set (make-hash-set-op))

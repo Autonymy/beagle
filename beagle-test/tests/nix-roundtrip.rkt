@@ -70,7 +70,7 @@
 
 (test-case "nix-interp-ms round-trip"
   (define out (compile-bnix-file (build-path fixtures-dir "nix-interp-ms.bnix")))
-  ;; pkgs/writeScriptBin → pkgs.writeScriptBin (not literal /)
+  ;; pkgs/writeScriptBin -> pkgs.writeScriptBin (not literal /)
   (check-true (string-contains? out "pkgs.writeScriptBin"))
   (check-false (string-contains? out "pkgs/writeScriptBin"))
   ;; ms + s inlines interpolation (no ${"..."} double-wrap)

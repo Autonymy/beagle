@@ -5,7 +5,7 @@
 ;; 1. Deterministic emission: compiling the same fixture twice in a row
 ;;    produces byte-identical output.
 ;; 2. Idempotent: parsing then emitting an already-emitted .nix produces
-;;    the same .nix (not testable without a Nix→AST round-trip — skipped).
+;;    the same .nix (not testable without a Nix->AST round-trip — skipped).
 ;; 3. Syntactic validity: every fixture's output parses via nix-instantiate
 ;;    when BEAGLE_NIX_EVAL_CHECK=1 is set. (Otherwise skipped.)
 

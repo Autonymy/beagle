@@ -1,6 +1,6 @@
 #lang racket/base
 
-;; Tests for the standard forms (fn, defn, let, cond, match, claim, →, etc.)
+;; Tests for the standard forms (fn, defn, let, cond, match, claim, ->, etc.)
 ;; defined as operatives on top of the bootstrap evaluator.
 
 (require rackunit
@@ -18,7 +18,7 @@
 (define Q (string->symbol "'"))
 (define (Q-form . items) (cons Q items))
 
-(define LARROW '←)
+(define LARROW '<-)
 (define (L-form . items) (cons LARROW items))
 
 ;; --- fn -----------------------------------------------------------------
@@ -43,7 +43,7 @@
   (define e (make-env-with-stdlib))
   (evaluate
     `(define inc
-       (fn ∈ (→ ,(Q-form 'params 'Int) (returns Int))
+       (fn :type (-> ,(Q-form 'params 'Int) (returns Int))
            ,(Q-form 'params 'x)
            (body (+ x 1))))
     e)
@@ -84,7 +84,7 @@
   (check-equal? result 42))
 
 (test-case "let is sequential (later values see earlier bindings)"
-  ;; With `←` binding sequentially, y sees the just-bound x.
+  ;; With `<-` binding sequentially, y sees the just-bound x.
   (define e (make-env-with-stdlib))
   (evaluate '(define x 100) e)
   (define result
@@ -165,27 +165,27 @@
 (test-case "claim is a no-op (returns void) and records in substrate"
   (define e (make-env-with-stdlib))
   (parameterize ([claim-substrate '()])
-    (define result (evaluate '(claim foo ∈ Int) e))
+    (define result (evaluate '(claim foo :type Int) e))
     (check-true (void? result))
     (check-equal? (length (claim-substrate)) 1)))
 
 (test-case "multiple claims accumulate"
   (define e (make-env-with-stdlib))
   (parameterize ([claim-substrate '()])
-    (evaluate '(claim foo ∈ Int) e)
-    (evaluate '(claim bar ∈ String) e)
+    (evaluate '(claim foo :type Int) e)
+    (evaluate '(claim bar :type String) e)
     (check-equal? (length (claim-substrate)) 2)))
 
 ;; --- type constructors --------------------------------------------------
 
-(test-case "→ builds an arrow-type value"
+(test-case "-> builds an arrow-type value"
   (define e (make-env-with-stdlib))
-  (define t (evaluate `(→ ,(Q-form 'params 'Int 'Int) (returns Int)) e))
+  (define t (evaluate `(-> ,(Q-form 'params 'Int 'Int) (returns Int)) e))
   (check-equal? (car t) 'arrow-type))
 
-(test-case "∀ builds a forall-type value"
+(test-case "forall builds a forall-type value"
   (define e (make-env-with-stdlib))
-  (define t (evaluate `(∀ ,(Q-form 'vars 'T) ,(Q-form 'list 'T)) e))
+  (define t (evaluate `(forall ,(Q-form 'vars 'T) ,(Q-form 'list 'T)) e))
   (check-equal? (car t) 'forall-type))
 
 ;; --- vector / hash-map / hash-set --------------------------------------

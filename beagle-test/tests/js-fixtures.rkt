@@ -35,7 +35,7 @@
 
 ;; --- stdlib statics (Math/JSON/Number) -------------------------------------
 
-(test-case "js-stdlib-statics fixture — uppercase-prefix slashed → dotted"
+(test-case "js-stdlib-statics fixture — uppercase-prefix slashed -> dotted"
   (define out (js-fixture "js-stdlib-statics.bjs"))
   (check-true (string-contains? out "JSON.parse(s)"))
   (check-true (string-contains? out "JSON.stringify(obj)"))

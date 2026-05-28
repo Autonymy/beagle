@@ -50,7 +50,7 @@
       `((define-macro safe twice ,(Q-form 'params 'x) (+ x x))
         (define-macro safe quad ,(Q-form 'params 'x) (twice (twice x)))
         (quad 3))))
-  ;; quad 3 → (twice (twice 3)) → (twice (+ 3 3)) → (+ (+ 3 3) (+ 3 3))
+  ;; quad 3 -> (twice (twice 3)) -> (twice (+ 3 3)) -> (+ (+ 3 3) (+ 3 3))
   (check-equal? result '((+ (+ 3 3) (+ 3 3)))))
 
 ;; --- non-macro forms pass through unchanged ----------------------------
