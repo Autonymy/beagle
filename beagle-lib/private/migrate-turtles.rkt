@@ -521,6 +521,7 @@
     [(try)     (migrate-try form)]
     [(with)    (migrate-with form)]
     [(module)  (migrate-module form)]
+    [(fn-set)  (migrate-fn-set form)]
     [(->)      (cons '\|> (map migrate-expr (cdr form)))]
     [(->>)     (cons '\|>> (map migrate-expr (cdr form)))]
     [(quote)   form]
@@ -538,6 +539,28 @@
             (Q params)
             (map migrate-expr body))]
     [_ (error 'migrate-turtles "unrecognized module shape: ~v" form)]))
+
+;; importer-emitted (fn-set (params... [...]) body) → (module (' params...) body)
+;; The two forms differ in surface arity but mean the same Nix module — a
+;; lambda over an attrset pattern. Convert to the canonical `module` shape.
+(define (migrate-fn-set form)
+  (match form
+    [(list 'fn-set param-form body ...)
+     (define entries (cond
+                       [(bracketed? param-form) (bracket-body param-form)]
+                       [(list? param-form) param-form]
+                       [else '()]))
+     ;; Drop the trailing `...` ellipsis marker; the module form always
+     ;; carries `rest? = #t` implicitly.
+     (define names
+       (for/list ([p (in-list entries)] #:when (not (eq? p '...)))
+         (cond
+           [(symbol? p) p]
+           [(and (list? p) (= (length p) 2) (symbol? (car p))) (car p)]
+           [(and (list? p) (= (length p) 3) (eq? (cadr p) ':)) (car p)]
+           [else (error 'migrate-turtles "unrecognized fn-set param: ~v" p)])))
+     (list* 'module (Q names) (map migrate-expr body))]
+    [_ (error 'migrate-turtles "unrecognized fn-set shape: ~v" form)]))
 
 ;; --- let migration --------------------------------------------------------
 
