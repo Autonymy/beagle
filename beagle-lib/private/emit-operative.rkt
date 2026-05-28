@@ -838,6 +838,7 @@
     [(module)      (nix-module args)]
     [(flake)       (nix-flake args)]
     [(with)        (nix-with args)]
+    [(p)           (nix-path args)]
     [(str)         (format "(builtins.concatStringsSep \"\" [~a])"
                            (string-join
                              (for/list ([a (in-list args)])
@@ -901,6 +902,14 @@
   (cond
     [(= (length args) 1) (nix->string (car args))]
     [else "{ }"]))
+
+;; (p "./foo") → ./foo — Nix path literal (no quotes, no parens)
+(define (nix-path args)
+  (cond
+    [(and (= (length args) 1) (string? (car args)))
+     (car args)]
+    [else
+     (format "(p ~a)" (string-join (map nix->string args) " "))]))
 
 ;; (with TARGET BODY)  →  with TARGET; BODY
 (define (nix-with args)
