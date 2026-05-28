@@ -1027,8 +1027,9 @@
         ;; :foo — literal Nix attribute name
         (substring s 1)]
        [else
-        ;; bare symbol — Nix dynamic key: "${var}"
-        (format "\"$~a{~a}\"" "" s)])]
+        ;; bare symbol — Nix dotted-path antiquote: ${var} (no quotes,
+        ;; valid only after a dot — Nix's attrset dot-path form)
+        (format "$~a{~a}" "" s)])]
     [else (format "~v" k)]))
 
 ;; ============================================================================
