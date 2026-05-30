@@ -91,6 +91,77 @@ trying to defend.
 Release notes can record `X → Y` migrations after the fact. The
 record is fine. The accepted-but-deprecated parser state isn't.
 
+### Gates have stated jurisdiction. When ambiguous, ASK, don't defer.
+
+A blocking rule with no jurisdiction metastasizes onto everything.
+Every rule in this document that *blocks action* carries a **scope
+clause** naming what it blocks and what it doesn't. Unscoped
+blocking rules are how a tool trying to be disciplined turns into
+a tool that won't let you move.
+
+The Phase 0 telemetry gate is the canonical example of this
+distinction:
+
+- **Demand-driven features** — speculative capabilities whose
+  value depends on the corpus actually exercising them. Refinement
+  types (beyond the decidable floor), bidirectional inference
+  Layer 2 (full synthesis), types-as-view rendering, schema-path
+  expansion to non-NixOS domains. For these, **the gate applies**:
+  wait for Phase 0 rejection histograms or comparable usage
+  evidence before building.
+
+- **Thesis-driven features** — work that exists because it's a
+  founding reason for the substrate, independent of current corpus
+  usage. Macros (`defmacro` + quasi-quote) are the canonical
+  example; see next rule. For these, **the gate does NOT apply**.
+  The corpus can't exercise what isn't built, so applying a
+  demand-driven gate to a thesis-driven feature is a
+  self-fulfilling deadlock.
+
+**Classification comes before gating.** When a feature might be
+gated on usage evidence, first decide demand-driven vs
+thesis-driven. The classification is the test, not the
+conclusion: a thesis-driven feature isn't exempt because it's
+favored; it's exempt because the gate's measurement mechanism
+doesn't and can't apply to it.
+
+**Tiebreaker when classification is unclear: ASK Tom, do not
+defer.** The implicit default of "when uncertain, fall back to the
+conservative side and cite the gate" reads as caution but
+functions as a veto. Flip it: when a gate's applicability is
+unclear, surface the classification question — Tom deciding in
+five seconds beats parking the work for 30 days under the cover
+of a policy. **Stalling under the cover of a policy is failure,
+not safety.**
+
+This rule applies to every gate added to this document going
+forward. A blocking rule that doesn't name its jurisdiction
+violates this rule and should be flagged when added.
+
+### Macros are thesis-driven, not demand-driven
+
+`defmacro` + quasi-quote is **active work**, not deferred-pending-
+telemetry. The earlier "30-day rejection histogram justifies macro
+work" gate was wrong and is **lifted**: it's a self-fulfilling gate
+(no `defmacro` → no macro attempts → no telemetry → never
+activates), and the premise was wrong anyway. Macros aren't a
+demand-driven feature here. Beagle is a Lisp *specifically to watch
+what AI does with macros* — that's a founding reason for the
+substrate, not a feature waiting for usage evidence. The corpus
+can't reach for `defmacro` when `defmacro` doesn't exist.
+§4.3 of the contrast doc (`20260530180000`) saying macro-form
+rejections are unlikely in any normal agent workload is *true and
+irrelevant*: this isn't a normal agent workload, it's the
+experiment the substrate exists to run.
+
+Concrete decisions (already locked in
+`~/code/life-os/threads/20260530160300-...`, **don't re-litigate**):
+- Unquote sigil: `,` (Clojure-canonical). Currently whitespace in
+  beagle's reader, so no collision.
+- Splice sigil: `,@`.
+- `~` stays for tilde-strings (`~"…"` / `~''…''`). Beagle-native
+  syntax, no Clojure prior to fight.
+
 ### Zero escape hatches
 
 No `unsafe-*` anything (no `unsafe-nix`, `unsafe-js`, `unsafe-clj`,
