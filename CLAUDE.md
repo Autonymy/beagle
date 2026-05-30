@@ -74,6 +74,21 @@ Every typed language that shipped an escape hatch regretted it
 Rust `unsafe`). The discipline of "no escape" forces the stdlib to
 mature and makes hallucinations show up as compile errors.
 
+### Prefix where meaning diverges from Clojure
+
+In beagle, namespace all Nix-specific forms under `nix/`
+(`nix/assert`, `nix/with`, etc.) rather than reusing bare Clojure
+names whose meaning differs in beagle. When a form's behavior
+diverges from its Clojure namesake, prefix it so the name doesn't
+collide with Clojure's meaning. Bare names are reserved for forms
+that behave as their Clojure equivalent does.
+
+Today's tree still has bare `assert` and `with` with Nix semantics —
+those are the targets of the Phase 1 rename sweep
+(`~/code/life-os/threads/20260530160100-...`). The rule above is the
+standing principle that applies to any new Nix-specific form
+added before that sweep lands.
+
 ### Test tiering during surface iteration
 
 `bin/beagle-test` runs the **active tier only** by default — Nix-target

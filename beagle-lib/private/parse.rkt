@@ -589,7 +589,27 @@
     [(set-tagged? d)
      (set-form (map parse-expr (or (stx-tail subs 1) (set-body d))))]
     [(and (pair? d) (eq? (car d) 'quote) (= (length d) 2))
-     (quoted (cadr d))]
+     ;; Quoted containers — '[…] / '{…} / '#{…} — parse as the
+     ;; container itself. Containers always evaluate in beagle, so
+     ;; stripping the quote prefix is meaning-preserving (identity).
+     ;; Source can write either form; canonical form on disk drops
+     ;; the quote.
+     (let* ([inner (cadr d)]
+            [inner-stx (stx-ref subs 1)]
+            [inner-children (stx-subs inner-stx)])
+       (cond
+         [(bracketed? inner)
+          (vec-form (map parse-expr
+                         (or (and inner-children (stx-tail inner-children 1))
+                             (bracket-body inner))))]
+         [(map-tagged? inner)
+          (parse-map-literal (or (and inner-children (stx-tail inner-children 1))
+                                 (map-body inner)))]
+         [(set-tagged? inner)
+          (set-form (map parse-expr
+                         (or (and inner-children (stx-tail inner-children 1))
+                             (set-body inner))))]
+         [else (quoted inner)]))]
     [(and (pair? d) (eq? (car d) '#%meta) (= (length d) 3))
      (with-meta (parse-expr (or (and subs (stx-ref subs 1)) (cadr d)))
                 (parse-expr (or (and subs (stx-ref subs 2)) (caddr d))))]
@@ -919,13 +939,17 @@
     [(list 'rec-attrs pairs ...)
      (nix-rec-attrs (parse-nix-rec-pairs (or (stx-tail subs 1) pairs)))]
 
-    [(list 'assert cond-expr body-expr)
+    [(list (or 'assert 'nix/assert) cond-expr body-expr)
+     ;; `nix/assert` is the canonical name; bare `assert` is a transitional
+     ;; alias kept for the existing corpus until the Phase 1 sweep
+     ;; (~/code/life-os/threads/20260530160100-...). Both parse identically.
      (nix-assert (parse-expr (or (stx-ref subs 1) cond-expr))
                  (parse-expr (or (stx-ref subs 2) body-expr)))]
 
-    [(list 'with-cfg path-expr body-expr)
-     ;; (with-cfg config.myConfig.modules.X BODY) → introduces `cfg = config...;`
+    [(list (or 'with-cfg 'nix/with-cfg) path-expr body-expr)
+     ;; (nix/with-cfg config.myConfig.modules.X BODY) → introduces `cfg = config...;`
      ;; let-binding and rewrites config.myConfig.modules.X.foo to cfg.foo in BODY.
+     ;; `with-cfg` is a transitional alias for the existing corpus.
      (nix-with-cfg (parse-expr (or (stx-ref subs 1) path-expr))
                    (parse-expr (or (stx-ref subs 2) body-expr)))]
 
@@ -1252,9 +1276,20 @@
     ;; dotimes removed — sugar for (doseq [i (range n)] body...).
     ;; No broader pattern reinforced; composition is transparent.
 
+    [(list 'nix/with ns-expr body-expr)
+     ;; Canonical Nix scope form. Unambiguous (no record-update shape collision).
+     ;; Bare `(with ns body)` is the transitional alias kept for the existing
+     ;; corpus; the Phase 1 sweep (~/code/life-os/threads/20260530160100-...)
+     ;; migrates corpus usages to `nix/with`.
+     (nix-with (parse-expr (or (stx-ref subs 1) ns-expr))
+               (parse-expr (or (stx-ref subs 2) body-expr)))]
+
     [(list 'with target-expr updates ...)
-     ;; (with ns body) — Nix scope (parses to nix-with).
-     ;; (with target [:k v] [:k v] ...) — record update (with-form).
+     ;; (with ns body) — Nix scope (parses to nix-with). TRANSITIONAL.
+     ;;   Prefer `(nix/with ns body)` — see rule "Prefix where meaning diverges
+     ;;   from Clojure" in beagle/CLAUDE.md.
+     ;; (with target [:k v] [:k v] ...) — record update (with-form). STAYS bare;
+     ;;   not a Clojure collision.
      ;; Disambiguate by shape: nix-with has exactly one body arg whose top-level
      ;; form is NOT a [:keyword value] update bracket.
      (cond

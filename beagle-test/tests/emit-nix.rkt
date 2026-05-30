@@ -304,6 +304,86 @@
   (check-true (and out (string-contains? out "==")))
   (check-false (string-contains? out "((!")))
 
+;; --- quoted containers (Clojure-shaped data literals) -----------------------
+;; '[…] / '{…} / '#{…} parse as the container itself. Containers always
+;; evaluate in beagle; the quote is identity (meaning-preserving). Lets
+;; agents author Clojure-shaped data literals without learning beagle's
+;; "quote only on lists" discipline.
+;;
+;; The plain `read-syntax` used by `nix-emit` doesn't have the beagle
+;; readtable, so we construct quoted-container datums by hand via
+;; `nix-emit-forms` to exercise the parse layer directly.
+
+(test-case "quoted vector '[…] parses as vec-form (matches bare [..])"
+  (define out (nix-emit-forms
+               '(define-target nix)
+               `(def xs : Any (quote ,(br 1 2 3)))))
+  (define ref (nix-emit-forms
+               '(define-target nix)
+               `(def xs : Any ,(br 1 2 3))))
+  (check-true (and out (string-contains? out "[ 1 2 3 ]")))
+  (check-equal? out ref))
+
+(test-case "quoted map '{…} parses as map-form (matches bare {..})"
+  (define out (nix-emit-forms
+               '(define-target nix)
+               `(def m : Any (quote ,(mt ':a 1 ':b 2)))))
+  (define ref (nix-emit-forms
+               '(define-target nix)
+               `(def m : Any ,(mt ':a 1 ':b 2))))
+  (check-true (and out (string-contains? out "a = 1")))
+  (check-true (and out (string-contains? out "b = 2")))
+  (check-equal? out ref))
+
+(test-case "quoted set '#{…} parses as set-form (matches bare #{..})"
+  (define st (lambda xs (cons SET-TAG xs)))
+  (define out (nix-emit-forms
+               '(define-target nix)
+               `(def s : Any (quote ,(st 1 2 3)))))
+  (define ref (nix-emit-forms
+               '(define-target nix)
+               `(def s : Any ,(st 1 2 3))))
+  (check-equal? out ref))
+
+(test-case "quoted symbol still produces a quoted AST node (unchanged)"
+  ;; Regression: only containers get the strip-quote treatment.
+  ;; '(a b c) and 'symbol must continue to parse as `quoted`.
+  (define out (nix-emit "(define-target nix) (def s : Any 'hello)"))
+  (check-true (and out (string-contains? out "\"hello\""))))
+
+;; --- nix/-prefixed aliases (Phase 1 silent-rename targets) ------------------
+;; Per the "Prefix where meaning diverges from Clojure" rule in beagle/CLAUDE.md,
+;; Nix-specific forms whose Clojure namesake means something different get the
+;; nix/ prefix. `nix/assert` / `nix/with` / `nix/with-cfg` are now the canonical
+;; spellings; the bare `assert` / `with` / `with-cfg` remain as transitional
+;; aliases pending the corpus sweep.
+
+(test-case "nix/assert parses identically to bare assert"
+  (define out (nix-emit "(define-target nix) (def x : Any (nix/assert true 42))"))
+  (define ref (nix-emit "(define-target nix) (def x : Any (assert true 42))"))
+  (check-equal? out ref)
+  (check-true (and out (string-contains? out "assert true"))))
+
+(test-case "nix/with parses identically to Nix-scope (with ns body)"
+  (define out (nix-emit "(define-target nix) (def x : Any (nix/with pkgs 42))"))
+  (define ref (nix-emit "(define-target nix) (def x : Any (with pkgs 42))"))
+  (check-equal? out ref)
+  (check-true (and out (string-contains? out "with pkgs;"))))
+
+(test-case "nix/with-cfg parses identically to bare with-cfg"
+  (define out (nix-emit
+               "(define-target nix) (def x : Any (nix/with-cfg config.myConfig.x 42))"))
+  (define ref (nix-emit
+               "(define-target nix) (def x : Any (with-cfg config.myConfig.x 42))"))
+  (check-equal? out ref))
+
+(test-case "bare (with target [:k v] ...) record-update still works — not renamed"
+  ;; (with …) is overloaded — only the Nix-scope shape is the §C-silent
+  ;; collision. Record-update form stays bare; it's not a Clojure collision.
+  (define out (nix-emit
+               "(define-target nix) (def x : Any (with base [:k 1] [:j 2]))"))
+  (check-true (and out (string-contains? out "//"))))
+
 ;; --- ms + s inline interpolation ---------------------------------------------
 
 (test-case "ms with s inlines interpolation without double-wrapping"
