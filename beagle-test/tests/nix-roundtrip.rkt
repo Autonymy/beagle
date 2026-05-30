@@ -160,6 +160,37 @@
   (check-false (string-contains? out "enable-opt"))
   (check-false (string-contains? out "define-macro")))
 
+;; --- ~''…'' reader form round-trip ------------------------------------------
+;; Indented Nix strings authored as ~''…'' must round-trip through the
+;; reader and both emit paths preserving:
+;;   - per-line operand structure (no operand concatenation w/o \n)
+;;   - inline ${interp} for real interps
+;;   - literal ${X} via ''$ escape (sentinel-preserved through dedent +
+;;     split-line-interp)
+;;   - literal '' via ''' escape
+(test-case "nix-tilde-ms round-trip — multiline, interp, literal-$, literal-''"
+  (define out (compile-bnix-file (build-path fixtures-dir "nix-tilde-ms.bnix")))
+  ;; Real interp emits as ${pkgs.bash}
+  (check-true (string-contains? out "#!${pkgs.bash}/bin/bash")
+              "real ${pkgs.bash} interp inlined")
+  ;; ''${USER:-world} and ''${greetings[@]} should survive as literal-${X}
+  ;; tokens — i.e. each renders to ''${X} in the indented-string output
+  ;; (Nix's literal-dollar escape).
+  (check-true (string-contains? out "''${USER:-world}")
+              "''${USER:-world} round-trips as literal in output")
+  (check-true (string-contains? out "''${greetings[@]}")
+              "''${greetings[@]} round-trips as literal in output")
+  ;; "Hello, $NAME" — bare $ followed by non-{ stays literal $
+  (check-true (string-contains? out "Hello, $NAME"))
+  ;; Per-line layout: lines stay separated, no concatenation regression
+  (check-true (regexp-match? #rx"set -e[\n\r][\n\r]" out)
+              "set -e followed by blank line not collapsed")
+  (check-true (regexp-match? #rx"NAME=\"[^\n]+\"[\n\r]" out)
+              "NAME line terminates with newline")
+  ;; Literal '' (4 single-quotes) and literal $ in the :literals block
+  (check-true (string-contains? out "''''") "literal '' preserved")
+  (check-true (string-contains? out "''$") "literal $ preserved"))
+
 (test-case "nix-with-cfg round-trip"
   (define out (compile-bnix-file (build-path fixtures-dir "nix-with-cfg.bnix")))
   (check-true (string-contains? out "cfg = config.myConfig.modules.demo;"))

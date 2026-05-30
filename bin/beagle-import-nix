@@ -244,19 +244,17 @@
     [(list 'str-lit s)
      (format "~v" (escape-literal-dollars s))]
     [(list 'str-lit-ind s)
-     ;; Indented ''...'' literal: emit as (ms STRING) so emit-nix renders
-     ;; ''…''. Preserve embedded newlines and other whitespace verbatim
-     ;; via `~s` (writes string with escape sequences); emit-operative's
-     ;; nix-ms unescapes them back to raw characters in the output.
-     (format "(ms ~s)" s)]
+     ;; Indented ''…'' literal (no interp). Emit as ~''…'' so the bnix
+     ;; source is readable: raw multi-line content, no \n escapes.
+     (emit-ms-tilde (list s) depth)]
     [(list 'path p)
      (format "(p ~v)" p)]
     [(list 'str-interp parts)
      (emit-str-interp parts depth)]
     [(list 'str-interp-ind parts)
-     ;; Indented ''…'' with interpolation. Emit as (ms ...) with each part
-     ;; mapped to its source-text form. emit-nix's nix-ms wraps in ''…''.
-     (emit-str-ms parts depth)]
+     ;; Indented ''…'' with interp. Same ~''…'' form; interp parts emit
+     ;; as inline ${EXPR} markers within the body.
+     (emit-ms-tilde parts depth)]
     [(list 'int n)
      (number->string n)]
     [(list 'float n)
@@ -688,17 +686,53 @@
        [else
         (format "(s ~a)" (string-join s-args " "))])]))
 
-;; Same parts shape as emit-str-interp, but produces an (ms …) form so
-;; emit-nix renders ''…''. Multi-line literal segments stay one operand
-;; each (ms is multi-line by definition).
-(define (emit-str-ms parts depth)
-  (define ms-args
-    (map (λ (p)
-           (match p
-             [(? string? s) (format "~v" s)]
-             [(list 'interp ast-node) (emit-expr ast-node depth)]))
-         parts))
-  (format "(ms ~a)" (string-join ms-args " ")))
+;; Compose an indented Nix string as bnix's ~''…'' reader form.
+;; `parts` is a list whose elements are either strings (literal body
+;; text from the rnix parser, with no interp) or (interp AST) markers.
+;; The output is `~''\n<indented body>\n<close-indent>''` where each
+;; body line is prefixed with 2*(depth+1) spaces; the reader's
+;; nix-dedent strips that uniformly, so the AST round-trips to the same
+;; nix-multiline-string as the legacy single-string-with-\n form.
+;;
+;; Body escapes (so the reader produces the intended raw characters):
+;;   ''  →  '''   (reader's literal-double-quote escape)
+;;   ${  →  ''${  (reader's ''$ escape consumes the $; the { that
+;;                follows is then just a literal `{` character, so the
+;;                resulting AST string holds a literal `${`)
+;; The emitter (legacy escape-nix or operative escape-ind-string) re-
+;; escapes that literal `${` to `''${` in the Nix output. Real interps
+;; come in as (interp AST) markers and emit as ${EXPR} — those are NOT
+;; escaped.
+(define (emit-ms-tilde parts depth)
+  (define body
+    (apply string-append
+      (for/list ([p (in-list parts)])
+        (cond
+          [(string? p) (escape-ms-tilde-body p)]
+          [(and (pair? p) (eq? (car p) 'interp))
+           ;; The reader's ${…} must stay on a single line; collapse any
+           ;; newlines+leading-space in the rendered expression to one
+           ;; space. For typical interp content (ident, dotted path,
+           ;; simple call) this is a no-op.
+           (define expr-str (emit-expr (cadr p) depth))
+           (format "${~a}" (regexp-replace* #rx"\n[ \t]*" expr-str " "))]
+          [else (error 'emit-ms-tilde "unexpected ms part: ~v" p)]))))
+  (define ind (indent (+ depth 1)))
+  (define close-ind (indent depth))
+  (define lines (string-split body "\n" #:trim? #f))
+  (define indented
+    (string-join
+      (for/list ([l (in-list lines)])
+        (if (regexp-match? #rx"^[ \t]*$" l) "" (string-append ind l)))
+      "\n"))
+  (format "~~''\n~a\n~a''" indented close-ind))
+
+(define (escape-ms-tilde-body s)
+  (define s1 (regexp-replace* #rx"''" s "'''"))
+  ;; Literal replacement "''${" — neither $ nor { is special in Racket
+  ;; regexp-replace*'s insert string (only & and \0..\9). See
+  ;; escape-literal-dollars below for the same idiom.
+  (regexp-replace* #rx"\\$\\{" s1 "''${"))
 
 (define (escape-literal-dollars s)
   ;; Re-escape literal ${ → $${ so beagle's emit-nix produces \${ in the

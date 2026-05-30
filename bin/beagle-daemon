@@ -84,15 +84,27 @@ cmd_start() {
     echo "$pid" > "$PIDFILE"
     chmod 0600 "$PIDFILE"
 
-    # Wait for port file to appear (max 5s)
+    # Wait for port file to appear. Cold-start cost is dominated by
+    # `(require beagle/private/daemon)` expansion: ~0.5s with compiled
+    # bytecode (compiled/daemon_rkt.zo present), ~8-10s without. 30s
+    # covers a clean checkout, a stale-bytecode rebuild, and slower
+    # machines without ever masking a real failure.
+    local timeout_tenths="${BEAGLE_DAEMON_START_TIMEOUT_TENTHS:-300}"
     local waited=0
-    while [[ ! -f "$PORTFILE" ]] && [[ $waited -lt 50 ]]; do
+    while [[ ! -f "$PORTFILE" ]] && [[ $waited -lt $timeout_tenths ]]; do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            echo "Daemon process died during startup (pid $pid)." >&2
+            echo "Try: $RACKET -e '(require beagle/private/daemon) (run-daemon-tcp)' to see the error." >&2
+            rm -f "$PIDFILE"
+            exit 1
+        fi
         sleep 0.1
         waited=$((waited + 1))
     done
 
     if [[ ! -f "$PORTFILE" ]]; then
-        echo "Daemon failed to start (no port file after 5s)" >&2
+        echo "Daemon failed to start (no port file after $((timeout_tenths / 10))s)." >&2
+        echo "Hint: precompile bytecode with: raco make beagle-lib/private/daemon.rkt" >&2
         kill "$pid" 2>/dev/null || true
         rm -f "$PIDFILE"
         exit 1

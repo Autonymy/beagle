@@ -311,6 +311,48 @@
   (check-true (and out (string-contains? out "#!${pkgs.bash}/bin/bash")))
   (check-false (string-contains? out "${\"")))
 
+;; Multi-operand (ms …) is the canonical form (one operand per physical
+;; line). Each operand must land on its own output line — concatenation
+;; without \n is the bug we fixed for both legacy and operative emitters.
+(test-case "ms multi-operand emits one physical line per operand"
+  (define out (nix-emit "(define-target nix) (ms \"first line\" \"second line\" \"third\")"))
+  (check-true (and out (regexp-match? #rx"first line[\n\r]" out)))
+  (check-true (and out (regexp-match? #rx"second line[\n\r]" out)))
+  ;; No "lineSecond" concatenation regression
+  (check-false (and out (regexp-match? #rx"first linesecond" out))))
+
+(test-case "ms with multiple s operands keeps each on its own line"
+  (define out (nix-emit
+               "(define-target nix) (ms (s \"#!\" pkgs.bash) \"set -e\" (s \"echo \" name))"))
+  (check-true (and out (string-contains? out "#!${pkgs.bash}")))
+  (check-true (and out (regexp-match? #rx"\\$\\{pkgs.bash\\}[\n\r]" out)))
+  (check-true (and out (regexp-match? #rx"set -e[\n\r]" out)))
+  (check-true (and out (string-contains? out "echo ${name}"))))
+
+;; ~''…'' reader-level tests live in tests/nix-roundtrip.rkt — they
+;; need the beagle/nix #lang reader which nix-emit (plain read-syntax)
+;; doesn't invoke.
+
+;; Plain Racket strings have no interpolation semantics in bnix, so literal
+;; `${X}` in an (ms …) / (s …) chunk must be escaped as `''${X}` / `\${X}`
+;; in the emitted Nix string. Otherwise bash array-expansion syntax like
+;; `${THEMES[@]}` lands in the output as a malformed Nix interp.
+(test-case "ms escapes bare ${ in plain string chunks (multiline)"
+  (define out (nix-emit
+               "(define-target nix) (ms \"printf '%s\\\\n' \\\"${THEMES[@]}\\\"\")"))
+  (check-true (and out (string-contains? out "''${THEMES[@]}")))
+  (check-false (and out (regexp-match? #rx"[^'\\\\]\\$\\{THEMES" out))))
+
+(test-case "ms preserves $${ literal-dollar marker (multiline)"
+  (define out (nix-emit "(define-target nix) (ms \"hello $${X} world\")"))
+  (check-true (and out (string-contains? out "''${X}"))))
+
+(test-case "s escapes bare ${ in plain string chunks (single-line)"
+  (define out (nix-emit
+               "(define-target nix) (s \"prefix ${VAR} suffix\")"))
+  (check-true (and out (string-contains? out "\\${VAR}")))
+  (check-false (and out (regexp-match? #rx"[^\\\\]\\$\\{VAR" out))))
+
 ;; --- flake-input emission ----------------------------------------------------
 
 (test-case "flake-input emits canonical inputs.X.Y.${system}.Z path"

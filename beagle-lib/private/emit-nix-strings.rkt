@@ -25,8 +25,15 @@
 
 ;; Single source of truth for Nix string escaping.
 ;; #:multiline? — produce ''…'' string semantics (escapes are different from "…")
-;; #:keep-interp? — do NOT escape bare ${ (the caller is composing an
-;;                  interpolated string; ${X} markers are real interps)
+;; #:keep-interp? — do NOT escape bare ${ (caller wants the rendered string
+;;                  to retain `${X}` as a real Nix interpolation marker).
+;;                  Only `emit-key` uses this — for plain-string map keys that
+;;                  the user authored with `${X}` to get Nix computed-key
+;;                  evaluation. Interpolated-string chunks (`(s …)` / `(ms …)`)
+;;                  do NOT pass this flag: their interpolation is expressed
+;;                  structurally via expression parts, so bare `${X}` in their
+;;                  literal string chunks is the user's literal text and must
+;;                  be escaped.
 ;;
 ;; Beagle's bnix convention: `$${` in a literal string chunk means
 ;; "literal `${` in the rendered output." This is independent of
@@ -59,7 +66,7 @@
   (define chunks
     (for/list ([part (in-list parts)])
       (cond
-        [(string? part) (escape-nix #:multiline? #t #:keep-interp? #t part)]
+        [(string? part) (escape-nix #:multiline? #t part)]
         [else (format "${~a}" (emit-expr* part depth))])))
   (string-join chunks ""))
 
@@ -67,28 +74,28 @@
   (define chunks
     (for/list ([part (in-list parts)])
       (cond
-        [(string? part) (escape-nix #:keep-interp? #t part)]
+        [(string? part) (escape-nix part)]
         [else (format "${~a}" (emit-expr* part depth))])))
   (format "\"~a\"" (string-join chunks "")))
 
 (define (emit-nix-multiline-string lines depth)
   (define ind (indent (+ depth 1)))
-  ;; Flatten all parts into a single body string: literal strings keep their
-  ;; embedded \n (escape-nix in multiline mode does not touch \n), expression
-  ;; parts emit as inline ${expr} markers. Splitting THIS on \n gives the
-  ;; physical lines we then indent — so a single (ms ...) part containing
-  ;; "[default]\nkey = " indents both lines correctly instead of being
-  ;; treated as one unbroken segment with stray internal newlines.
+  ;; Each operand of (ms …) is one logical line. Operands joined with \n so
+  ;; multi-operand forms produce one physical Nix line per operand. A string
+  ;; operand may still contain its own embedded \n (legacy single-operand
+  ;; form, e.g. (ms "[default]\nkey =")) — the join + re-split treats those
+  ;; as additional physical lines uniformly.
   (define body
-    (apply string-append
+    (string-join
       (for/list ([line (in-list lines)])
         (cond
           [(string? line)
-           (escape-nix #:multiline? #t #:keep-interp? #t line)]
+           (escape-nix #:multiline? #t line)]
           [(nix-interpolated-string? line)
            (emit-nix-interp-string-inline
             (nix-interpolated-string-parts line) depth)]
-          [else (format "${~a}" (emit-expr* line depth))]))))
+          [else (format "${~a}" (emit-expr* line depth))]))
+      "\n"))
   (define phys-lines (regexp-split #rx"\n" body))
   (define indented
     (for/list ([l (in-list phys-lines)])

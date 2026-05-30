@@ -1055,20 +1055,31 @@
              (nix->string (caddr args)))]
     [else "/* assoc needs 3 args */ null"]))
 
-;; (ms SEG1 SEG2 …) → ''\nSEG1SEG2…'' — Nix indented string.
-;; Each SEG is either a literal string (verbatim, with ${ escaped to ''${
-;; and '' escaped to ''') or an expression (wrapped as ${EXPR}).
-;; Always emit a leading newline after the opening ''; Nix's
-;; indented-string rule strips exactly one such newline, so the actual
-;; first character of the content is whatever the input string starts
-;; with (preserving leading-newline content if any).
+;; (ms SEG1 SEG2 …) → ''\nSEG1\nSEG2\n…'' — Nix indented string.
+;; Each SEG is one logical line. A string SEG is emitted verbatim (with ${
+;; escaped to ''${ and '' to '''). A (s PART …) SEG is emitted INLINE: literal
+;; parts contribute escaped text and expression parts contribute ${EXPR}, all
+;; concatenated as the line content (no surrounding "…" — that's what makes a
+;; per-line interp distinct from a bare ${EXPR} wrap). Any other expression
+;; SEG falls back to a whole-line ${EXPR} wrap.
+;;
+;; The leading \n after '' is stripped by Nix's indented-string rule, so the
+;; first physical line of output is the first SEG, not a blank line.
 (define (nix-ms args)
-  (define parts
-    (for/list ([a (in-list args)])
-      (cond
-        [(string? a) (escape-ind-string a)]
-        [else (format "$~a{~a}" "" (nix->string a))])))
-  (format "''\n~a''" (apply string-append parts)))
+  (define parts (map nix-ms-line args))
+  (format "''\n~a''" (string-join parts "\n")))
+
+(define (nix-ms-line a)
+  (cond
+    [(string? a) (escape-ind-string a)]
+    [(and (pair? a) (eq? (car a) 's))
+     ;; (s PART …) — inline-render parts into the multiline body.
+     (apply string-append
+       (for/list ([p (in-list (cdr a))])
+         (cond
+           [(string? p) (escape-ind-string p)]
+           [else (format "$~a{~a}" "" (nix->string p))])))]
+    [else (format "$~a{~a}" "" (nix->string a))]))
 
 ;; Indented-string escape rules:
 ;;   ${  → ''${    (literal $ followed by {)

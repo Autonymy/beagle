@@ -565,7 +565,8 @@
   (and (call-form? val)
        (let ([fn (call-form-fn val)])
          (and (symbol? fn)
-              (member fn '(lib/mkDefault lib/mkForce lib/mkMerge lib/mkOverride))))))
+              (member fn '(lib/mkDefault lib/mkForce lib/mkMerge lib/mkOverride
+                           lib.mkDefault lib.mkForce lib.mkMerge lib.mkOverride))))))
 
 (define (detect-cross-file-conflicts all-file-keys schema)
   (define global-map (make-hash))
@@ -596,7 +597,8 @@
         (and entry (hash? entry)
              (let ([t (hash-ref entry 't "?")])
                (member t '("listOf" "attrsOf" "lazyAttrsOf"
-                            "separatedString" "lines" "commas")))))
+                            "separatedString" "lines" "commas"
+                            "coercedTo")))))
       (unless mergeable-type?
         (define any-priority?
           (ormap (lambda (e) (value-uses-priority? (found-key-value (cadr e)))) entries))

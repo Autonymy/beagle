@@ -82,10 +82,19 @@
        (loop new-parts '())]
       [else (loop parts (cons c literal))])))
 
+;; Out-of-band marker emitted by read-multi-line-body's `''$` escape.
+;; split-line-interp recognises it and treats the following `$` as a
+;; literal chunk character rather than starting an interp parse. U+0001
+;; is reserved for this purpose — it cannot appear in user-authored Nix
+;; source (where the body is text content) without explicit unicode
+;; escapes that this reader doesn't honour.
+(define LITERAL-DOLLAR-SENTINEL #\u0001)
+
 ;; Read raw text between ~'' and ''. Handles Nix-style escapes:
-;;   '''     → ''  in result (literal '')
-;;   ''${    → ${  in result (literal ${ — disables our interp too)
-;;   ''\X    → \X  in result (Nix escape passthrough)
+;;   '''     → ''       in result (literal '')
+;;   ''${    → \1${     literal ${, sentinel-prefixed so the later
+;;                      split-line-interp pass leaves it alone
+;;   ''\X    → \X       in result (Nix escape passthrough)
 (define (read-multi-line-body port)
   (let loop ([acc '()])
     (define c (read-char port))
@@ -102,9 +111,17 @@
              (read-char port) (read-char port)
              (loop (cons #\' (cons #\' acc)))]
             [(and (char? c3) (char=? c3 #\$))
-             ;; ''$ → literal $  (disable interp)
+             ;; ''$ → literal $ (disables Nix interp). Two-pass concern:
+             ;; read-multi-line-body produces a raw text that later flows
+             ;; through nix-dedent + split-line-interp. By the time
+             ;; split-line-interp scans, a bare `$` + `{` looks identical
+             ;; whether it came from `${` (real interp) or `''${` (literal).
+             ;; To distinguish, we emit U+0001 as a sentinel before the
+             ;; literal $; split-line-interp strips the sentinel and
+             ;; passes through the following $ as a chunk character
+             ;; without attempting interp parsing.
              (read-char port) (read-char port)
-             (loop (cons #\$ acc))]
+             (loop (cons #\$ (cons LITERAL-DOLLAR-SENTINEL acc)))]
             [(and (char? c3) (char=? c3 #\\))
              ;; ''\X → literal \X
              (read-char port) (read-char port)
@@ -142,6 +159,11 @@
   trimmed)
 
 ;; Split one line on ${expr} boundaries, return list of datums.
+;;
+;; U+0001 sentinels are emitted by read-multi-line-body's `''$` literal-
+;; dollar escape. When we encounter one, the following char (a `$`) must
+;; be passed through as a chunk character WITHOUT triggering interp
+;; parsing — the sentinel is dropped from the output text.
 (define (split-line-interp line)
   (let loop ([i 0] [acc '()] [chunk '()])
     (cond
@@ -149,6 +171,11 @@
        (define final
          (if (null? chunk) acc (cons (list->string (reverse chunk)) acc)))
        (reverse final)]
+      [(char=? (string-ref line i) LITERAL-DOLLAR-SENTINEL)
+       (cond
+         [(< (+ i 1) (string-length line))
+          (loop (+ i 2) acc (cons (string-ref line (+ i 1)) chunk))]
+         [else (loop (+ i 1) acc chunk)])]
       [(and (char=? (string-ref line i) #\$)
             (< (+ i 1) (string-length line))
             (char=? (string-ref line (+ i 1)) #\{))
