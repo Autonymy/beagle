@@ -53,6 +53,44 @@ externs, read `beagle-lib/private/stdlib-nix.rkt` and `stdlib-portable.rkt`.
 
 These are the non-obvious ones an agent will get wrong otherwise.
 
+### Zero users, zero backwards-compat reasoning
+
+Beagle has **zero external users**. Tom is the only user. There is no
+installed base, no downstream consumers, no migration to ease. **Stop
+reasoning about backwards compatibility, deprecation paths,
+transitional aliases, or "not breaking existing code."** None of that
+exists here.
+
+When a form, keyword, or surface is wrong, **REMOVE IT.** Do not
+deprecate, do not alias, do not emit a soft hint and leave it
+accepted. Hard removal. Make the wrong thing unparseable, not merely
+discouraged.
+
+The cost model is the inverse of a language with users: every
+transitional courtesy is pure bloat with no offsetting benefit, and
+it accumulates fast. **Accretion is the enemy, not breakage. There is
+no one to break.**
+
+When removing something, the parser must reject with a **pointed
+error that names the replacement** — e.g. "inline type annotations
+are not supported — use a claim form" — not a cryptic downstream
+error from the grammar misparsing the offending shape. The repair
+loop's value is "wrong surface, here's the right one"; a removal
+that produces a confusing error is half the win.
+
+The `assert` → `nix/assert` / `with` → `nix/with` work used a
+transitional-alias pattern (bare form accepted as deprecated alias
+during corpus migration). **That pattern was the wrong default** and
+must not be applied reflexively. It made sense only because the
+corpus had 98 sites depending on the bare spelling — a real
+migration. For surfaces with **zero corpus hits**, an alias is an
+off-ramp for a road nobody is on, plus a latent second surface that
+violates the one-canonical-form property the rest of the rules are
+trying to defend.
+
+Release notes can record `X → Y` migrations after the fact. The
+record is fine. The accepted-but-deprecated parser state isn't.
+
 ### Zero escape hatches
 
 No `unsafe-*` anything (no `unsafe-nix`, `unsafe-js`, `unsafe-clj`,
@@ -73,6 +111,40 @@ Every typed language that shipped an escape hatch regretted it
 (TypeScript `any`, Java `Object`-cast, Python `Any`-as-bailout,
 Rust `unsafe`). The discipline of "no escape" forces the stdlib to
 mature and makes hallucinations show up as compile errors.
+
+### Clojure-shaped surface, not a new Lisp
+
+Beagle targets a **Clojure-shaped surface** and stays there unless
+there's a strong reason to diverge. The only sanctioned divergences:
+
+1. **Shrinking surface.** Remove idioms and enforce one-idiom-per-task
+   via the repair compiler. Multiple ways to do the same thing is a
+   Clojure inheritance to *narrow*, not preserve.
+2. **Per-language namespacing.** Forms whose meaning is target-
+   specific get that target's namespace prefix — `nix/…` for Nix
+   forms today; `lua/…`, `bevy/…`, `sql/…`, etc. for future
+   backends. The namespace marks the meaning-divergence and keeps
+   the bare Clojure-shaped names free for their Clojure meaning.
+   See "Prefix where meaning diverges from Clojure" below.
+
+**The goal:** leverage strong AI priors by keeping the authoring
+surface Clojure-shaped, with **minimal qualifications or
+refinement directives in the surface itself**. The agent inherits
+Clojure-prior idioms unaltered. Precision lives in the **type
+system** (per the minimal-truth / types-as-view thesis,
+`~/code/life-os/threads/20260529020859-…`) — NOT in surface
+annotations, per-form modifiers, or directives that re-qualify
+what a Clojure form means. The checker/inference layer handles the
+precision work the surface deliberately doesn't carry. Beyond
+that, no other refinement direction on the surface.
+
+Not a new Lisp — a strict, typed *subset* of one.
+
+The turtles pivot (uniform s-expressions, brackets removed,
+`hash-map` / `vector` / `hash-set` forms) was tried mid-May 2026
+and reverted in code at v0.15.3. Don't reopen that surface debate
+without an extraordinary reason. The bracket-using surface
+(`[]` / `{}` / `#{}`, keyword keys) is settled.
 
 ### Prefix where meaning diverges from Clojure
 
