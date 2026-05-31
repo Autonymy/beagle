@@ -71,11 +71,58 @@
 
 (define current-registry (make-parameter #f))
 (define current-src-table (make-parameter #f))
+;; Side-table mapping the eq?-identity of a body list (e.g. defn-form's
+;; body) to a parallel list of src-loc for each body element. Populated by
+;; parse-body. Lets diagnostics that fire on bare-symbol body elements
+;; (where src-for returns #f because symbols can't be stored in src-table)
+;; recover positional srcloc. See store-src! comment for the underlying
+;; symbol-storage limitation this side-table works around.
+(define current-body-locs-table (make-parameter #f))
+
+;; Look up the src-loc of an AST node, falling back to body-list positional
+;; metadata when the node is a bare symbol/literal that store-src! refuses.
+;; BODY-LIST + POS form a positional anchor recoverable from any code that
+;; holds the list and an index — see check.rkt's return-type diag.
+(define (body-loc-at body-list pos)
+  (define tbl (current-body-locs-table))
+  (and tbl (let ([locs (hash-ref tbl body-list #f)])
+             (and locs (>= pos 0) (< pos (length locs))
+                  (list-ref locs pos)))))
+
+;; Cross-pass storage for the body-locs-table, keyed by program identity.
+;; parse.rkt populates this after parse-program completes; check.rkt
+;; recovers it via program-body-locs-table to keep current-body-locs-table
+;; set during the type-check pass (where the parse-time parameter is no
+;; longer in scope).
+(define PROGRAM->BODY-LOCS (make-weak-hasheq))
+(define (register-program-body-locs-table! prog tbl)
+  (hash-set! PROGRAM->BODY-LOCS prog tbl))
+(define (program-body-locs-table prog)
+  (hash-ref PROGRAM->BODY-LOCS prog #f))
 
 (define (store-src! node loc)
+  ;; Only the FIRST write for a node wins. Parse-time rewrites
+  ;; (when/->/-if-let/...) call (parse-expr synthesized-syntax) from
+  ;; inside the surface form's parse-expr frame; the inner parse-expr
+  ;; populates the table with the synthesized form's srcloc (which is
+  ;; the operative blame position), and the outer parse-expr's
+  ;; store-src! must NOT clobber it with the surface sugar's loc.
+  ;; The `hash-has-key?` guard preserves this innermost-wins invariant.
+  ;;
+  ;; Symbols, strings, booleans, and numbers are EXCLUDED — they're
+  ;; interned/shared, so storing per occurrence would cross-pollute
+  ;; (the same `'x` symbol appears in many positions; the FIRST
+  ;; occurrence's loc would shadow all others). The downside: when a
+  ;; diagnostic fires on a bare-symbol AST leaf (e.g. defn body =
+  ;; just `x`), src-for returns #f and the diagnostic falls back to
+  ;; the parent form's loc. That's a known limitation tracked in
+  ;; sourcemap-fidelity.rkt — closing it requires either (a) symbol
+  ;; uninterning at parse time, (b) a position-keyed side-table, or
+  ;; (c) syntax-walking inside check.rkt's return-type diag.
   (when (and loc (current-src-table)
              (not (string? node)) (not (boolean? node))
-             (not (number? node)) (not (symbol? node)))
+             (not (number? node)) (not (symbol? node))
+             (not (hash-has-key? (current-src-table) node)))
     (hash-set! (current-src-table) node loc))
   node)
 
@@ -368,6 +415,8 @@
  (struct-out src-loc) stx->src-loc
  ->datum stx-subs stx-ref stx-tail
  current-registry current-src-table store-src!
+ current-body-locs-table body-loc-at
+ register-program-body-locs-table! program-body-locs-table
  ;; Symbol predicates
  dot-method-sym? static-method-sym? dynamic-var-sym? constructor-sym? keyword-sym?
  ;; Parse injection

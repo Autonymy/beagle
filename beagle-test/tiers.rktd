@@ -64,6 +64,7 @@
              "parse.rkt"
              "quasi-quote-reader.rkt"
              "reader-conditionals.rkt"
+             "sourcemap-fidelity.rkt"   ; diagnostic srcloc fidelity benchmark
              "syntax.rkt"
              "test-tags.rkt"
              "threading.rkt"

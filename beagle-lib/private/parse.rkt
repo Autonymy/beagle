@@ -778,9 +778,11 @@
   ;; 'macro-expansion-type-error.
   (define src-table (make-hasheq))
   (define macro-derived-table (make-hasheq))
+  (define body-locs-table (make-hasheq))
   (define pairs
     (parameterize ([current-registry registry]
                    [current-src-table src-table]
+                   [current-body-locs-table body-locs-table]
                    [current-macro-derived-table macro-derived-table]
                    [current-user-parametric (current-user-parametric)])
       (apply append
@@ -822,6 +824,13 @@
   ;; returns and the parameterize unwinds.
   (when (positive? (hash-count macro-derived-table))
     (register-program-macro-table! prog macro-derived-table))
+  ;; Same for the body-locs-table (parallel list of body element srclocs,
+  ;; keyed by body list identity). check.rkt restores it via
+  ;; program-body-locs-table during the type-check pass so the
+  ;; return-type diag can recover positional srcloc for bare-symbol
+  ;; body tails that store-src! refused to record.
+  (when (positive? (hash-count body-locs-table))
+    (register-program-body-locs-table! prog body-locs-table))
   prog)
 
 (define (meta-form? d)
@@ -852,6 +861,25 @@
             "(~a ...) escape hatches are not available. Beagle has no per-target escape by design — if the stdlib doesn't cover the function, add a one-line type signature to the appropriate stdlib-*.rkt; if you need raw target code, write a separate target-language file and import it."
             (car d))]
     [else (parse-expr x)]))
+
+;; Parameter holding the original syntax object of the surface form
+;; currently being parsed. Set in parse-expr immediately before dispatching
+;; to parse-list-form. Used by parse-time rewrite arms (when/->/-if-let/...)
+;; to tag synthesized datum with the original form's source location.
+(define current-form-stx (make-parameter #f))
+
+;; Wrap a synthesized datum in a syntax object whose source location is
+;; the current surface form (current-form-stx). datum->syntax preserves
+;; existing syntax objects embedded in the datum, so sub-forms (which are
+;; recovered from stx-subs/stx-ref) keep their original srclocs. The new
+;; outer container — and any bare leaves the rewrite inserted — get the
+;; surface form's srcloc, which is the right blame line when the synthetic
+;; container itself is the node a diagnostic fires on.
+(define (rewrite-as datum)
+  (let ([ctx (current-form-stx)])
+    (if (syntax? ctx)
+        (datum->syntax ctx datum ctx)
+        datum)))
 
 (define (parse-expr x)
   (define loc (and (syntax? x) (stx->src-loc x)))
@@ -918,7 +946,8 @@
         (mark-macro-derived! parsed-node ctx)
         parsed-node]
        [else
-        (parse-list-form d subs)])]
+        (parameterize ([current-form-stx x])
+          (parse-list-form d subs))])]
     [else (error 'beagle "unsupported expression: ~v" d)])
    loc))
 
@@ -1118,12 +1147,35 @@
 ;; pipe family (`|>` / `|>>` / `pipe-to` / `pipe-from`) was an Elixir/F# import
 ;; that has been hard-removed. The replacement is the full Clojure threading
 ;; family — `->`, `->>`, `as->`, `cond->`, `cond->>`, `some->`, `some->>`.
+;; Insert VAL into STEP at POSITION ('first or 'last). When STEP is a
+;; syntax object, the resulting list is wrapped with `datum->syntax` using
+;; STEP as the context — this propagates the threading-step's srcloc to
+;; the synthesized call. Bare steps `f` wrap as `(f val)` (likewise tagged
+;; with f's loc when available).
 (define (thread-step-insert val step position)
-  (if (pair? step)
-      (if (eq? position 'first)
-          (cons (car step) (cons val (cdr step)))
-          (append step (list val)))
-      (list step val)))
+  (define step-datum (->datum step))
+  (define step-subs (and (syntax? step) (stx-subs step)))
+  (define result-datum
+    (cond
+      [(pair? step-datum)
+       (cond
+         [(eq? position 'first)
+          ;; (head val arg2 arg3 …)
+          (cons (or (stx-ref step-subs 0) (car step-datum))
+                (cons val (or (and step-subs (stx-tail step-subs 1))
+                              (cdr step-datum))))]
+         [else
+          ;; (head arg1 arg2 … val)
+          (append (or step-subs step-datum) (list val))])]
+      [else
+       ;; Bare step `f` — synthesize (f val) with f's syntax preserved.
+       (list step val)]))
+  ;; Tag the constructed list with STEP's srcloc when STEP is a syntax
+  ;; object. This is the key fix for the threading-family benchmark
+  ;; entries: the outer call after expansion blames the step's line.
+  (if (syntax? step)
+      (datum->syntax step result-datum step)
+      result-datum))
 
 ;; (-> x f g h) → (h (g (f x))) ; bare step `f` wraps as (f x)
 ;; (-> x (f a b)) → (f x a b)   ; insert as FIRST arg of step
@@ -1224,9 +1276,12 @@
 ;; would produce. Called from parse-list-form's match arms.
 ;;
 ;; bindings-stx is the original `[name expr]` form (still wrapped in
-;; BRACKET-TAG); rest is the post-binding tail — for if-let/if-some it's
-;; (list then else); for when-let/when-some it's the body sequence.
-(define (lower-binding-cond head bindings-stx rest)
+;; BRACKET-TAG); rest is the post-binding tail (datum list) — for
+;; if-let/if-some it's (list then else); for when-let/when-some it's the
+;; body sequence. rest-stxs is the corresponding list of syntax objects
+;; recovered from the surface form's stx-tail (or #f when unavailable);
+;; embedding those preserves per-step srcloc in the synthesized output.
+(define (lower-binding-cond head bindings-stx rest [rest-stxs #f])
   (define bdatum (->datum bindings-stx))
   (define items
     (cond
@@ -1239,6 +1294,21 @@
            "~a: bindings must be [name expr], got: ~v" head bdatum))
   (define name (car items))
   (define val-expr (cadr items))
+  ;; Recover the syntax for the value expression so its srcloc survives.
+  (define val-stx
+    (let ([bsubs (stx-subs bindings-stx)])
+      (cond
+        ;; BRACKET-TAG-wrapped: subs[0] is BRACKET-TAG, subs[1] is name,
+        ;; subs[2] is the value expression.
+        [(and bsubs (and (pair? bdatum) (eq? (car bdatum) BRACKET-TAG)))
+         (or (stx-ref bsubs 2) val-expr)]
+        [bsubs (or (stx-ref bsubs 1) val-expr)]
+        [else val-expr])))
+  ;; Pick the syntax-preserving rest items where possible.
+  (define rest-items
+    (cond
+      [(and rest-stxs (= (length rest-stxs) (length rest))) rest-stxs]
+      [else rest]))
   (define cond-expr
     (case head
       [(if-let when-let)   name]
@@ -1248,14 +1318,14 @@
      (unless (= (length rest) 2)
        (error 'beagle "~a: expected (~a [name expr] then else), got: ~v"
               head head (cons head (cons bdatum rest))))
-     (list 'let (list BRACKET-TAG name val-expr)
-           (list 'if cond-expr (car rest) (cadr rest)))]
+     (list 'let (list BRACKET-TAG name val-stx)
+           (list 'if cond-expr (car rest-items) (cadr rest-items)))]
     [(when-let when-some)
      (when (null? rest)
        (error 'beagle "~a: expected at least one body expression after bindings"
               head))
-     (list 'let (list BRACKET-TAG name val-expr)
-           (list 'if cond-expr (cons 'do rest)))]))
+     (list 'let (list BRACKET-TAG name val-stx)
+           (list 'if cond-expr (cons 'do rest-items)))]))
 
 ;; expand-cond-thread, expand-some-thread, expand-as-thread are defined
 ;; above with the rest of the threading family. The Clojure threading
@@ -2058,31 +2128,50 @@
      (static-call cm (map parse-expr (or (stx-tail subs 1) args)))]
 
     [(list 'fmt (list '#%block-string _ (? string? text)))
-     (parse-expr (expand-fmt text))]
+     (parse-expr (rewrite-as (expand-fmt text)))]
     [(list 'fmt (? string? text))
-     (parse-expr (expand-fmt text))]
+     (parse-expr (rewrite-as (expand-fmt text)))]
 
     ;; Clojure threading family — all parse-time rewrites to ordinary
     ;; composition. `->` and `->>` are the canonical replacements for the
     ;; (removed) pipe family. The conditional/binding/short-circuit
     ;; threaders lower to let-chains and (if …) nodes.
     [(list '-> init steps ...)
-     (parse-expr (expand-thread-first init steps))]
+     (parse-expr (rewrite-as
+                  (expand-thread-first (or (stx-ref subs 1) init)
+                                       (or (and subs (stx-tail subs 2)) steps))))]
     [(list '->> init steps ...)
-     (parse-expr (expand-thread-last init steps))]
+     (parse-expr (rewrite-as
+                  (expand-thread-last (or (stx-ref subs 1) init)
+                                      (or (and subs (stx-tail subs 2)) steps))))]
     [(list 'as-> init (? symbol? name) steps ...)
-     (parse-expr (expand-as-thread init name steps))]
+     (parse-expr (rewrite-as
+                  (expand-as-thread (or (stx-ref subs 1) init)
+                                    name
+                                    (or (and subs (stx-tail subs 3)) steps))))]
     [(list 'as-> _ _ _ ...)
      (raise-parse-error 'bad-form
                         "as-> expects a symbol placeholder: (as-> init name steps...)")]
     [(list 'cond-> init clauses ...)
-     (parse-expr (expand-cond-thread init clauses 'first))]
+     (parse-expr (rewrite-as
+                  (expand-cond-thread (or (stx-ref subs 1) init)
+                                      (or (and subs (stx-tail subs 2)) clauses)
+                                      'first)))]
     [(list 'cond->> init clauses ...)
-     (parse-expr (expand-cond-thread init clauses 'last))]
+     (parse-expr (rewrite-as
+                  (expand-cond-thread (or (stx-ref subs 1) init)
+                                      (or (and subs (stx-tail subs 2)) clauses)
+                                      'last)))]
     [(list 'some-> init steps ...)
-     (parse-expr (expand-some-thread init steps 'first))]
+     (parse-expr (rewrite-as
+                  (expand-some-thread (or (stx-ref subs 1) init)
+                                      (or (and subs (stx-tail subs 2)) steps)
+                                      'first)))]
     [(list 'some->> init steps ...)
-     (parse-expr (expand-some-thread init steps 'last))]
+     (parse-expr (rewrite-as
+                  (expand-some-thread (or (stx-ref subs 1) init)
+                                      (or (and subs (stx-tail subs 2)) steps)
+                                      'last)))]
     ;; Clojure conditional sugar — accept-and-canonicalize to (if …) / (if … (do …)).
     ;; Identity-preserving: same emitted code as the hand-written canonical
     ;; form. The lowerings mirror lower-binding-cond's shape — multi-body
@@ -2097,13 +2186,30 @@
     ;; Like if-let/when-let, the surface sugar is welcome; the canonical AST
     ;; is what every downstream pass sees.
     [(list 'when c body ..1)
-     (parse-expr (list 'if c (cons 'do body)))]
+     ;; Embed the original syntax for c (subs[1]) and body (subs[2..]) so
+     ;; their srclocs survive. rewrite-as tags the synthesized outer (if …)
+     ;; with the (when …) form's srcloc; sub-form syntax passes through.
+     (parse-expr (rewrite-as
+                  (list 'if
+                        (or (stx-ref subs 1) c)
+                        (cons 'do (or (stx-tail subs 2) body)))))]
     [(list 'when-not c body ..1)
-     (parse-expr (list 'if (list 'not c) (cons 'do body)))]
+     (parse-expr (rewrite-as
+                  (list 'if
+                        (list 'not (or (stx-ref subs 1) c))
+                        (cons 'do (or (stx-tail subs 2) body)))))]
     [(list 'if-not c then-expr else-expr)
-     (parse-expr (list 'if c else-expr then-expr))]
+     (parse-expr (rewrite-as
+                  (list 'if
+                        (or (stx-ref subs 1) c)
+                        (or (stx-ref subs 3) else-expr)
+                        (or (stx-ref subs 2) then-expr))))]
     [(list 'unless c body ..1)
-     (parse-expr (list 'if c 'nil (cons 'do body)))]
+     (parse-expr (rewrite-as
+                  (list 'if
+                        (or (stx-ref subs 1) c)
+                        'nil
+                        (cons 'do (or (stx-tail subs 2) body)))))]
     [(list 'when _ ...)
      (raise-parse-error 'bad-form
                         "when requires at least one body expression: (when c body...)")]
@@ -2131,13 +2237,29 @@
     ;; typed form should be beagle-native, not Clojure-shaped. Until then
     ;; the sugar is welcome.
     [(list 'if-let bindings then-expr else-expr)
-     (parse-expr (lower-binding-cond 'if-let bindings (list then-expr else-expr)))]
+     (parse-expr (rewrite-as
+                  (lower-binding-cond 'if-let
+                                      (or (stx-ref subs 1) bindings)
+                                      (list then-expr else-expr)
+                                      (and subs (stx-tail subs 2)))))]
     [(list 'when-let bindings body ...)
-     (parse-expr (lower-binding-cond 'when-let bindings body))]
+     (parse-expr (rewrite-as
+                  (lower-binding-cond 'when-let
+                                      (or (stx-ref subs 1) bindings)
+                                      body
+                                      (and subs (stx-tail subs 2)))))]
     [(list 'if-some bindings then-expr else-expr)
-     (parse-expr (lower-binding-cond 'if-some bindings (list then-expr else-expr)))]
+     (parse-expr (rewrite-as
+                  (lower-binding-cond 'if-some
+                                      (or (stx-ref subs 1) bindings)
+                                      (list then-expr else-expr)
+                                      (and subs (stx-tail subs 2)))))]
     [(list 'when-some bindings body ...)
-     (parse-expr (lower-binding-cond 'when-some bindings body))]
+     (parse-expr (rewrite-as
+                  (lower-binding-cond 'when-some
+                                      (or (stx-ref subs 1) bindings)
+                                      body
+                                      (and subs (stx-tail subs 2)))))]
     [(list 'dotimes _ ...)
      (raise-parse-error 'removed-form
                         "dotimes removed — use (doseq [i (range n)] body...)")]
@@ -2241,7 +2363,21 @@
 (define (parse-body forms)
   (when (null? forms)
     (error 'beagle "expected at least one body expression"))
-  (map parse-expr forms))
+  (define parsed (map parse-expr forms))
+  ;; Record per-position srcloc of each surface form into a side-table
+  ;; keyed by the result list's identity. The result list is fresh
+  ;; (returned from map), so its eq?-identity is unique even when the
+  ;; AST nodes are interned (e.g. bare symbols). Lets diagnostics that
+  ;; fire on a specific body position (e.g. defn return-type uses the
+  ;; last body expr) recover positional srcloc via body-loc-at when
+  ;; src-for returns #f for the AST node itself.
+  (define tbl (current-body-locs-table))
+  (when tbl
+    (define locs
+      (for/list ([f (in-list forms)])
+        (and (syntax? f) (stx->src-loc f))))
+    (hash-set! tbl parsed locs))
+  parsed)
 
 (define (parse-map-literal items)
   ;; Items are normally key/value pairs (even count). To support Nix-style

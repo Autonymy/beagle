@@ -710,7 +710,13 @@
                                'signature (format "~a : ~a" name sig)
                                'expected (type->string effective-ret)
                                'actual (type->string last-type))
-                       #:src (src-for (last body))))))]
+                       ;; Prefer the AST-level srcloc, but for bare-symbol /
+                       ;; literal tail positions (which store-src! refuses)
+                       ;; fall back to the parse-time positional anchor via
+                       ;; body-loc-at — the body list is fresh, so its
+                       ;; eq?-identity uniquely identifies this defn's body.
+                       #:src (or (src-for (last body))
+                                 (body-loc-at body (sub1 (length body))))))))]
 
     [(defn-multi name arities _)
      (for ([a (in-list arities)])
@@ -734,7 +740,8 @@
                                'signature (format "~a : ~a" name sig)
                                'expected (type->string expected-ret)
                                'actual (type->string last-type))
-                       #:src (src-for (last a-body))))))]
+                       #:src (or (src-for (last a-body))
+                                 (body-loc-at a-body (sub1 (length a-body))))))))]
 
     [(record-form _ _) (void)]
     [(protocol-form _ _) (void)]
@@ -2339,6 +2346,12 @@
              (and ft (type-fn? ft)
                   (format "~a : ~a" (call-form-fn arg) (type->string ft))))))
     (define arg-src (src-for arg))
+    ;; Prefer the call site (the callee that demands the expected type)
+    ;; as the diagnostic blame line. The arg's own srcloc is recorded in
+    ;; details for tools that want the secondary anchor. The call-site
+    ;; rule also makes synthesized-by-parse calls (threading family,
+    ;; if-let-then arms) blame the surface step that the user wrote,
+    ;; not the intermediate sub-expression.
     (raise-diag 'type-mismatch
                 (format "call to ~a: arg ~a expected ~a, got ~a"
                         fn-name i (type->string expected-type) (type->string a-type))
@@ -2350,7 +2363,7 @@
                         'arg-expr (or arg-expr-str 'null)
                         'arg-signature (or arg-sig 'null)
                         'suggestions suggestions)
-                #:src (or arg-src call-src))))
+                #:src (or call-src arg-src))))
 
 (define (take* xs n)
   (if (or (zero? n) (null? xs)) '() (cons (car xs) (take* (cdr xs) (- n 1)))))
@@ -2374,7 +2387,9 @@
         (for ([(tbl-col target) (in-hash (sql-schema-fks cached))])
           (hash-set! SQL-FKS tbl-col target))))
     (define macro-tbl (program-macro-derived-table prog))
+    (define body-locs-tbl (program-body-locs-table prog))
     (parameterize ([current-check-src-table (program-src-table prog)]
+                   [current-body-locs-table body-locs-tbl]
                    [current-check-target (program-target prog)]
                    [current-union-members UNION-MEMBERS]
                    [current-nixos-schema nix-schema])
