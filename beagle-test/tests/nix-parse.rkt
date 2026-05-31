@@ -175,23 +175,10 @@
   (check-true (nix-path? f))
   (check-equal? (nix-path-path-string f) "./hello.nix"))
 
-;; --- pipe-to / pipe-from ----------------------------------------------------
-
-(test-case "pipe-to parses to nix-pipe with direction 'to"
-  (define f (first-form "(pipe-to x f)"))
-  (check-true (nix-pipe? f))
-  (check-eq? (nix-pipe-direction f) 'to))
-
-(test-case "pipe-from parses to nix-pipe with direction 'from"
-  (define f (first-form "(pipe-from f x)"))
-  (check-true (nix-pipe? f))
-  (check-eq? (nix-pipe-direction f) 'from))
-
-;; --- implies ----------------------------------------------------------------
-
-(test-case "implies parses to nix-impl"
-  (define f (first-form "(implies a b)"))
-  (check-true (nix-impl? f)))
+;; --- pipe family removed ----------------------------------------------------
+;; (pipe-to …), (pipe-from …), and (implies …) — the Elixir/F# pipe family —
+;; were hard-removed per CLAUDE.md "Beagle is Clojure plus types, nothing
+;; else." Behavioral rejection tests live in tests/threading.rkt.
 
 ;; --- flake-input ------------------------------------------------------------
 

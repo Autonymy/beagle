@@ -65,6 +65,7 @@
              "quasi-quote-reader.rkt"
              "syntax.rkt"
              "test-tags.rkt"
+             "threading.rkt"
              "types.rkt"
              ;; Nix (load-bearing target — the live happy path)
              "emit-nix.rkt"

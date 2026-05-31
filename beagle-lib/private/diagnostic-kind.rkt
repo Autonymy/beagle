@@ -149,6 +149,15 @@
 ;;                         — fixable by renaming `define-macro` →
 ;;                         `defmacro` and dropping the `safe`/`unsafe` kind
 ;;                         word.
+;;   legacy-pipe-form    : author wrote `(pipe-to …)`, `(pipe-from …)`,
+;;                         or `(implies …)` — the Elixir/F#-shaped pipe
+;;                         family that has been hard-removed per CLAUDE.md
+;;                         "Beagle is Clojure plus types, nothing else."
+;;                         Surface-divergence — fixable by switching to
+;;                         `(-> x f …)` (thread-first) or `(->> x f …)`
+;;                         (thread-last). Distinct kind so the histogram
+;;                         tracks pipe-family migrations separately from
+;;                         the generic `removed-form` bucket.
 ;;   macro-expansion-parse-error
 ;;                       : a macro expanded but the resulting datum
 ;;                         doesn't satisfy beagle's surface grammar
@@ -169,9 +178,11 @@
    'inline-type-annotation 'surface-divergence
    'bare-nix-form          'surface-divergence
    'legacy-macro-form      'surface-divergence
+   'legacy-pipe-form       'surface-divergence
    'macro-expansion-parse-error 'surface-divergence
    'duplicate-meta         'type-error
-   'bad-meta-value         'type-error))
+   'bad-meta-value         'type-error
+   'bad-form               'surface-divergence))
 
 ;; validate-nix.rkt kinds — emitted by validation-error struct.
 ;;

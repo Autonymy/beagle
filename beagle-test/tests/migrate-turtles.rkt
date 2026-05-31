@@ -13,12 +13,11 @@
          beagle/private/migrate-turtles
          beagle/private/tags)
 
-;; Use a readtable that treats `|` and `'` like the ordinary char `a` so
-;; turtles+quote-operator output containing `|>`, `|>>`, and `(' ...)`
-;; reads back cleanly. We also disable the default `'x` ≡ (quote x) macro.
+;; Use a readtable that treats `'` like the ordinary char `a` so
+;; turtles+quote-operator output containing `(' ...)` reads back cleanly.
+;; We also disable the default `'x` ≡ (quote x) macro.
 (define turtles-test-readtable
   (make-readtable #f
-    #\| #\a #f
     #\' #\a #f))
 
 (define (read-all-from-string s)
@@ -38,8 +37,7 @@
           (define x (read))
           (if (eof-object? x) (reverse acc) (loop (cons x acc))))))))
 
-(define PIPE-1 (string->symbol "|>"))
-(define PIPE-2 (string->symbol "|>>"))
+;; PIPE-1 / PIPE-2 (|> / |>>) removed alongside the pipe family.
 (define QUOTE-OP (string->symbol "'"))
 (define LARROW-OP '<-)
 
@@ -139,17 +137,19 @@
 
 ;; --- threading -----------------------------------------------------------
 
+;; v0.15 → turtles migration preserves `->` / `->>` as-is now that the
+;; pipe family is gone — Clojure threading is the canonical surface.
 (check-migrate
   "#lang beagle
 (def r (-> x f g))"
-  `((def r (,PIPE-1 x f g)))
-  "-> becomes |>")
+  '((def r (-> x f g)))
+  "-> preserved (no longer rewritten to |>)")
 
 (check-migrate
   "#lang beagle
 (def r (->> coll (map f) (filter g)))"
-  `((def r (,PIPE-2 coll (map f) (filter g))))
-  "->> becomes |>>")
+  '((def r (->> coll (map f) (filter g))))
+  "->> preserved (no longer rewritten to |>>)")
 
 ;; --- declare-extern -------------------------------------------------------
 

@@ -151,25 +151,12 @@
 ;; `(' OPERAND)` with `'` in head position; there is no `'x` prefix sugar.
 ;; See plan 20260528220000-beagle_quote_operator_clarification.
 
-(define (pipe-reader ch port src line col pos)
-  ;; Treat `|` as an ordinary identifier character so `|>` and `|>>`
-  ;; read as bare symbols. The default Racket reader uses `|...|` to
-  ;; delimit a quoted identifier, which interferes with the threading
-  ;; symbols. We override by reading until a non-symbol-char and
-  ;; returning a symbol.
-  (let loop ([acc (list #\|)])
-    (define c (peek-char port))
-    (cond
-      [(or (eof-object? c)
-           (char-whitespace? c)
-           (memq c '(#\( #\) #\[ #\] #\{ #\} #\" #\; #\, #\` #\')))
-       (define sym (string->symbol (list->string (reverse acc))))
-       (if src
-         (datum->syntax #f sym (vector src line col pos (length acc)))
-         sym)]
-      [else
-       (read-char port)
-       (loop (cons c acc))])))
+;; (pipe-reader removed alongside the pipe family. `|>` / `|>>` are no
+;; longer reserved threading symbols. `|` now reverts to Racket's default
+;; quoted-identifier delimiter (`|foo bar|` → symbol `foo bar`). The
+;; replacement for the pipe family is the Clojure threading macros
+;; `->`, `->>`, `as->`, `cond->`, `cond->>`, `some->`, `some->>` —
+;; implemented at parse time, see beagle-lib/private/parse.rkt.)
 
 ;; Read items until the given close character, using the beagle readtable
 ;; recursively so nested forms parse the same way.
@@ -286,7 +273,6 @@
     #\} 'terminating-macro
                             (lambda (ch port src line col pos)
                               (error 'beagle "unexpected `}`"))
-    #\| 'non-terminating-macro pipe-reader
     #\' 'terminating-macro quote-reader
     #\` 'terminating-macro quasiquote-reader
     #\, 'terminating-macro unquote-reader

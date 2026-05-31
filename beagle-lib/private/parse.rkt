@@ -925,6 +925,15 @@
     [else (cons 'str parts)]))
 
 ;; threading macro expansion (parse-time rewrite → fully type-checked)
+;;
+;; The Clojure threading family is encoded as parse-time rewrites to ordinary
+;; call-form / let-form / if-form composition. No new AST nodes — every
+;; threading construct lowers to shapes the type checker already handles.
+;;
+;; Per CLAUDE.md "Beagle is Clojure plus types, nothing else": the previous
+;; pipe family (`|>` / `|>>` / `pipe-to` / `pipe-from`) was an Elixir/F# import
+;; that has been hard-removed. The replacement is the full Clojure threading
+;; family — `->`, `->>`, `as->`, `cond->`, `cond->>`, `some->`, `some->>`.
 (define (thread-step-insert val step position)
   (if (pair? step)
       (if (eq? position 'first)
@@ -932,14 +941,98 @@
           (append step (list val)))
       (list step val)))
 
-;; expand-thread-first removed alongside the -> form. The first-vs-last
-;; threading distinction is positional convenience, not semantic
-;; uniqueness — ->> covers the threading need, the asymmetry was a
-;; hallucination surface for "which arg position does this fn want."
-;; Under decision-surface-minimization, one threading form suffices.
+;; (-> x f g h) → (h (g (f x))) ; bare step `f` wraps as (f x)
+;; (-> x (f a b)) → (f x a b)   ; insert as FIRST arg of step
+(define (expand-thread-first init steps)
+  (foldl (lambda (step acc) (thread-step-insert acc step 'first))
+         init steps))
+
+;; (->> x f g h) → (h (g (f x))) ; bare step `f` wraps as (f x)
+;; (->> x (f a b)) → (f a b x)  ; insert as LAST arg of step
 (define (expand-thread-last init steps)
   (foldl (lambda (step acc) (thread-step-insert acc step 'last))
          init steps))
+
+;; (as-> init name s1 s2 …)
+;;   → (let [name init] (let [name s1] (let [name s2] … name)))
+;; The placeholder `name` is bound to each successive step's value. The
+;; body of the innermost let is just `name` so the form's value is the
+;; final step's value. Each `let` shadows the previous binding, mirroring
+;; Clojure's semantics: each step sees `name` bound to the prior step's
+;; value, regardless of where `name` appears (or whether it appears at all).
+(define (expand-as-thread init name steps)
+  (define (chain values)
+    (cond
+      [(null? values) name]
+      [else
+       (list 'let (list BRACKET-TAG name (car values))
+             (chain (cdr values)))]))
+  (chain (cons init steps)))
+
+;; (cond-> x t1 s1 t2 s2 …)
+;;   → (let [g x]
+;;        (let [g (if t1 (thread-first g s1) g)]
+;;          (let [g (if t2 (thread-first g s2) g)] g)))
+;; Each step is thread-first like `->`. If the test is falsy, the prior
+;; value is preserved (NOT rethreaded). Uses a gensym to avoid capturing
+;; user identifiers across the chain.
+;;
+;; Type-preservation: each step's expansion must produce a value of the
+;; same type as the threaded value, because the if-form's else-branch
+;; returns the prior gensym. The type checker enforces this naturally via
+;; if-form type-merge — no special handling needed in parse.
+(define (expand-cond-thread init clauses position)
+  (unless (even? (length clauses))
+    (error 'beagle
+           "~a: expected pairs of (test step) after init; got ~a trailing form(s)"
+           (if (eq? position 'first) 'cond-> 'cond->>)
+           (length clauses)))
+  (define g (gensym 'cond-thread))
+  (define pairs (let loop ([cs clauses] [acc '()])
+                  (cond [(null? cs) (reverse acc)]
+                        [else (loop (cddr cs) (cons (cons (car cs) (cadr cs)) acc))])))
+  (cond
+    [(null? pairs)
+     ;; (cond-> x) with no clauses — degenerate; just bind & return.
+     (list 'let (list BRACKET-TAG g init) g)]
+    [else
+     (list 'let (list BRACKET-TAG g init)
+           (let chain-loop ([qs pairs])
+             (cond
+               [(null? qs) g]
+               [else
+                (define test (car (car qs)))
+                (define step (cdr (car qs)))
+                (define threaded (thread-step-insert g step position))
+                (list 'let (list BRACKET-TAG g (list 'if test threaded g))
+                      (chain-loop (cdr qs)))])))]))
+
+;; (some-> x f g h)
+;;   → (let [g0 x]
+;;        (if (nil? g0) nil
+;;            (let [g1 (thread-first g0 f)]
+;;              (if (nil? g1) nil
+;;                  (let [g2 (thread-first g1 g)]
+;;                    (if (nil? g2) nil
+;;                        (thread-first g2 h)))))))
+;; Short-circuits to nil at the first nil intermediate. position selects
+;; thread-first (some->) vs thread-last (some->>).
+(define (expand-some-thread init steps position)
+  (cond
+    [(null? steps) init]
+    [else
+     (let loop ([rest steps] [prev init])
+       (cond
+         [(null? rest) prev]
+         [else
+          (define g (gensym 'some-thread))
+          (define threaded (thread-step-insert g (car rest) position))
+          (list 'let (list BRACKET-TAG g prev)
+                (list 'if (list 'nil? g)
+                      'nil
+                      (if (null? (cdr rest))
+                          threaded
+                          (loop (cdr rest) threaded))))]))]))
 
 ;; Lower Clojure binding-conditional macros (if-let / when-let / if-some /
 ;; when-some) to their canonical (let …) (if …) shape. Identity-preserving:
@@ -980,10 +1073,9 @@
      (list 'let (list BRACKET-TAG name val-expr)
            (list 'if cond-expr (cons 'do rest)))]))
 
-;; expand-cond-thread, expand-some-thread, expand-as-thread removed —
-;; the cond->/some->/as-> forms they implemented are dropped from
-;; beagle's surface. Use explicit let-chains for conditional or short-
-;; circuiting accumulation; use let-bindings for named intermediates.
+;; expand-cond-thread, expand-some-thread, expand-as-thread are defined
+;; above with the rest of the threading family. The Clojure threading
+;; macros are the canonical replacement for the removed pipe family.
 
 (define (parse-cond-let-binding b)
   (define d (->datum b))
@@ -1319,19 +1411,18 @@
      (define attrs (parse-expr (or (stx-ref subs 1) attrs-expr)))
      (nix-flake attrs)]
 
-    [(list 'pipe-to lhs rhs)
-     (nix-pipe 'to
-               (parse-expr (or (stx-ref subs 1) lhs))
-               (parse-expr (or (stx-ref subs 2) rhs)))]
-
-    [(list 'pipe-from lhs rhs)
-     (nix-pipe 'from
-               (parse-expr (or (stx-ref subs 1) lhs))
-               (parse-expr (or (stx-ref subs 2) rhs)))]
-
-    [(list 'implies lhs rhs)
-     (nix-impl (parse-expr (or (stx-ref subs 1) lhs))
-               (parse-expr (or (stx-ref subs 2) rhs)))]
+    ;; The pipe family (`pipe-to`, `pipe-from`, `implies`, `|>`, `|>>`) was an
+    ;; Elixir/F# import — removed per CLAUDE.md "Beagle is Clojure plus types,
+    ;; nothing else." Use Clojure threading (`->`, `->>`) instead.
+    [(list 'pipe-to _ ...)
+     (raise-parse-error 'legacy-pipe-form
+                        "(pipe-to …) — the pipe family is removed. Use `(-> x f …)` for thread-first.")]
+    [(list 'pipe-from _ ...)
+     (raise-parse-error 'legacy-pipe-form
+                        "(pipe-from …) — the pipe family is removed. Use `(->> x f …)` for thread-last.")]
+    [(list 'implies _ ...)
+     (raise-parse-error 'legacy-pipe-form
+                        "(implies …) — removed as part of the pipe family. Use `(if a b true)` for logical implication, or `(or (not a) b)`.")]
 
     ;; --- end Nix-specific forms ----------------------------------------------
 
@@ -1653,9 +1744,14 @@
     [(list (? constructor-sym? c) args ...)
      (new-form c (map parse-expr (or (stx-tail subs 1) args)))]
 
-    ;; (:keyword target) call-form removed — overloaded one syntactic shape
-    ;; for two distinct operations (map get vs. record field access). Use
-    ;; (get m :key) for maps, (field-name r) for record field access.
+    ;; (:keyword target) — Clojure keyword-as-fn projection, re-adopted as
+    ;; the typed field-projection surface. The checker resolves to the
+    ;; declared field type when target has a known record type (via
+    ;; lookup-kw-field-type / RECORD-FIELDS); falls back to Any otherwise.
+    ;; emit-nix lowers to `target.field` (unquoted attrset access). For a
+    ;; default-on-miss, use `(get m :k default)` — the primitive form.
+    [(list (? keyword-sym? kw) target)
+     (kw-access kw (parse-expr (or (stx-ref subs 1) target)) #f)]
 
     [(list (? dot-method-sym? m) target args ...)
      (method-call m (parse-expr (or (stx-ref subs 1) target))
@@ -1669,29 +1765,27 @@
     [(list 'fmt (? string? text))
      (parse-expr (expand-fmt text))]
 
-    ;; -> (first-arg threading) removed — positional convenience, not
-    ;; semantic uniqueness. ->> covers the threading concept.
+    ;; Clojure threading family — all parse-time rewrites to ordinary
+    ;; composition. `->` and `->>` are the canonical replacements for the
+    ;; (removed) pipe family. The conditional/binding/short-circuit
+    ;; threaders lower to let-chains and (if …) nodes.
+    [(list '-> init steps ...)
+     (parse-expr (expand-thread-first init steps))]
     [(list '->> init steps ...)
      (parse-expr (expand-thread-last init steps))]
-
-    ;; Explicit errors for forms removed in the 2026-05 surface redesign.
-    ;; The catch-all fallthrough would treat these as undefined functions,
-    ;; which is misleading — they used to be forms, they're not anymore.
-    [(list 'cond-> _ ...)
-     (raise-parse-error 'removed-form
-                        "cond-> removed — use a let-chain with (if ...) for conditional accumulation")]
-    [(list 'cond->> _ ...)
-     (raise-parse-error 'removed-form
-                        "cond->> removed — use a let-chain with (if ...) for conditional accumulation")]
-    [(list 'some-> _ ...)
-     (raise-parse-error 'removed-form
-                        "some-> removed — use a let-chain with explicit nil-checks")]
-    [(list 'some->> _ ...)
-     (raise-parse-error 'removed-form
-                        "some->> removed — use a let-chain with explicit nil-checks")]
-    [(list 'as-> _ ...)
-     (raise-parse-error 'removed-form
-                        "as-> removed — use a let with explicit naming for intermediate values")]
+    [(list 'as-> init (? symbol? name) steps ...)
+     (parse-expr (expand-as-thread init name steps))]
+    [(list 'as-> _ _ _ ...)
+     (raise-parse-error 'bad-form
+                        "as-> expects a symbol placeholder: (as-> init name steps...)")]
+    [(list 'cond-> init clauses ...)
+     (parse-expr (expand-cond-thread init clauses 'first))]
+    [(list 'cond->> init clauses ...)
+     (parse-expr (expand-cond-thread init clauses 'last))]
+    [(list 'some-> init steps ...)
+     (parse-expr (expand-some-thread init steps 'first))]
+    [(list 'some->> init steps ...)
+     (parse-expr (expand-some-thread init steps 'last))]
     ;; Clojure conditional sugar — accept-and-canonicalize to (if …) / (if … (do …)).
     ;; Identity-preserving: same emitted code as the hand-written canonical
     ;; form. The lowerings mirror lower-binding-cond's shape — multi-body
@@ -1747,9 +1841,6 @@
      (parse-expr (lower-binding-cond 'if-some bindings (list then-expr else-expr)))]
     [(list 'when-some bindings body ...)
      (parse-expr (lower-binding-cond 'when-some bindings body))]
-    [(list '-> _ ...)
-     (raise-parse-error 'removed-form
-                        "-> (first-arg threading) removed — use ->> or a let-chain")]
     [(list 'dotimes _ ...)
      (raise-parse-error 'removed-form
                         "dotimes removed — use (doseq [i (range n)] body...)")]
@@ -1777,9 +1868,16 @@
     [(list 'case _ ...)
      (raise-parse-error 'removed-form
                         "case removed — use (match x [v1 body] [v2 body] [_ default]) or (match x [(or v1 v2) shared-body] [_ default]); literal-only matches case-fold to target-native dispatch in emit")]
-    [(list (? keyword-sym? kw) _ ...)
-     (raise-parse-error 'unknown-form
-                        "(:keyword target) call-form removed — use (get m :key) for maps or (field-name r) for record field access; got: ~v" kw)]
+    ;; Arity errors for the (:keyword target) form. The valid shape is
+    ;; (:k target) — exactly one positional argument. (:k) is meaningless
+    ;; (no target); (:k a b ...) was the deprecated default-on-miss form,
+    ;; now spelled (get m :k default).
+    [(list (? keyword-sym? kw))
+     (raise-parse-error 'bad-form
+                        "(:keyword) requires a target: (:keyword target); got: ~v" (list kw))]
+    [(list (? keyword-sym? kw) _ _ _ ...)
+     (raise-parse-error 'bad-form
+                        "(:keyword target) takes one target — for a default-on-miss, use (get m :key default); got: ~v" kw)]
 
     ;; Stray quasiquote/unquote/unquote-splicing outside a defmacro body.
     ;; The reader produces these from `` ` ``, `,`, `,@` prefixes. They are

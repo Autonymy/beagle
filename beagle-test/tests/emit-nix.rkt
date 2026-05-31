@@ -285,17 +285,9 @@
 
 ;; --- Phase 3: Operator/convenience parity ----------------------------------
 
-(test-case "pipe-to emits |>"
-  (define out (nix-emit "(define-target nix) (pipe-to x f)"))
-  (check-true (and out (string-contains? out "x |> f"))))
-
-(test-case "pipe-from emits <|"
-  (define out (nix-emit "(define-target nix) (pipe-from f x)"))
-  (check-true (and out (string-contains? out "f <| x"))))
-
-(test-case "implies emits logical implication"
-  (define out (nix-emit "(define-target nix) (implies a b)"))
-  (check-true (and out (string-contains? out "a -> b"))))
+;; pipe-to / pipe-from / implies removed alongside the pipe family.
+;; These no longer parse, so they cannot emit. Rejection behaviour is
+;; covered by tests/threading.rkt.
 
 ;; --- escape hatch removed --------------------------------------------------
 

@@ -602,8 +602,10 @@
     [(with)    (migrate-with form)]
     [(module)  (migrate-module form)]
     [(fn-set)  (migrate-fn-set form)]
-    [(->)      (cons '\|> (map migrate-expr (cdr form)))]
-    [(->>)     (cons '\|>> (map migrate-expr (cdr form)))]
+    ;; Threading forms `->` / `->>` are preserved as-is now that the pipe
+    ;; family is gone — Clojure threading is the canonical surface.
+    [(->)      (cons '-> (map migrate-expr (cdr form)))]
+    [(->>)     (cons '->> (map migrate-expr (cdr form)))]
     [(quote)   form]
     [else
      ;; default: walk children

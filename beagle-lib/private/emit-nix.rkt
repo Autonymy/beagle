@@ -562,17 +562,7 @@
     [(nix-fn-set? e)
      (emit-nix-fn-set e depth)]
 
-    [(nix-pipe? e)
-     (define op (if (eq? (nix-pipe-direction e) 'to) "|>" "<|"))
-     (format "(~a ~a ~a)"
-             (emit-expr (nix-pipe-lhs e) depth)
-             op
-             (emit-expr (nix-pipe-rhs e) depth))]
-
-    [(nix-impl? e)
-     (format "(~a -> ~a)"
-             (emit-expr (nix-impl-lhs e) depth)
-             (emit-expr (nix-impl-rhs e) depth))]
+    ;; nix-pipe / nix-impl emit-arms removed — pipe family is gone.
 
     [(nix-derivation? e)
      (emit-nix-derivation e depth)]

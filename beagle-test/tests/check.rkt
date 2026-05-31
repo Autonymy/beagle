@@ -586,11 +586,56 @@
   '(def x (ArrayList.)))
 
 ;; =============================================================================
-;; Tests — keyword-as-function removed
+;; Tests — (:keyword target) typed projection
 ;; =============================================================================
-;; (:keyword target) call-form removed — use (get m :key) for maps,
-;; (field-name r) for record field access. Records have typed auto-accessors
-;; tested elsewhere (defrecord field-access tests).
+;; Re-adopted as the Clojure keyword-as-fn projection surface. On a known
+;; record type the kw-access resolves to the declared field's type; on a
+;; dynamic map / unknown target it returns Any (matching get's semantics).
+;;
+;; The target's type only flows into kw-access lookup when the env knows
+;; it, which today requires an explicit (claim target Type). Inferring
+;; record types from constructor calls is a separate gap — exercised via
+;; the "Any fallback" tests below.
+
+(check-ok "(:keyword target) with claimed record type — resolves to field type"
+  '(defrecord Point [(x : Int) (y : Int)])
+  '(claim p Point)
+  '(def p (->Point 1 2))
+  '(claim n Int)
+  '(def n (:x p)))
+
+(check-err/rx "(:keyword target) — wrong field-type binding caught (Int → String)"
+  #rx"(def-type|expected.*String|got.*Int)"
+  '(defrecord Point [(x : Int) (y : Int)])
+  '(claim p Point)
+  '(def p (->Point 1 2))
+  '(claim n String)
+  '(def n (:x p)))
+
+(check-ok "(:keyword target) on dynamic map flows as Any"
+  `(def m ,(mt ':a 1 ':b 2))
+  '(claim v Int)
+  '(def v (:a m)))
+
+(check-ok "(:keyword target) — unknown field on record falls back to Any (gap)"
+  ;; lookup-kw-field-type returns ANY for missing fields rather than a
+  ;; type-error, matching the existing kw-access semantics. Surfaced
+  ;; precision gap — documented, not closed by this re-adoption.
+  '(defrecord Point [(x : Int) (y : Int)])
+  '(claim p Point)
+  '(def p (->Point 1 2))
+  '(claim z Any)
+  '(def z (:z p)))
+
+(check-ok "(get target :keyword) on record — falls back to Any (existing untyped path)"
+  ;; Documents the asymmetry from Phase A: (:x p) → Int but (get p :x)
+  ;; → Any (stdlib's get is typed (Any Any ... -> Any) with no callsite
+  ;; narrowing). Closing this is a separate change.
+  '(defrecord Point [(x : Int) (y : Int)])
+  '(claim p Point)
+  '(def p (->Point 1 2))
+  '(claim a Any)
+  '(def a (get p :x)))
 
 ;; =============================================================================
 ;; Tests — defprotocol (fixtures)
@@ -1082,10 +1127,9 @@
   '(claim x Any)
   '(def x (fn-set [{a 1}] a)))
 
-(check-js-err/rx "pipe-to rejected in beagle/js"
-  #rx"pipe-to / pipe-from is only supported in beagle/nix"
-  '(claim x Any)
-  '(def x (pipe-to 1 inc)))
+;; pipe-to / pipe-from removed entirely (not just nix-only). The rejection is
+;; now uniform across targets — see tests/threading.rkt for the parse-time
+;; 'legacy-pipe-form check.
 
 (check-js-err/rx "s (interpolated string) rejected in beagle/js"
   #rx"is only supported in beagle/nix"

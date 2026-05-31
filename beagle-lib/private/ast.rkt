@@ -224,8 +224,10 @@
 (struct nix-path           (path-string)                      #:transparent)
 (struct nix-fn-set         (formals rest? at-name body)       #:transparent)
 (struct nix-fn-set-formal  (name default)                     #:transparent)
-(struct nix-pipe           (direction lhs rhs)                #:transparent)
-(struct nix-impl           (lhs rhs)                          #:transparent)
+;; nix-pipe (pipe-to / pipe-from) and nix-impl (implies) removed —
+;; the pipe family was an Elixir/F# import dropped per CLAUDE.md
+;; "Beagle is Clojure plus types, nothing else." Use Clojure threading
+;; (`->`, `->>`) instead.
 (struct nix-derivation     (attrs)                            #:transparent)
 (struct nix-flake          (attrs)                            #:transparent)
 (struct nix-with-cfg       (path body)                        #:transparent)
@@ -421,7 +423,6 @@
  (struct-out nix-interpolated-string) (struct-out nix-multiline-string)
  (struct-out nix-path)
  (struct-out nix-fn-set) (struct-out nix-fn-set-formal)
- (struct-out nix-pipe) (struct-out nix-impl)
  (struct-out nix-derivation) (struct-out nix-flake)
  (struct-out nix-with-cfg)
  (struct-out flake-input-form)

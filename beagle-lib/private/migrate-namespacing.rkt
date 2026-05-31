@@ -106,20 +106,9 @@
   (mk-stx src line col pos
           (list (mk-stx src line col pos 'quote) inner)))
 
-(define (pipe-reader/stx ch port src line col pos)
-  ;; Identical semantics to the production pipe-reader: read characters
-  ;; until a delimiter, return a symbol.
-  (let loop ([acc (list #\|)])
-    (define c (peek-char port))
-    (cond
-      [(or (eof-object? c)
-           (char-whitespace? c)
-           (memq c '(#\( #\) #\[ #\] #\{ #\} #\" #\; #\, #\` #\')))
-       (define sym (string->symbol (list->string (reverse acc))))
-       (mk-stx src line col pos sym)]
-      [else
-       (read-char port)
-       (loop (cons c acc))])))
+;; (pipe-reader/stx removed alongside the pipe family. See
+;; beagle-lib/lang/reader-impl.rkt for the rationale — `|>`/`|>>` are no
+;; longer reserved threading symbols.)
 
 ;; Hash dispatch — we only care about #{...} (set) and #r"..." raw strings
 ;; and #<<TAG heredocs. For #r" we read the rest as a single string and
@@ -277,7 +266,6 @@
     #\] 'terminating-macro (close-error #\])
     #\{ 'terminating-macro curly-reader/stx
     #\} 'terminating-macro (close-error #\})
-    #\| 'non-terminating-macro pipe-reader/stx
     #\' 'terminating-macro quote-reader/stx
     #\# 'non-terminating-macro hash-reader/stx
     #\~ 'non-terminating-macro tilde-reader/stx))

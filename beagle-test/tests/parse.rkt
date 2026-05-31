@@ -858,8 +858,33 @@
   (check-true (new-form? f))
   (check-equal? (length (new-form-args f)) 2))
 
-;; (:keyword target) call-form removed — use (get m :key) for maps,
-;; (field-name r) for record field access.
+;; --- (:keyword target) keyword-as-fn projection ----------------------------
+;; Re-adopted as the typed projection surface. Parses to a kw-access AST
+;; node; the checker resolves to the record field type when target has a
+;; known record type (else Any). See beagle-test/tests/check.rkt for the
+;; typing tests.
+
+(test-case "(:keyword target) parses as kw-access"
+  (define f (car (parse-one '(:name person))))
+  (check-true (kw-access? f))
+  (check-eq? (kw-access-kw f) ':name)
+  (check-false (kw-access-default f)))
+
+(test-case "(:keyword target) target is parsed (nested call works)"
+  (define f (car (parse-one '(:rate (current-config)))))
+  (check-true (kw-access? f))
+  (check-eq? (kw-access-kw f) ':rate)
+  ;; target should be a call-form, not a raw datum
+  (define target (kw-access-target f))
+  (check-true (call-form? target)))
+
+(parse-err/rx "(:keyword) with no target — arity error"
+  #rx"requires a target"
+  '(:name))
+
+(parse-err/rx "(:keyword a b) with extra arg — arity error pointing at get"
+  #rx"takes one target"
+  '(:name person extra))
 
 ;; --- match: or-pattern ----------------------------------------------------
 

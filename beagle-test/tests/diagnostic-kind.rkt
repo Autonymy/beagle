@@ -34,13 +34,14 @@
 ;; --- surface-divergence: removed-form rejection -----------------------------
 
 ;; Note: when / when-not / if-not / unless are no longer rejected — they
-;; accept-and-canonicalize to (if …) / (if … (do …)). Use cond-> as the
-;; removed-form exemplar instead; it remains rejected (no canonical lowering).
-(test-case "surface-divergence: cond-> removed-form is tagged"
+;; accept-and-canonicalize to (if …) / (if … (do …)). cond-> / some-> /
+;; as-> are now implemented (Clojure threading family) — they no longer
+;; reject. Use `inc` as the removed-form exemplar; it remains rejected.
+(test-case "surface-divergence: inc removed-form is tagged"
   (define e
     (with-handlers ([beagle-parse-error? values])
       (parse-program
-       (list (datum->syntax #f '(cond-> x [pos? inc]))))
+       (list (datum->syntax #f '(inc x))))
       'no-error-raised))
   (check-pred beagle-parse-error? e)
   (check-eq?  (beagle-parse-error-kind e) 'removed-form)
@@ -58,16 +59,11 @@
   (check-equal? (hash-ref (beagle-parse-error-details e) 'cause)
                 "surface-divergence"))
 
-(test-case "surface-divergence: keyword-as-fn-target is tagged"
-  (define e
-    (with-handlers ([beagle-parse-error? values])
-      (parse-program
-       (list (datum->syntax #f '(:foo target))))
-      'no-error-raised))
-  (check-pred beagle-parse-error? e)
-  (check-eq? (beagle-parse-error-kind e) 'unknown-form)
-  (check-equal? (hash-ref (beagle-parse-error-details e) 'cause)
-                "surface-divergence"))
+;; (:keyword target) was re-adopted as the typed keyword-as-fn projection
+;; — it no longer raises. The arity-error cases (:keyword) and
+;; (:keyword a b c) raise as 'bad-form, classified as type-error (arity
+;; errors are type-errors, not surface-divergence). The canonical
+;; surface-divergence exemplars above (cond->, case) cover that bucket.
 
 ;; --- type-error: duplicate-meta header (parse-time) -------------------------
 
@@ -243,10 +239,10 @@
 
 ;; --- macro-expansion-parse-error: defmacro emits unparseable output ---------
 
-(test-case "macro produces cond-> (removed-form) → rebucketed as macro-expansion-parse-error"
-  ;; (defmacro bad [] `(cond-> x [pos? inc]))
+(test-case "macro produces inc (removed-form) → rebucketed as macro-expansion-parse-error"
+  ;; (defmacro bad [] `(inc x))
   ;; (def y (bad))
-  ;; bad expands to (cond-> x [pos? inc]) which parse rejects as
+  ;; bad expands to (inc x) which parse rejects as
   ;; 'removed-form. Inside macro expansion ctx this rebuckets to
   ;; 'macro-expansion-parse-error / surface-divergence.
   (define e
@@ -256,7 +252,7 @@
         '(define-mode strict)
         '(define-target clj)
         `(defmacro bad ,(br)
-           (quasiquote (cond-> x (br pos? inc))))
+           (quasiquote (inc x)))
         '(def y (bad)))
       'no-error-raised))
   (check-pred beagle-parse-error? e)
@@ -302,13 +298,13 @@
 ;; --- Negative control: non-macro forms keep their original kinds -----------
 
 (test-case "non-macro removed-form keeps its original kind (no rebucketing)"
-  ;; Sanity check: outside of macro expansion, cond-> still raises with
+  ;; Sanity check: outside of macro expansion, inc still raises with
   ;; the plain 'removed-form kind. Confirms the parameter properly
   ;; restricts the rebucketing to macro-derived forms only.
   (define e
     (with-handlers ([beagle-parse-error? values])
       (parse-program
-       (list (datum->syntax #f '(cond-> x [pos? inc]))))
+       (list (datum->syntax #f '(inc x))))
       'no-error-raised))
   (check-pred beagle-parse-error? e)
   (check-eq? (beagle-parse-error-kind e) 'removed-form)

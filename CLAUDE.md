@@ -216,10 +216,12 @@ instead of real bugs.
 - **Never add new syntax.** No invented operators, forms, or sigils.
   Capabilities that don't fit Clojure-shaped surface live in the
   type or backend layer, not the surface. The pipe family (`|>`,
-  `|>>`, `pipe-to`, `pipe-from`) was an Elixir/F# import and is
-  being removed for exactly this reason — a Clojure-trained agent
-  never reaches for them, so they spend surface budget to teach a
-  dialect quirk, which is the thesis in reverse.
+  `|>>`, `pipe-to`, `pipe-from`) was an Elixir/F# import and was
+  hard-removed for exactly this reason — a Clojure-trained agent
+  never reaches for them, so they spent surface budget to teach a
+  dialect quirk, which is the thesis in reverse. The Clojure
+  threading family (`->`, `->>`, `as->`, `cond->`, `cond->>`,
+  `some->`, `some->>`) is the canonical replacement.
 
 - **Accept-and-canonicalize applies to real Clojure forms only**
   (`when`, `if-let`, `cond` flat-pair, quoted containers,
