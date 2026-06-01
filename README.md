@@ -17,16 +17,6 @@ repair tools rank and act on.
 - Not stable. Pre-1.0, surface still moves. No deprecation aisle —
   removals are hard.
 
-## Status
-
-- **Live targets:** Nix, Clojure, ClojureScript. JS, Python, SQL, Typed
-  Racket emitters are parked under `beagle-lib/private/dormant/`;
-  reactivate with `BEAGLE_ALL_TARGETS=1`.
-- **Active test tier:** 940 / 940 passing on `v0.16.0` (HEAD).
-- **One user.** Dogfooded on a 220-file NixOS config
-  ([firnos](https://github.com/tompassarelli/firnos)) which builds end
-  to end from `.bnix` sources. Not packaged for outside use.
-
 ## Quick taste
 
 ```clojure
@@ -90,7 +80,7 @@ Requires Racket 8.x+.
 git clone https://github.com/tompassarelli/beagle
 cd beagle
 raco pkg install --link beagle-lib/ beagle-test/ beagle/
-bin/beagle-test --active-only       # 940 active tests
+bin/beagle-test --active-only       # active tier
 ```
 
 For a real-world `.bnix` corpus, clone
