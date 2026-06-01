@@ -2136,42 +2136,85 @@
     ;; composition. `->` and `->>` are the canonical replacements for the
     ;; (removed) pipe family. The conditional/binding/short-circuit
     ;; threaders lower to let-chains and (if …) nodes.
+    ;;
+    ;; Each arm wraps its desugared output with `threading-marker` so the
+    ;; clj/cljs emitter can reconstruct the surface form. The marker is
+    ;; transparent to check.rkt and emit-nix.rkt (both walk the desugared
+    ;; field). orig-args is the parsed list of surface arg AST nodes —
+    ;; for `->` / `->>` / `some->` / `some->>` it's (init steps...); for
+    ;; `as->` it's (init name steps...); for `cond-> / cond->>` it's the
+    ;; (init test1 step1 test2 step2 …) sequence.
     [(list '-> init steps ...)
-     (parse-expr (rewrite-as
-                  (expand-thread-first (or (stx-ref subs 1) init)
-                                       (or (and subs (stx-tail subs 2)) steps))))]
+     (define orig-stxs (or (and subs (stx-tail subs 1))
+                           (cons init steps)))
+     (threading-marker
+      '->
+      (map parse-expr orig-stxs)
+      (parse-expr (rewrite-as
+                   (expand-thread-first (or (stx-ref subs 1) init)
+                                        (or (and subs (stx-tail subs 2)) steps)))))]
     [(list '->> init steps ...)
-     (parse-expr (rewrite-as
-                  (expand-thread-last (or (stx-ref subs 1) init)
-                                      (or (and subs (stx-tail subs 2)) steps))))]
+     (define orig-stxs (or (and subs (stx-tail subs 1))
+                           (cons init steps)))
+     (threading-marker
+      '->>
+      (map parse-expr orig-stxs)
+      (parse-expr (rewrite-as
+                   (expand-thread-last (or (stx-ref subs 1) init)
+                                       (or (and subs (stx-tail subs 2)) steps)))))]
     [(list 'as-> init (? symbol? name) steps ...)
-     (parse-expr (rewrite-as
-                  (expand-as-thread (or (stx-ref subs 1) init)
-                                    name
-                                    (or (and subs (stx-tail subs 3)) steps))))]
+     (define orig-stxs (or (and subs (stx-tail subs 1))
+                           (cons init (cons name steps))))
+     (threading-marker
+      'as->
+      (map parse-expr orig-stxs)
+      (parse-expr (rewrite-as
+                   (expand-as-thread (or (stx-ref subs 1) init)
+                                     name
+                                     (or (and subs (stx-tail subs 3)) steps)))))]
     [(list 'as-> _ _ _ ...)
      (raise-parse-error 'bad-form
                         "as-> expects a symbol placeholder: (as-> init name steps...)")]
     [(list 'cond-> init clauses ...)
-     (parse-expr (rewrite-as
-                  (expand-cond-thread (or (stx-ref subs 1) init)
-                                      (or (and subs (stx-tail subs 2)) clauses)
-                                      'first)))]
+     (define orig-stxs (or (and subs (stx-tail subs 1))
+                           (cons init clauses)))
+     (threading-marker
+      'cond->
+      (map parse-expr orig-stxs)
+      (parse-expr (rewrite-as
+                   (expand-cond-thread (or (stx-ref subs 1) init)
+                                       (or (and subs (stx-tail subs 2)) clauses)
+                                       'first))))]
     [(list 'cond->> init clauses ...)
-     (parse-expr (rewrite-as
-                  (expand-cond-thread (or (stx-ref subs 1) init)
-                                      (or (and subs (stx-tail subs 2)) clauses)
-                                      'last)))]
+     (define orig-stxs (or (and subs (stx-tail subs 1))
+                           (cons init clauses)))
+     (threading-marker
+      'cond->>
+      (map parse-expr orig-stxs)
+      (parse-expr (rewrite-as
+                   (expand-cond-thread (or (stx-ref subs 1) init)
+                                       (or (and subs (stx-tail subs 2)) clauses)
+                                       'last))))]
     [(list 'some-> init steps ...)
-     (parse-expr (rewrite-as
-                  (expand-some-thread (or (stx-ref subs 1) init)
-                                      (or (and subs (stx-tail subs 2)) steps)
-                                      'first)))]
+     (define orig-stxs (or (and subs (stx-tail subs 1))
+                           (cons init steps)))
+     (threading-marker
+      'some->
+      (map parse-expr orig-stxs)
+      (parse-expr (rewrite-as
+                   (expand-some-thread (or (stx-ref subs 1) init)
+                                       (or (and subs (stx-tail subs 2)) steps)
+                                       'first))))]
     [(list 'some->> init steps ...)
-     (parse-expr (rewrite-as
-                  (expand-some-thread (or (stx-ref subs 1) init)
-                                      (or (and subs (stx-tail subs 2)) steps)
-                                      'last)))]
+     (define orig-stxs (or (and subs (stx-tail subs 1))
+                           (cons init steps)))
+     (threading-marker
+      'some->>
+      (map parse-expr orig-stxs)
+      (parse-expr (rewrite-as
+                   (expand-some-thread (or (stx-ref subs 1) init)
+                                       (or (and subs (stx-tail subs 2)) steps)
+                                       'last))))]
     ;; Clojure conditional sugar — accept-and-canonicalize to (if …) / (if … (do …)).
     ;; Identity-preserving: same emitted code as the hand-written canonical
     ;; form. The lowerings mirror lower-binding-cond's shape — multi-body

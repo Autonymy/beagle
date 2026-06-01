@@ -368,6 +368,7 @@
       [(loop-form? e)      (for-each (lambda (b) (walk b scope)) (loop-form-body e))]
       [(doseq-form? e)     (for-each (lambda (b) (walk b scope)) (doseq-form-body e))]
       [(with-meta? e)      (walk (with-meta-expr e) scope)]
+      [(threading-marker? e) (walk (threading-marker-desugared e) scope)]
       [(letfn-form? e)
        (for ([f (in-list (letfn-form-fns e))])
          (for-each (lambda (b) (walk b scope)) (letfn-fn-body f)))

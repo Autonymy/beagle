@@ -117,14 +117,6 @@
          (add-param-to-scope! p scope))
        (for ([e (in-list (defmethod-form-body form))])
          (check-shadow e scope (defmethod-form-name form)))]
-      [(deftype-form? form)
-       (for ([impl (in-list (deftype-form-impls form))])
-         (for ([m (in-list (type-impl-methods impl))])
-           (define scope (make-hasheq))
-           (for ([p (in-list (impl-method-params m))])
-             (add-param-to-scope! p scope))
-           (for ([e (in-list (impl-method-body m))])
-             (check-shadow e scope (impl-method-name m)))))]
       [(extend-type-form? form)
        (for ([impl (in-list (extend-type-form-impls form))])
          (for ([m (in-list (type-impl-methods impl))])
@@ -527,10 +519,6 @@
     [(deferror-form _ _ _) (void)]
     [(defmethod-form _ _ _ body)
      (for ([e (in-list body)]) (collect-symbols e used))]
-    [(deftype-form _ _ impls)
-     (for ([impl (in-list impls)])
-       (for ([m (in-list (type-impl-methods impl))])
-         (for ([e (in-list (impl-method-body m))]) (collect-symbols e used))))]
     [(extend-type-form _ impls)
      (for ([impl (in-list impls)])
        (for ([m (in-list (type-impl-methods impl))])
@@ -758,6 +746,7 @@
        (lint-nix-ms e)
        (for ([l (in-list (nix-multiline-string-lines e))])
          (unless (string? l) (walk l)))]
+      [(threading-marker? e) (walk (threading-marker-desugared e))]
       [else (void)]))
   (for ([f (in-list (program-forms prog))])
     (walk f)))

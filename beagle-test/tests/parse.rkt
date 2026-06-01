@@ -1153,7 +1153,11 @@
 ;; -> (first-arg threading) removed; only ->> survives.
 
 (test-case "->> expands to nested calls (last position)"
-  (define f (car (parse-one '(->> coll (map inc) (filter even?)))))
+  ;; ->> now wraps its expansion in a threading-marker (for emit-clj
+  ;; surface reconstruction). The desugared inner is the nested calls.
+  (define raw (car (parse-one '(->> coll (map inc) (filter even?)))))
+  (check-true (threading-marker? raw))
+  (define f (threading-marker-desugared raw))
   (check-true (call-form? f))
   (check-eq? (call-form-fn f) 'filter)
   (check-equal? (length (call-form-args f)) 2))

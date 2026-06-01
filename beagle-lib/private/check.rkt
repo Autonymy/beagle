@@ -554,16 +554,6 @@
          (hash-set! env (protocol-method-name m)
                     (type-fn (map (lambda (p) (or (param-type p) ANY)) m-params)
                              #f m-ret)))]
-      [(deftype-form name fields impls)
-       (define rec-type (type-prim name))
-       (hash-set! env (string->symbol (string-append "->" (symbol->string name)))
-                  (type-fn (map param-type fields) #f rec-type))
-       (define field-map (make-hash))
-       (for ([f (in-list fields)])
-         (hash-set! field-map
-                    (string->symbol (string-append ":" (symbol->string (param-name f))))
-                    (param-type f)))
-       (hash-set! RECORD-FIELDS name field-map)]
       [(defmulti-form name dispatch-fn)
        (hash-set! env name (type-fn (list ANY) (type-prim 'Any) ANY))]
       [(defmethod-form name _ params body)
@@ -745,11 +735,6 @@
 
     [(record-form _ _) (void)]
     [(protocol-form _ _) (void)]
-    [(deftype-form _ _ impls)
-     (for ([impl (in-list impls)])
-       (for ([m (in-list (type-impl-methods impl))])
-         (define m-env (extend-with-params env (impl-method-params m)))
-         (last-expr-type (impl-method-body m) m-env)))]
     [(extend-type-form _ impls)
      (for ([impl (in-list impls)])
        (for ([m (in-list (type-impl-methods impl))])
@@ -885,6 +870,10 @@
     [(sql-truncate _) (void)]
 
     [(? with-meta?) (check-form (with-meta-expr form) env)]
+
+    ;; threading-marker is transparent to the checker — walk the desugared
+    ;; AST so all type rules apply identically to a hand-written equivalent.
+    [(? threading-marker?) (check-form (threading-marker-desugared form) env)]
 
     [_ (infer-expr form env)]))
 
@@ -1563,6 +1552,9 @@
            (type-app 'Set (list first-t))
            (type-app 'Set (list ANY)))))]
     [(with-meta? e) (infer-expr (with-meta-expr e) env)]
+    [(threading-marker? e)
+     ;; Transparent: infer the desugared AST's type and propagate.
+     (infer-expr (threading-marker-desugared e) env)]
     [(when-let-form? e)
      (define val-type (infer-expr (when-let-form-expr e) env))
      (define body-env (mut-copy env))

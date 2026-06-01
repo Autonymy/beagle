@@ -18,33 +18,44 @@
   (program-forms
    (parse-program (list (datum->syntax #f form)))))
 
+;; Threading-family arms now wrap their desugared output with a
+;; `threading-marker` AST node so emit-clj can reconstruct the surface
+;; form. These tests exercise desugared SEMANTICS — same shape after
+;; threading rewrite — so they look through the marker to the
+;; desugared inner. The marker itself is exercised by
+;; threading-marker.rkt.
+(define (strip-marker form)
+  (if (threading-marker? form)
+      (threading-marker-desugared form)
+      form))
+
 ;; ============================================================================
 ;; -> (thread-first) — insert as FIRST arg
 ;; ============================================================================
 
 (test-case "(-> 1 my-fn) lowers to (my-fn 1)"
-  (define got  (car (parse-one '(-> 1 my-fn))))
+  (define got  (strip-marker (car (parse-one '(-> 1 my-fn)))))
   (define want (car (parse-one '(my-fn 1))))
   (check-equal? got want))
 
 (test-case "(-> 1 (+ 2)) lowers to (+ 1 2)"
-  (define got  (car (parse-one '(-> 1 (+ 2)))))
+  (define got  (strip-marker (car (parse-one '(-> 1 (+ 2))))))
   (define want (car (parse-one '(+ 1 2))))
   (check-equal? got want))
 
 (test-case "(-> x f g h) lowers to (h (g (f x)))"
-  (define got  (car (parse-one '(-> x f g h))))
+  (define got  (strip-marker (car (parse-one '(-> x f g h)))))
   (define want (car (parse-one '(h (g (f x))))))
   (check-equal? got want))
 
 (test-case "(-> x (f a b)) inserts x as first arg, not wraps"
-  (define got  (car (parse-one '(-> x (f a b)))))
+  (define got  (strip-marker (car (parse-one '(-> x (f a b))))))
   (define want (car (parse-one '(f x a b))))
   (check-equal? got want))
 
 (test-case "(-> x) with no steps is just x"
   ;; foldl over empty steps returns init unchanged.
-  (define got  (car (parse-one '(-> x))))
+  (define got  (strip-marker (car (parse-one '(-> x)))))
   (define want (car (parse-one 'x)))
   (check-equal? got want))
 
@@ -53,17 +64,17 @@
 ;; ============================================================================
 
 (test-case "(->> coll (map f) (filter g)) lowers to (filter g (map f coll))"
-  (define got  (car (parse-one '(->> coll (map f) (filter g)))))
+  (define got  (strip-marker (car (parse-one '(->> coll (map f) (filter g))))))
   (define want (car (parse-one '(filter g (map f coll)))))
   (check-equal? got want))
 
 (test-case "(->> x (f a b)) inserts x as last arg"
-  (define got  (car (parse-one '(->> x (f a b)))))
+  (define got  (strip-marker (car (parse-one '(->> x (f a b))))))
   (define want (car (parse-one '(f a b x))))
   (check-equal? got want))
 
 (test-case "(->> x f g h) bare-symbol steps wrap as (h (g (f x)))"
-  (define got  (car (parse-one '(->> x f g h))))
+  (define got  (strip-marker (car (parse-one '(->> x f g h)))))
   (define want (car (parse-one '(h (g (f x))))))
   (check-equal? got want))
 
@@ -72,7 +83,7 @@
 ;; ============================================================================
 
 (test-case "(as-> 1 v (+ v 2) (* v 3)) lowers to nested let chain"
-  (define got  (car (parse-one '(as-> 1 v (+ v 2) (* v 3)))))
+  (define got  (strip-marker (car (parse-one '(as-> 1 v (+ v 2) (* v 3))))))
   ;; expected: (let [v 1] (let [v (+ v 2)] (let [v (* v 3)] v)))
   (define want (car (parse-one '(let [v 1]
                                   (let [v (+ v 2)]
@@ -80,7 +91,7 @@
   (check-equal? got want))
 
 (test-case "(as-> init name) with no steps is just (let [name init] name)"
-  (define got  (car (parse-one '(as-> init n))))
+  (define got  (strip-marker (car (parse-one '(as-> init n)))))
   (define want (car (parse-one '(let [n init] n))))
   (check-equal? got want))
 
@@ -97,7 +108,7 @@
 ;; from the task — but evaluation is out of scope here. Test the shape:
 
 (test-case "(cond-> x t1 s1) lowers to (let [g x] (let [g (if t1 …)] g))"
-  (define f (car (parse-one '(cond-> x t1 (+ s1)))))
+  (define f (strip-marker (car (parse-one '(cond-> x t1 (+ s1))))))
   ;; Outer is a let-form with one binding (g = x).
   (check-true (let-form? f))
   (check-equal? (length (let-form-bindings f)) 1)
@@ -115,7 +126,7 @@
 (test-case "cond->> uses thread-last on each step"
   ;; (cond->> coll t1 (map f)) — when t1 is true, threads coll as last arg:
   ;; (map f coll). Verify the inner if-form's then-branch is (map f g).
-  (define f (car (parse-one '(cond->> coll t1 (map f)))))
+  (define f (strip-marker (car (parse-one '(cond->> coll t1 (map f))))))
   (check-true (let-form? f))
   (define inner (car (let-form-body f)))
   (check-true (let-form? inner))
@@ -133,7 +144,7 @@
 
 (test-case "(some-> nil my-fn) lowers to a let+if-nil? chain"
   ;; (some-> nil my-fn) → (let [g0 nil] (if (nil? g0) nil (my-fn g0)))
-  (define f (car (parse-one '(some-> nil my-fn))))
+  (define f (strip-marker (car (parse-one '(some-> nil my-fn)))))
   (check-true (let-form? f))
   (check-equal? (length (let-form-bindings f)) 1)
   (define ifn (car (let-form-body f)))
@@ -144,7 +155,7 @@
   (check-eq? (call-form-fn cnd) 'nil?))
 
 (test-case "(some-> x f g) — two nested nil-checks"
-  (define f (car (parse-one '(some-> x f g))))
+  (define f (strip-marker (car (parse-one '(some-> x f g)))))
   ;; Outer: (let [g0 x] (if (nil? g0) nil (let [g1 (f g0)] (if (nil? g1) nil (g g1)))))
   (check-true (let-form? f))
   (define outer-if (car (let-form-body f)))
@@ -154,12 +165,12 @@
   (check-true (let-form? outer-else)))
 
 (test-case "(some-> x) with no steps is just x"
-  (define got  (car (parse-one '(some-> x))))
+  (define got  (strip-marker (car (parse-one '(some-> x)))))
   (define want (car (parse-one 'x)))
   (check-equal? got want))
 
 (test-case "some->> uses thread-last on the final step"
-  (define f (car (parse-one '(some->> coll (map f)))))
+  (define f (strip-marker (car (parse-one '(some->> coll (map f))))))
   (check-true (let-form? f))
   (define ifn (car (let-form-body f)))
   (check-true (if-form? ifn))

@@ -239,6 +239,13 @@
 (struct target-case-form (cases)                             #:transparent)
 
 (struct with-meta   (metadata expr)                          #:transparent)
+;; threading-marker: a transparent wrapper produced by the threading-family
+;; parse-time rewrites (->, ->>, as->, cond->, cond->>, some->, some->>).
+;; KIND is the surface symbol (e.g. '->); ORIG-ARGS is the list of parsed
+;; surface arg AST nodes; DESUGARED is the rewritten AST that downstream
+;; passes (check, emit-nix) walk through. emit-clj recognizes the marker
+;; and emits the surface threading form instead of the desugared call chain.
+(struct threading-marker (kind orig-args desugared)           #:transparent)
 (struct when-let-form  (name expr body)                      #:transparent)
 (struct if-let-form    (name expr then-body else-body)       #:transparent)
 (struct when-some-form (name expr body)                      #:transparent)
@@ -365,7 +372,9 @@
 (struct param       (name type)                             #:transparent)
 (struct map-destructure (keys as-name)                      #:transparent)
 (struct seq-destructure (names rest-name)                    #:transparent)
-(struct deftype-form (name fields impls)                     #:transparent)
+;; deftype surface removed (2026-05). The canonical decomposition is defrecord
+;; (data shape) + extend-type (protocol impls); parse.rkt rejects deftype at the
+;; surface.
 (struct extend-type-form (type-name impls)                   #:transparent)
 (struct flake-input-form (input-name namespace path-segments) #:transparent)
 
@@ -445,6 +454,7 @@
  (struct-out pat-map) (struct-out pat-var) (struct-out pat-or)
  (struct-out check-expr) (struct-out rescue-form) (struct-out target-case-form)
  (struct-out with-meta)
+ (struct-out threading-marker)
  (struct-out when-let-form) (struct-out if-let-form)
  (struct-out when-some-form) (struct-out if-some-form)
  (struct-out with-open-form) (struct-out doto-form) (struct-out for-let)
@@ -455,7 +465,7 @@
  (struct-out defn-multi) (struct-out arity-clause)
  ;; Shared utility structs
  (struct-out param) (struct-out map-destructure) (struct-out seq-destructure)
- (struct-out deftype-form) (struct-out extend-type-form)
+ (struct-out extend-type-form)
  (struct-out type-impl) (struct-out impl-method)
  (struct-out let-binding) (struct-out require-entry)
  ;; Program

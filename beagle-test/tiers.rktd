@@ -68,6 +68,7 @@
              "syntax.rkt"
              "test-tags.rkt"
              "threading.rkt"
+             "threading-marker.rkt"
              "types.rkt"
              ;; Nix (load-bearing target — the live happy path)
              "emit-nix.rkt"

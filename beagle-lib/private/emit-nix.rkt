@@ -458,6 +458,12 @@
     [(with-meta? e)
      (emit-expr (with-meta-expr e) depth)]
 
+    ;; threading-marker is transparent to the Nix emitter — walk the
+    ;; desugared AST. emit-clj recognizes the marker to reconstruct the
+    ;; surface form, but Nix has no idiomatic threading equivalent.
+    [(threading-marker? e)
+     (emit-expr (threading-marker-desugared e) depth)]
+
     [(method-call? e)
      ;; (.attr target args ...) → (target.attr args ...) in Nix.
      ;; Used for attr-access on a parenthesized expression: in Nix

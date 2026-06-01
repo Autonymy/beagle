@@ -385,13 +385,48 @@
   (check-true (matches? #rx"Showable" out))
   (check-true (matches? #rx"\\(show \\[self\\]" out)))
 
-;; --- threading macros expand at parse time ------------------------------------
+;; --- threading macros: surface reconstruction at emit ------------------------
+;;
+;; The threading family (-> / ->> / as-> / cond-> / cond->> / some-> / some->>)
+;; desugars at parse-time for the type checker and the Nix emitter, but the
+;; clj/cljs emitter recognises the threading-marker wrapper and reconstructs
+;; the surface form so the emitted Clojure is idiomatic (not a flattened call
+;; chain). orig-args carries the parsed surface args; emit walks them with
+;; emit-expr so any inner forms also emit normally.
 
-;; -> removed; ->> covers threading.
+(test-case "-> emits surface thread-first form"
+  (define out (compile '(def x (-> 1 (foo) (bar)))))
+  (check-true (matches? #rx"\\(-> 1 \\(foo\\) \\(bar\\)\\)" out)))
 
-(test-case "->> emits expanded form"
+(test-case "-> with bare-symbol step keeps the symbol bare"
+  ;; (-> x f g) is valid Clojure; the macro auto-wraps bare symbols.
+  ;; The surface form must round-trip, not expand to (g (f x)).
+  (define out (compile '(def y (-> x f g))))
+  (check-true (matches? #rx"\\(-> x f g\\)" out)))
+
+(test-case "->> emits surface thread-last form"
   (define out (compile '(def x (->> coll (map inc) (filter even?)))))
-  (check-true (matches? #rx"\\(filter even\\? \\(map inc coll\\)\\)" out)))
+  (check-true (matches? #rx"\\(->> coll \\(map inc\\) \\(filter even\\?\\)\\)" out)))
+
+(test-case "as-> emits surface form with placeholder symbol"
+  (define out (compile '(def x (as-> 0 v (+ v 1) (* v 2)))))
+  (check-true (matches? #rx"\\(as-> 0 v \\(\\+ v 1\\) \\(\\* v 2\\)\\)" out)))
+
+(test-case "cond-> emits surface form with flat test/step pairs"
+  (define out (compile '(def x (cond-> 0 true (+ 1) false (+ 2)))))
+  (check-true (matches? #rx"\\(cond-> 0 true \\(\\+ 1\\) false \\(\\+ 2\\)\\)" out)))
+
+(test-case "cond->> emits surface form"
+  (define out (compile '(def x (cond->> coll true (map inc) false (filter odd?)))))
+  (check-true (matches? #rx"\\(cond->> coll true \\(map inc\\) false \\(filter odd\\?\\)\\)" out)))
+
+(test-case "some-> emits surface form"
+  (define out (compile '(def x (some-> m (get :k) inc))))
+  (check-true (matches? #rx"\\(some-> m \\(get :k\\) inc\\)" out)))
+
+(test-case "some->> emits surface form"
+  (define out (compile '(def x (some->> coll (map inc) (filter odd?)))))
+  (check-true (matches? #rx"\\(some->> coll \\(map inc\\) \\(filter odd\\?\\)\\)" out)))
 
 ;; --- expression-level source mapping ----------------------------------------
 

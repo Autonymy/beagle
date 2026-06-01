@@ -271,12 +271,60 @@
      "(println (->> [1 2 3 4 5 6] (filter odd?) (mapv (fn [x] (* x x)))))"
      "[1 9 25]")
 
-   ;; --- threading macros (-> dropped; only ->> survives) ------------------
+   ;; --- threading macros: source-side surface forms -----------------------
+   ;;
+   ;; The threading family parses to a desugared call/let/if composition
+   ;; wrapped in a threading-marker. emit-clj recognises the marker and
+   ;; reconstructs the surface threading form (-> / ->> / as-> / cond-> /
+   ;; cond->> / some-> / some->>). These tests drive a real beagle threading
+   ;; form through parse + emit-clj + babashka to confirm the emitted
+   ;; Clojure runs and produces the right value.
 
-   (check-clj-output "thread-last"
+   (check-clj-output "thread-last (assertion-only)"
      '()
      "(println (->> [1 2 3 4 5 6] (filter even?) (mapv inc)))"
      "[3 5 7]")
+
+   (check-clj-output "-> surface form executes correctly"
+     (list '(defn t-first [(x : Int)] :- Int (-> x (+ 1) (* 2))))
+     "(println (t-first 3))"
+     "8")
+
+   (check-clj-output "->> surface form executes correctly"
+     (list `(defn t-last [] :- (Vec Int)
+              (->> ,(br 1 2 3 4 5 6) (filter even?) (mapv inc))))
+     "(println (t-last))"
+     "[3 5 7]")
+
+   (check-clj-output "as-> surface form executes correctly"
+     (list '(defn t-as [(x : Int)] :- Int
+              (as-> x v (+ v 1) (* v 2))))
+     "(println (t-as 3))"
+     "8")
+
+   (check-clj-output "cond-> surface form executes correctly"
+     (list '(defn t-cond [(x : Int) (b : Bool)] :- Int
+              (cond-> x b (+ 10) false (+ 100))))
+     "(println (t-cond 5 true)) (println (t-cond 5 false))"
+     "15\n5")
+
+   (check-clj-output "cond->> surface form executes correctly"
+     (list '(defn t-cond-last [(xs : (Vec Int)) (b : Bool)] :- (Vec Int)
+              (cond->> xs b (mapv inc))))
+     "(println (t-cond-last [1 2 3] true)) (println (t-cond-last [1 2 3] false))"
+     "[2 3 4]\n[1 2 3]")
+
+   (check-clj-output "some-> surface form executes correctly"
+     (list '(defn t-some [(x : Any)] :- Any
+              (some-> x inc inc)))
+     "(println (t-some 5)) (println (t-some nil))"
+     "7\nnil")
+
+   (check-clj-output "some->> surface form executes correctly"
+     (list '(defn t-some-last [(xs : Any)] :- Any
+              (some->> xs (mapv inc))))
+     "(println (t-some-last [1 2 3])) (println (t-some-last nil))"
+     "[2 3 4]\nnil")
 
    ;; --- try/catch -----------------------------------------------------------
 

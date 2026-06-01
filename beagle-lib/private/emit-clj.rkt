@@ -404,6 +404,29 @@
      (format "^~a ~a"
              (emit-expr-core (with-meta-metadata e))
              (emit-expr (with-meta-expr e)))]
+    ;; threading-marker preserves the surface form for idiomatic Clojure
+    ;; emit. The seven Clojure threaders (->, ->>, as->, cond->, cond->>,
+    ;; some->, some->>) all reconstruct via the same shape: emit the kind
+    ;; symbol followed by each of orig-args (which were already parsed by
+    ;; the parser into call-form / symbol / literal AST nodes). For ->
+    ;; and ->> a bare-symbol step like `f` stays as `f` (Clojure's auto-
+    ;; wrap surface accepts that); call-form steps like `(foo)` parse to
+    ;; a zero-arg call-form and emit back as `(foo)`. as->'s placeholder
+    ;; is parsed as a plain symbol and re-emits as such. cond-> /
+    ;; cond->>'s clauses are a flat (test step test step …) sequence —
+    ;; orig-args preserves that flatness, so the generic emit works.
+    ;; The desugared inner is not emitted; downstream type-check &
+    ;; emit-nix continue to walk it, but for clj/cljs we want the
+    ;; idiomatic surface.
+    [(threading-marker? e)
+     (define kind (threading-marker-kind e))
+     (define args (threading-marker-orig-args e))
+     (cond
+       [(null? args) (format "(~a)" kind)]
+       [else
+        (format "(~a ~a)"
+                kind
+                (string-join (map emit-expr args) " "))])]
     [(if-form? e)
      (cond
        [(if-form-else-expr e)
