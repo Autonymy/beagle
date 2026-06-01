@@ -2,15 +2,21 @@
 
 Beagle is a typed subset of Clojure that compiles to Nix, Clojure, and
 ClojureScript. Types exist to make authoring, diagnostics, and AI
-repair reliable; they check at compile time and erase before emit.
+repair reliable; they check at compile time and erase before emit. The
+point isn't to reject bad code — it's to tell repair tools what kind
+of mistake happened, where in the source, after which canonicalization,
+against which target.
+
+Already used by [firnos](https://github.com/tompassarelli/firnos) to
+author a NixOS system against a 16k-option typed schema.
 
 ## What it isn't
 
 - Not a schema language, not a validation runtime — types check at
   compile time, then erase.
-- Not a new Lisp — a strict typed subset of Clojure. Where the surface
-  diverges from Clojure, that divergence is either load-bearing for the
-  type system or for a backend, or it dies.
+- Not a new Lisp in spirit — a strict typed subset of Clojure. Where
+  the surface diverges from Clojure, that divergence must serve the
+  type system or a backend, or it dies.
 - Not stable. Pre-1.0, surface still moves. No deprecation aisle —
   removals are hard.
 
@@ -86,8 +92,8 @@ end; the NixOS system builds from `flake.bnix` directly.
 
 ## Tooling
 
-There is no static reference catalog — the surface churns and static
-docs go stale within a day. Query the compiler instead:
+Static reference docs are intentionally thin while the surface is
+moving. The compiler is the source of truth; query it directly:
 
 ```sh
 bin/beagle-syntax FILE              # parse check + repair
