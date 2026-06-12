@@ -214,6 +214,7 @@
    'type-mismatch        'type-error
    'duplicate            'type-error
    'unresolved-alias     'type-error
+   'world-escape         'type-error
    'missing-default      'type-error
    'cross-file-conflict  'type-error))
 

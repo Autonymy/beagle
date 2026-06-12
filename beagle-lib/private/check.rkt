@@ -466,6 +466,7 @@
           (check-target-form form)
           (check-form form env))))
     (check-qualified-resolution! prog env)
+    (check-zig-world-escape! prog)
     (check-scalar-provenance! prog)))
 
 ;; --- environment -----------------------------------------------------------
@@ -2522,7 +2523,8 @@
       ;; violations into one diagnostic), so it reports through the same
       ;; handler with no specific form stx.
       (with-handlers ([exn:fail? (lambda (e) (error-handler e #f))])
-        (check-qualified-resolution! prog env)))))
+        (check-qualified-resolution! prog env)
+        (check-zig-world-escape! prog)))))
 
 ;; =============================================================================
 ;; Scalar provenance lint pass
@@ -3071,6 +3073,59 @@
       [else (void)]))
   (go e)
   syms)
+
+
+;; --- zig world-escape check (thread 20260612232001, Phase 2) ---------------
+;;
+;; Convention B: a defn named `world-tick` (whole-world transition) or
+;; `tick-step` (per-entity transition) marks its RETURN record type as
+;; world-lifetime — the value that crosses the commit boundary out of
+;; tick memory. World-lifetime types must be copyable by value: no
+;; tick-arena references reachable from their fields. v1: slices
+;; ((Vec T), String) and maps are rejected; nested records recurse.
+;; The emitter pairs this with a generated `promote` copy function.
+
+(define ZIG-TICK-ENTRIES '(world-tick tick-step))
+
+(define (check-zig-world-escape! prog)
+  (when (eq? (program-target prog) 'zig)
+    (for ([form (in-list (program-forms prog))])
+      (when (and (defn-form? form)
+                 (memq (defn-form-name form) ZIG-TICK-ENTRIES))
+        (define ret (defn-form-return-type form))
+        (unless (and ret (type-prim? ret))
+          (raise-diag 'world-escape
+                      (format "~a must return a record type (its return is world-lifetime state)"
+                              (defn-form-name form))
+                      (hasheq 'entry (symbol->string (defn-form-name form)))))
+        (check-world-type! (type-prim-name ret) (defn-form-name form) '())))))
+
+(define (check-world-type! rec-name entry seen)
+  (unless (memq rec-name seen)
+    (define field-map (hash-ref RECORD-FIELDS rec-name #f))
+    (when field-map ; non-record prims (Int etc.) are value types — fine
+      (for ([(kw ft) (in-hash field-map)])
+        (define field (substring (symbol->string kw) 1))
+        (define (reject! why)
+          (raise-diag 'world-escape
+                      (format "world-state type ~a carries tick-lifetime field ~a : ~a — ~a. World state crosses ticks by copy; use scalar or record fields (v1)."
+                              rec-name field (type->string ft) why)
+                      (hasheq 'record (symbol->string rec-name)
+                              'field field
+                              'entry (symbol->string entry))))
+        (cond
+          [(and (type-app? ft) (memq (type-app-ctor ft) '(Vec List Set Map)))
+           (reject! "slices/collections live in the tick arena")]
+          [(and (type-prim? ft) (eq? (type-prim-name ft) 'String))
+           (reject! "strings are slices")]
+          [(type-union? ft)
+           (for ([alt (in-list (type-union-alts ft))])
+             (when (and (type-app? alt) (memq (type-app-ctor alt) '(Vec List Set Map)))
+               (reject! "slices/collections live in the tick arena")))]
+          [(and (type-prim? ft)
+                (hash-has-key? RECORD-FIELDS (type-prim-name ft)))
+           (check-world-type! (type-prim-name ft) entry (cons rec-name seen))]
+          [else (void)])))))
 
 ;; --- qualified-call resolution (clj/cljs) -----------------------------------
 ;;

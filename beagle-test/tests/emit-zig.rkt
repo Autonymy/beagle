@@ -157,3 +157,31 @@
 (check-unsupported/src "zig rejects general qualified calls"
   #rx"qualified"
   "(ns g)\n(require clojure.string :as str)\n(defn f [s :- String] :- String (str/trim s))")
+
+;; --- Phase 2: world-escape check + promote ------------------------------------
+
+(define-syntax-rule (check-escape name rx src)
+  (test-case name
+    (check-exn (lambda (e)
+                 (and (exn:fail? e)
+                      (regexp-match? #rx"world-state type" (exn-message e))
+                      (regexp-match? rx (exn-message e))))
+               (lambda () (compile-zig-string src)))))
+
+(check-escape "escape: World with a Vec field is rejected at compile time"
+  #rx"tick-lifetime field log"
+  "(ns g)\n(defrecord World [score :- Int log :- (Vec Int)])\n(defn world-tick [ctx :- Ctx w :- World] :- World (->World (:score w) (:log w)))")
+
+(check-escape "escape: String fields are slices too"
+  #rx"strings are slices"
+  "(ns g)\n(defrecord World [name :- String])\n(defn world-tick [ctx :- Ctx w :- World] :- World w)")
+
+(check-escape "escape: nested record smuggling a slice is caught"
+  #rx"tick-lifetime field xs"
+  "(ns g)\n(defrecord Bag [xs :- (Vec Int)])\n(defrecord World [bag :- Bag])\n(defn tick-step [ctx :- Ctx w :- World] :- World w)")
+
+(test-case "promote is emitted for tick entries"
+  (define out (compile-zig-string
+               "(ns g)\n(defrecord S [v :- Int])\n(defn tick-step [ctx :- Ctx s :- S] :- S s)"))
+  (check-true (regexp-match? #rx"pub fn promote.v: S. S" out)))
+
