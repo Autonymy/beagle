@@ -150,7 +150,7 @@ pub const Renderer = struct {
             .chunk_bufs = try alloc.alloc(sg.Buffer, N_CHUNKS),
             .chunk_counts = try alloc.alloc(u32, N_CHUNKS),
             .chunk_staging = try alloc.alloc(f32, CHUNK_CAP * INST_FLOATS),
-            .minds_staging = try alloc.alloc(f32, world_mod.N_MINDS * INST_FLOATS),
+            .minds_staging = try alloc.alloc(f32, (world_mod.N_MINDS + world_mod.N_WOLVES) * INST_FLOATS),
         };
         @memset(r.chunk_counts, 0);
 
@@ -163,7 +163,7 @@ pub const Renderer = struct {
         }
         r.minds_buf = sg.makeBuffer(.{
             .usage = .{ .stream_update = true },
-            .size = world_mod.N_MINDS * INST_FLOATS * @sizeOf(f32),
+            .size = (world_mod.N_MINDS + world_mod.N_WOLVES) * INST_FLOATS * @sizeOf(f32),
         });
 
         var shd_desc = sg.ShaderDesc{};
@@ -279,9 +279,24 @@ pub const Renderer = struct {
             self.minds_staging[o + 5] = c[1];
             self.minds_staging[o + 6] = c[2];
         }
+        // wolves after minds in the same instance stream: bigger, blood-dark,
+        // flashing pale on a howl tick
+        const wolves = w.readWolves();
+        for (0..world_mod.N_WOLVES) |i| {
+            const o = (world_mod.N_MINDS + i) * INST_FLOATS;
+            const h = g.heightAt(wolves.x[i], wolves.z[i]);
+            const howling = w.last_howls[i] != 0;
+            self.minds_staging[o + 0] = @floatFromInt(wolves.x[i]);
+            self.minds_staging[o + 1] = @floatFromInt(h);
+            self.minds_staging[o + 2] = @floatFromInt(wolves.z[i]);
+            self.minds_staging[o + 3] = 1.35;
+            self.minds_staging[o + 4] = if (howling) 0.95 else 0.45;
+            self.minds_staging[o + 5] = if (howling) 0.92 else 0.08;
+            self.minds_staging[o + 6] = if (howling) 0.85 else 0.10;
+        }
         sg.updateBuffer(self.minds_buf, .{
             .ptr = self.minds_staging.ptr,
-            .size = world_mod.N_MINDS * INST_FLOATS * @sizeOf(f32),
+            .size = (world_mod.N_MINDS + world_mod.N_WOLVES) * INST_FLOATS * @sizeOf(f32),
         });
 
         // camera scales with the world
@@ -318,7 +333,7 @@ pub const Renderer = struct {
         }
         bind.vertex_buffers[1] = self.minds_buf;
         sg.applyBindings(bind);
-        sg.draw(0, 36, @intCast(world_mod.N_MINDS));
+        sg.draw(0, 36, @intCast(world_mod.N_MINDS + world_mod.N_WOLVES));
         sg.endPass();
         sg.commit();
     }

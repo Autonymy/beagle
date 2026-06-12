@@ -46,6 +46,13 @@ const CELLS_Z: usize = voxel.SIZE_Z / CELL + 1;
 /// frees, so the harness releases the field slices itself.
 pub const Minds = sim.MindInSoA;
 
+/// Second archetype (ECS, 2026-06-13): wolves. Store and step loop
+/// are GENERATED from wolf-step's signature, exactly like minds —
+/// same double-buffer discipline, own rng lane.
+pub const Wolves = sim.WolfInSoA;
+
+pub const N_WOLVES: usize = cfg.N_WOLVES;
+
 fn freeMinds(alloc: std.mem.Allocator, m: *Minds) void {
     alloc.free(m.x);
     alloc.free(m.z);
@@ -53,11 +60,20 @@ fn freeMinds(alloc: std.mem.Allocator, m: *Minds) void {
     alloc.free(m.alarm);
 }
 
+fn freeWolves(alloc: std.mem.Allocator, w: *Wolves) void {
+    alloc.free(w.x);
+    alloc.free(w.z);
+    alloc.free(w.energy);
+    alloc.free(w.fed);
+}
+
 pub const Well = struct { x: i64, z: i64 };
 
 pub const World = struct {
     alloc: std.mem.Allocator,
     buffers: [2]Minds,
+    wolf_buffers: [2]Wolves,
+    last_howls: []i64, // transient per wolf, render + hash
     read_ix: usize = 0,
     grid: voxel.Grid,
     wells: []Well,
@@ -79,6 +95,8 @@ pub const World = struct {
         var w = World{
             .alloc = alloc,
             .buffers = .{ try Minds.alloc(alloc, N_MINDS), try Minds.alloc(alloc, N_MINDS) },
+            .wolf_buffers = .{ try Wolves.alloc(alloc, N_WOLVES), try Wolves.alloc(alloc, N_WOLVES) },
+            .last_howls = try alloc.alloc(i64, N_WOLVES),
             .grid = try voxel.Grid.init(alloc, seed),
             .wells = try alloc.alloc(Well, N_WELLS),
             .seed = seed,
@@ -89,6 +107,7 @@ pub const World = struct {
             .away_z = try alloc.alloc(i8, voxel.SIZE_X * voxel.SIZE_Z),
         };
         @memset(w.last_decisions, 0);
+        @memset(w.last_howls, 0);
         for (w.wells) |*well| {
             well.* = .{
                 .x = @intCast(8 + w.rng.below(voxel.SIZE_X - 16)),
@@ -103,6 +122,15 @@ pub const World = struct {
             m.alarm[i] = 0;
         }
         w.buffers[1].copyFrom(&w.buffers[0], N_MINDS);
+        // wolves placed after minds — appended draws on the init stream
+        const wv = &w.wolf_buffers[0];
+        for (0..N_WOLVES) |i| {
+            wv.x[i] = @intCast(w.rng.below(voxel.SIZE_X));
+            wv.z[i] = @intCast(w.rng.below(voxel.SIZE_Z));
+            wv.energy[i] = 1000;
+            wv.fed[i] = 0;
+        }
+        w.wolf_buffers[1].copyFrom(&w.wolf_buffers[0], N_WOLVES);
         // precompute the dread fields
         var fz: i64 = 0;
         while (fz < voxel.SIZE_Z) : (fz += 1) {
@@ -121,9 +149,12 @@ pub const World = struct {
     pub fn deinit(self: *World) void {
         freeMinds(self.alloc, &self.buffers[0]);
         freeMinds(self.alloc, &self.buffers[1]);
+        freeWolves(self.alloc, &self.wolf_buffers[0]);
+        freeWolves(self.alloc, &self.wolf_buffers[1]);
         self.grid.deinit(self.alloc);
         self.alloc.free(self.wells);
         self.alloc.free(self.last_decisions);
+        self.alloc.free(self.last_howls);
         self.alloc.free(self.threat_field);
         self.alloc.free(self.away_x);
         self.alloc.free(self.away_z);
@@ -135,6 +166,14 @@ pub const World = struct {
 
     fn write(self: *World) *Minds {
         return &self.buffers[1 - self.read_ix];
+    }
+
+    pub fn readWolves(self: *const World) *const Wolves {
+        return &self.wolf_buffers[self.read_ix];
+    }
+
+    fn writeWolves(self: *World) *Wolves {
+        return &self.wolf_buffers[1 - self.read_ix];
     }
 
     /// Ambient dread at (x,z): max over wells of radius falloff, 0..1000.
@@ -186,6 +225,7 @@ pub const World = struct {
         self: *const World,
         r: *const Minds,
         agg: CellAgg,
+        wcnt: []const i64,
         obs: []sim.Obs,
         out: *sim.StepOutSoA,
         lo: usize,
@@ -198,6 +238,13 @@ pub const World = struct {
             const cz: i64 = @divTrunc(r.z[i], @as(i64, CELL));
             var social_sum: i64 = -r.alarm[i]; // exclude self
             var social_n: i64 = -1;
+            // predator scan folded into the same 3x3 walk: count wolves,
+            // remember the first occupied wolf cell (deterministic scan
+            // order) for the flee direction.
+            var wolves_near: i64 = 0;
+            var wolf_cx: i64 = 0;
+            var wolf_cz: i64 = 0;
+            var wolf_seen = false;
             var dz: i64 = -1;
             while (dz <= 1) : (dz += 1) {
                 var dx: i64 = -1;
@@ -208,6 +255,14 @@ pub const World = struct {
                         const ci: usize = @intCast(nx + nz * @as(i64, CELLS_X));
                         social_sum += agg.sum[ci];
                         social_n += agg.cnt[ci];
+                        if (wcnt[ci] > 0) {
+                            wolves_near += wcnt[ci];
+                            if (!wolf_seen) {
+                                wolf_seen = true;
+                                wolf_cx = nx;
+                                wolf_cz = nz;
+                            }
+                        }
                     }
                 }
             }
@@ -217,9 +272,60 @@ pub const World = struct {
                 .social = if (social_n > 0) @divTrunc(social_sum, social_n) else 0,
                 .well_dx = self.away_x[fo],
                 .well_dz = self.away_z[fo],
+                .wolf_near = @min(wolves_near * 250, 1000),
+                .wolf_dx = if (wolf_seen) std.math.sign(cx - wolf_cx) else 0,
+                .wolf_dz = if (wolf_seen) std.math.sign(cz - wolf_cz) else 0,
             };
         }
         sim.tickStepAllRange(tick_alloc, self.seed, self.tick_no, r, obs, voxel.SIZE_X, voxel.SIZE_Z, out, lo, hi);
+    }
+
+    /// Wolf observation + step. Wolves hunt the alarm gradient: scent
+    /// is the 3x3 alarm mass, prey direction points at the most afraid
+    /// cell (deterministic argmax, scan-order ties), feeding requires
+    /// prey in the wolf's own cell. Pure reads of frozen state; the
+    /// generated wolfStepAllRange owns the loop and its rng lane.
+    fn wolfPass(
+        self: *const World,
+        wr: *const Wolves,
+        agg: CellAgg,
+        wobs: []sim.WolfObs,
+        wout: *sim.WolfOutSoA,
+        tick_alloc: std.mem.Allocator,
+    ) void {
+        for (0..N_WOLVES) |i| {
+            const cx: i64 = @divTrunc(wr.x[i], @as(i64, CELL));
+            const cz: i64 = @divTrunc(wr.z[i], @as(i64, CELL));
+            var scent: i64 = 0;
+            var best_alarm: i64 = 0;
+            var best_dx: i64 = 0;
+            var best_dz: i64 = 0;
+            var dz: i64 = -1;
+            while (dz <= 1) : (dz += 1) {
+                var dx: i64 = -1;
+                while (dx <= 1) : (dx += 1) {
+                    const nx = cx + dx;
+                    const nz = cz + dz;
+                    if (nx >= 0 and nz >= 0 and nx < CELLS_X and nz < CELLS_Z) {
+                        const ci: usize = @intCast(nx + nz * @as(i64, CELLS_X));
+                        scent += agg.sum[ci];
+                        if (agg.sum[ci] > best_alarm) {
+                            best_alarm = agg.sum[ci];
+                            best_dx = std.math.sign(dx);
+                            best_dz = std.math.sign(dz);
+                        }
+                    }
+                }
+            }
+            const own: usize = @intCast(cx + cz * @as(i64, CELLS_X));
+            wobs[i] = .{
+                .scent = scent,
+                .prey_dx = best_dx,
+                .prey_dz = best_dz,
+                .prey_near = agg.cnt[own],
+            };
+        }
+        sim.wolfStepAllRange(tick_alloc, self.seed, self.tick_no, wr, wobs, voxel.SIZE_X, voxel.SIZE_Z, wout, 0, N_WOLVES);
     }
 
     pub fn tick(self: *World, tick_alloc: std.mem.Allocator) !void {
@@ -238,14 +344,25 @@ pub const World = struct {
             agg.sum[cx + cz * CELLS_X] += r.alarm[i];
             agg.cnt[cx + cz * CELLS_X] += 1;
         }
+        // per-cell wolf counts — what minds smell
+        const wr = self.readWolves();
+        const wcnt = try tick_alloc.alloc(i64, CELLS_X * CELLS_Z);
+        @memset(wcnt, 0);
+        for (0..N_WOLVES) |i| {
+            const cx: usize = @intCast(@divTrunc(wr.x[i], @as(i64, CELL)));
+            const cz: usize = @intCast(@divTrunc(wr.z[i], @as(i64, CELL)));
+            wcnt[cx + cz * CELLS_X] += 1;
+        }
 
         // --- pure pass (parallel at scale; deterministic by counter rng) ---
-        // Output SoA lives in the tick arena; the generated engine loop
-        // does gather→step→scatter per range.
+        // Output SoAs live in the tick arena; the generated engine loops
+        // do gather→step→scatter per range, one rng lane per system.
         const obs = try tick_alloc.alloc(sim.Obs, N_MINDS);
         var out = try sim.StepOutSoA.alloc(tick_alloc, N_MINDS);
+        const wobs = try tick_alloc.alloc(sim.WolfObs, N_WOLVES);
+        var wout = try sim.WolfOutSoA.alloc(tick_alloc, N_WOLVES);
         if (cfg.N_THREADS <= 1 or N_MINDS < 4096) {
-            self.worker(r, agg, obs, &out, 0, N_MINDS, tick_alloc);
+            self.worker(r, agg, wcnt, obs, &out, 0, N_MINDS, tick_alloc);
         } else {
             var threads: [cfg.N_THREADS]std.Thread = undefined;
             const per = (N_MINDS + cfg.N_THREADS - 1) / cfg.N_THREADS;
@@ -253,11 +370,12 @@ pub const World = struct {
                 const lo = @min(t * per, N_MINDS);
                 const hi = @min(lo + per, N_MINDS);
                 threads[t] = std.Thread.spawn(.{}, worker, .{
-                    self, r, agg, obs, &out, lo, hi, tick_alloc,
+                    self, r, agg, wcnt, obs, &out, lo, hi, tick_alloc,
                 }) catch @panic("thread spawn");
             }
             for (0..cfg.N_THREADS) |t| threads[t].join();
         }
+        self.wolfPass(wr, agg, wobs, &wout, tick_alloc);
 
         // --- commit: transients harness-side, then GENERATED promotion -----
         var digs = try std.ArrayList(voxel.Edit).initCapacity(tick_alloc, 64);
@@ -270,6 +388,9 @@ pub const World = struct {
             self.act_counts[@intCast(out.act[i])] += 1;
         }
         sim.tickStepPromoteAll(&out, w, N_MINDS);
+        const ww = self.writeWolves();
+        for (0..N_WOLVES) |i| self.last_howls[i] = wout.howl[i];
+        sim.wolfStepPromoteAll(&wout, ww, N_WOLVES);
         const applied = self.grid.applyDigs(digs.items);
         self.digs_applied += applied;
         self.read_ix = 1 - self.read_ix;
@@ -283,6 +404,13 @@ pub const World = struct {
             self.hash.foldI64(nr.alarm[i]);
             self.hash.foldI64(nr.x[i]);
             self.hash.foldI64(nr.z[i]);
+        }
+        const nw = self.readWolves();
+        for (0..N_WOLVES) |i| {
+            self.hash.foldI64(nw.x[i]);
+            self.hash.foldI64(nw.z[i]);
+            self.hash.foldI64(nw.energy[i]);
+            self.hash.foldI64(self.last_howls[i]);
         }
         self.hash.foldU64(applied);
     }

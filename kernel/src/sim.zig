@@ -15,6 +15,9 @@ pub const Obs = struct {
     social: i64,
     well_dx: i64,
     well_dz: i64,
+    wolf_near: i64,
+    wolf_dx: i64,
+    wolf_dz: i64,
 };
 
 pub const BeliefOut = struct {
@@ -56,9 +59,11 @@ pub fn clampAlarm(a: i64) i64 {
     return (if ((a > ALARM_MAX)) ALARM_MAX else if ((a < 0)) 0 else a);
 }
 
+pub const WOLF_FEAR_AT: i64 = 250;
+
 pub fn beliefUpdate(ctx: *rt.Ctx, m: MindIn, obs: Obs) BeliefOut {
     _ = ctx;
-    const observed = (obs.well_threat + (obs.social >> 2));
+    const observed = (obs.well_threat + (obs.social >> 2) + obs.wolf_near);
     const belief = (m.belief + ((observed - m.belief) >> 3));
     const rising = (belief > RISE_THRESHOLD);
     const alarm = (if (rising) (m.alarm + (belief >> 4)) else (m.alarm - DECAY));
@@ -67,7 +72,7 @@ pub fn beliefUpdate(ctx: *rt.Ctx, m: MindIn, obs: Obs) BeliefOut {
 
 pub fn decide(ctx: *rt.Ctx, m: MindIn, b: BeliefOut, obs: Obs) Decision {
     _ = m;
-    return (if ((b.alarm >= PANIC_AT)) Decision{ .act = ACT_DIG, .dx = 0, .dz = 0 } else if ((b.alarm >= ALARMED_AT)) Decision{ .act = ACT_FLEE, .dx = (obs.well_dx * 2), .dz = (obs.well_dz * 2) } else if ((b.alarm >= WARY_AT)) Decision{ .act = ACT_AVOID, .dx = obs.well_dx, .dz = obs.well_dz } else blk1: { const roll = rt.rng_below(ctx, 8); break :blk1 (if ((roll < 3)) blk2: { const dx = (rt.rng_below(ctx, 3) - 1); const dz = (rt.rng_below(ctx, 3) - 1); break :blk2 Decision{ .act = ACT_WANDER, .dx = dx, .dz = dz }; } else Decision{ .act = ACT_IDLE, .dx = 0, .dz = 0 }); });
+    return (if ((b.alarm >= PANIC_AT)) Decision{ .act = ACT_DIG, .dx = 0, .dz = 0 } else if ((obs.wolf_near >= WOLF_FEAR_AT)) Decision{ .act = ACT_FLEE, .dx = (obs.wolf_dx * 2), .dz = (obs.wolf_dz * 2) } else if ((b.alarm >= ALARMED_AT)) Decision{ .act = ACT_FLEE, .dx = (obs.well_dx * 2), .dz = (obs.well_dz * 2) } else if ((b.alarm >= WARY_AT)) Decision{ .act = ACT_AVOID, .dx = obs.well_dx, .dz = obs.well_dz } else blk1: { const roll = rt.rng_below(ctx, 8); break :blk1 (if ((roll < 3)) blk2: { const dx = (rt.rng_below(ctx, 3) - 1); const dz = (rt.rng_below(ctx, 3) - 1); break :blk2 Decision{ .act = ACT_WANDER, .dx = dx, .dz = dz }; } else Decision{ .act = ACT_IDLE, .dx = 0, .dz = 0 }); });
 }
 
 pub fn digRelief(alarm: i64) i64 {
@@ -92,6 +97,49 @@ pub fn tickStep(ctx: *rt.Ctx, m: MindIn, obs: Obs, max_x: i64, max_z: i64) StepO
     const d = decide(ctx, m, b, obs);
     const alarm = (if ((d.act == ACT_DIG)) digRelief(b.alarm) else b.alarm);
     return StepOut{ .x = clampCoord((m.x + d.dx), max_x), .z = clampCoord((m.z + d.dz), max_z), .belief = b.belief, .alarm = alarm, .act = d.act };
+}
+
+pub const WolfIn = struct {
+    x: i64,
+    z: i64,
+    energy: i64,
+    fed: i64,
+};
+
+pub const WolfObs = struct {
+    scent: i64,
+    prey_dx: i64,
+    prey_dz: i64,
+    prey_near: i64,
+};
+
+pub const WolfOut = struct {
+    x: i64,
+    z: i64,
+    energy: i64,
+    fed: i64,
+    howl: i64,
+};
+
+pub const WOLF_DRAIN: i64 = 2;
+
+pub const WOLF_FEED_GAIN: i64 = 180;
+
+pub const WOLF_SATED_AT: i64 = 700;
+
+pub const WOLF_HOWL_AFTER: i64 = 120;
+
+pub fn wolfStep(ctx: *rt.Ctx, w: WolfIn, obs: WolfObs, max_x: i64, max_z: i64) WolfOut {
+    const energy = @max(0, (w.energy - WOLF_DRAIN));
+    const hungry = (energy < WOLF_SATED_AT);
+    const tracking = (hungry and (obs.scent > 0));
+    const dx = (if (tracking) obs.prey_dx else (rt.rng_below(ctx, 3) - 1));
+    const dz = (if (tracking) obs.prey_dz else (rt.rng_below(ctx, 3) - 1));
+    const feeding = (hungry and (obs.prey_near > 0));
+    const energy2 = (if (feeding) @min(1000, (energy + WOLF_FEED_GAIN)) else energy);
+    const fed = (if (feeding) 0 else (w.fed + 1));
+    const howl = (if ((hungry and (fed > WOLF_HOWL_AFTER) and (rt.rng_below(ctx, 32) == 0))) @as(i64, 1) else 0);
+    return WolfOut{ .x = clampCoord((w.x + dx), max_x), .z = clampCoord((w.z + dz), max_z), .energy = energy2, .fed = fed, .howl = howl };
 }
 
 /// SoA buffer for MindIn — engine state, one slice per field.
@@ -183,6 +231,95 @@ pub const StepOutSoA = struct {
     }
 };
 
+/// SoA buffer for WolfIn — engine state, one slice per field.
+/// Allocated by the harness (any allocator); never freed here —
+/// emitted code never frees, the harness owns lifetimes.
+pub const WolfInSoA = struct {
+    x: []i64,
+    z: []i64,
+    energy: []i64,
+    fed: []i64,
+
+    pub fn alloc(a: std.mem.Allocator, n: usize) !WolfInSoA {
+        return .{
+            .x = try a.alloc(i64, n),
+            .z = try a.alloc(i64, n),
+            .energy = try a.alloc(i64, n),
+            .fed = try a.alloc(i64, n),
+        };
+    }
+
+    pub fn get(self: *const WolfInSoA, i: usize) WolfIn {
+        return .{
+            .x = self.x[i],
+            .z = self.z[i],
+            .energy = self.energy[i],
+            .fed = self.fed[i],
+        };
+    }
+
+    pub fn set(self: *WolfInSoA, i: usize, v: WolfIn) void {
+        self.x[i] = v.x;
+        self.z[i] = v.z;
+        self.energy[i] = v.energy;
+        self.fed[i] = v.fed;
+    }
+
+    pub fn copyFrom(self: *WolfInSoA, src: *const WolfInSoA, n: usize) void {
+        @memcpy(self.x[0..n], src.x[0..n]);
+        @memcpy(self.z[0..n], src.z[0..n]);
+        @memcpy(self.energy[0..n], src.energy[0..n]);
+        @memcpy(self.fed[0..n], src.fed[0..n]);
+    }
+};
+
+/// SoA buffer for WolfOut — engine state, one slice per field.
+/// Allocated by the harness (any allocator); never freed here —
+/// emitted code never frees, the harness owns lifetimes.
+pub const WolfOutSoA = struct {
+    x: []i64,
+    z: []i64,
+    energy: []i64,
+    fed: []i64,
+    howl: []i64,
+
+    pub fn alloc(a: std.mem.Allocator, n: usize) !WolfOutSoA {
+        return .{
+            .x = try a.alloc(i64, n),
+            .z = try a.alloc(i64, n),
+            .energy = try a.alloc(i64, n),
+            .fed = try a.alloc(i64, n),
+            .howl = try a.alloc(i64, n),
+        };
+    }
+
+    pub fn get(self: *const WolfOutSoA, i: usize) WolfOut {
+        return .{
+            .x = self.x[i],
+            .z = self.z[i],
+            .energy = self.energy[i],
+            .fed = self.fed[i],
+            .howl = self.howl[i],
+        };
+    }
+
+    pub fn set(self: *WolfOutSoA, i: usize, v: WolfOut) void {
+        self.x[i] = v.x;
+        self.z[i] = v.z;
+        self.energy[i] = v.energy;
+        self.fed[i] = v.fed;
+        self.howl[i] = v.howl;
+    }
+
+    pub fn copyFrom(self: *WolfOutSoA, src: *const WolfOutSoA, n: usize) void {
+        @memcpy(self.x[0..n], src.x[0..n]);
+        @memcpy(self.z[0..n], src.z[0..n]);
+        @memcpy(self.energy[0..n], src.energy[0..n]);
+        @memcpy(self.fed[0..n], src.fed[0..n]);
+        @memcpy(self.howl[0..n], src.howl[0..n]);
+    }
+};
+
 /// Engine range loop over entities [lo, hi): gather from SoA, run
 /// tickStep under the counter-rng policy — rng seeded per
 /// (seed, tick_no, entity index, system lane), order-independent,
@@ -207,4 +344,30 @@ pub fn tickStepPromoteAll(out: *const StepOutSoA, next: *MindInSoA, n: usize) vo
     @memcpy(next.z[0..n], out.z[0..n]);
     @memcpy(next.belief[0..n], out.belief[0..n]);
     @memcpy(next.alarm[0..n], out.alarm[0..n]);
+}
+
+/// Engine range loop over entities [lo, hi): gather from SoA, run
+/// wolfStep under the counter-rng policy — rng seeded per
+/// (seed, tick_no, entity index, system lane), order-independent,
+/// so disjoint ranges parallelize without losing bit-determinism —
+/// and scatter the result. Record params index per entity; scalars
+/// broadcast. Lane 0x80B95819A8F7E62B derives from the system name.
+pub fn wolfStepAllRange(tick: std.mem.Allocator, seed: u64, tick_no: u64, in: *const WolfInSoA, obs: []const WolfObs, max_x: i64, max_z: i64, out: *WolfOutSoA, lo: usize, hi: usize) void {
+    var i = lo;
+    while (i < hi) : (i += 1) {
+        var crng = rt.Splitmix64.init(rt.mix64(seed ^ rt.mix64(tick_no +% 1) ^ rt.mix64(@as(u64, i) +% 0x80B95819A8F7E62B)));
+        var ctx = Ctx{ .tick = tick, .rng = &crng };
+        out.set(i, wolfStep(&ctx, in.get(i), obs[i], max_x, max_z));
+    }
+}
+
+/// Commit-boundary promotion: copy world-lifetime fields
+/// (name-matched between WolfOut and WolfIn) into the next read
+/// buffer. Output-only fields are transients and stay behind in
+/// tick memory.
+pub fn wolfStepPromoteAll(out: *const WolfOutSoA, next: *WolfInSoA, n: usize) void {
+    @memcpy(next.x[0..n], out.x[0..n]);
+    @memcpy(next.z[0..n], out.z[0..n]);
+    @memcpy(next.energy[0..n], out.energy[0..n]);
+    @memcpy(next.fed[0..n], out.fed[0..n]);
 }

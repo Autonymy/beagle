@@ -16,6 +16,10 @@ pub const N_MINDS: usize = if (big) 200_000 else 300;
 pub const N_WELLS: usize = if (big) 256 else 4;
 pub const WELL_RADIUS: i64 = 18;
 
+/// Second archetype (ECS direction): predators that hunt the alarm
+/// gradient. Few relative to minds — terror scales superlinearly.
+pub const N_WOLVES: usize = if (big) 1024 else 6;
+
 /// Social contagion v2: cell-aggregate observation. Minds read the 3x3
 /// neighborhood of cells of this size (replaces the exact-radius O(N^2)
 /// pair scan — a deliberate, documented semantics change).

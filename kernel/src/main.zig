@@ -37,9 +37,31 @@ fn runDif(n: u64, seed: u64) !void {
             .social = @intCast(gen.below(1001)),
             .well_dx = @as(i64, @intCast(gen.below(3))) - 1,
             .well_dz = @as(i64, @intCast(gen.below(3))) - 1,
+            .wolf_near = @intCast(gen.below(1001)),
+            .wolf_dx = @as(i64, @intCast(gen.below(3))) - 1,
+            .wolf_dz = @as(i64, @intCast(gen.below(3))) - 1,
         };
         const out = sim.tickStep(&ctx, m, obs, 64, 64);
         std.debug.print("{d} {d} {d} {d} {d}\n", .{ out.x, out.z, out.belief, out.alarm, out.act });
+    }
+    // wolf-step cases continue the same generator stream (second system,
+    // second block of n lines — the oracle compares the whole stream)
+    i = 0;
+    while (i < n) : (i += 1) {
+        const w = sim.WolfIn{
+            .x = @intCast(gen.below(64)),
+            .z = @intCast(gen.below(64)),
+            .energy = @intCast(gen.below(1001)),
+            .fed = @intCast(gen.below(200)),
+        };
+        const wobs = sim.WolfObs{
+            .scent = @intCast(gen.below(5001)),
+            .prey_dx = @as(i64, @intCast(gen.below(3))) - 1,
+            .prey_dz = @as(i64, @intCast(gen.below(3))) - 1,
+            .prey_near = @intCast(gen.below(4)),
+        };
+        const wout = sim.wolfStep(&ctx, w, wobs, 64, 64);
+        std.debug.print("{d} {d} {d} {d} {d}\n", .{ wout.x, wout.z, wout.energy, wout.fed, wout.howl });
     }
 }
 

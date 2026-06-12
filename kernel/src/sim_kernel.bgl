@@ -11,7 +11,8 @@
 (declare-extern kernel.rt/rng-below [Ctx Int -> Int])
 
 (defrecord MindIn [x :- Int z :- Int belief :- Int alarm :- Int])
-(defrecord Obs [well_threat :- Int social :- Int well_dx :- Int well_dz :- Int])
+(defrecord Obs [well_threat :- Int social :- Int well_dx :- Int well_dz :- Int
+                wolf_near :- Int wolf_dx :- Int wolf_dz :- Int])
 (defrecord BeliefOut [belief :- Int alarm :- Int])
 (defrecord Decision [act :- Int dx :- Int dz :- Int])
 
@@ -35,10 +36,15 @@
     [(< a 0) 0]
     [:else a]))
 
+(def WOLF_FEAR_AT :- Int 250)
+
 (defn belief-update
-  "EMA toward the observed threat, then the alarm escalation machine."
+  "EMA toward the observed threat, then the alarm escalation machine.
+  Predator presence (wolf_near, 0..1000) is direct fear — no EMA lag."
   [ctx :- Ctx m :- MindIn obs :- Obs] :- BeliefOut
-  (let [observed (+ (:well_threat obs) (bit-shift-right (:social obs) 2))
+  (let [observed (+ (:well_threat obs)
+                    (bit-shift-right (:social obs) 2)
+                    (:wolf_near obs))
         belief (+ (:belief m) (bit-shift-right (- observed (:belief m)) 3))
         rising (> belief RISE_THRESHOLD)
         alarm (if rising
@@ -47,11 +53,15 @@
     (->BeliefOut belief (clamp-alarm alarm))))
 
 (defn decide
-  "Alarm level picks the behavior; rng only for wander."
+  "Alarm level picks the behavior; rng only for wander. A predator in
+  range overrides everything except cornered panic — flee AWAY from
+  the wolf, not the well."
   [ctx :- Ctx m :- MindIn b :- BeliefOut obs :- Obs] :- Decision
   (cond
     [(>= (:alarm b) PANIC_AT)
      (->Decision ACT_DIG 0 0)]
+    [(>= (:wolf_near obs) WOLF_FEAR_AT)
+     (->Decision ACT_FLEE (* (:wolf_dx obs) 2) (* (:wolf_dz obs) 2))]
     [(>= (:alarm b) ALARMED_AT)
      (->Decision ACT_FLEE (* (:well_dx obs) 2) (* (:well_dz obs) 2))]
     [(>= (:alarm b) WARY_AT)
@@ -93,4 +103,46 @@
                (:belief b)
                alarm
                (:act d))))
+
+(comment
+  "Second archetype: wolves. They hunt by scent — the per-cell alarm
+  aggregate IS the smell of fear — so the predator/prey loop closes
+  through observation alone: wolves move toward fear, minds fear
+  wolves they see. No commit-time coupling, no shared mutable state;
+  determinism survives because nothing crosses archetypes except
+  values the harness gathered before the tick.")
+
+(defrecord WolfIn [x :- Int z :- Int energy :- Int fed :- Int])
+(defrecord WolfObs [scent :- Int prey_dx :- Int prey_dz :- Int prey_near :- Int])
+(defrecord WolfOut [x :- Int z :- Int energy :- Int fed :- Int howl :- Int])
+
+(def WOLF_DRAIN :- Int 2)
+(def WOLF_FEED_GAIN :- Int 180)
+(def WOLF_SATED_AT :- Int 700)
+(def WOLF_HOWL_AFTER :- Int 120)
+
+(defn wolf-step
+  "One wolf, one tick: hunger drains energy; hungry wolves track the
+  scent gradient (prey_dx/dz points toward the most afraid nearby
+  cell); standing among prey feeds; long-starved wolves sometimes
+  howl (transient — the harness renders it, nothing else)."
+  [ctx :- Ctx w :- WolfIn obs :- WolfObs max-x :- Int max-z :- Int] :- WolfOut
+  (let [energy (max 0 (- (:energy w) WOLF_DRAIN))
+        hungry (< energy WOLF_SATED_AT)
+        tracking (and hungry (> (:scent obs) 0))
+        dx (if tracking (:prey_dx obs) (- (kernel.rt/rng-below ctx 3) 1))
+        dz (if tracking (:prey_dz obs) (- (kernel.rt/rng-below ctx 3) 1))
+        feeding (and hungry (> (:prey_near obs) 0))
+        energy2 (if feeding (min 1000 (+ energy WOLF_FEED_GAIN)) energy)
+        fed (if feeding 0 (inc (:fed w)))
+        howl (if (and hungry
+                      (> fed WOLF_HOWL_AFTER)
+                      (= (kernel.rt/rng-below ctx 32) 0))
+               1
+               0)]
+    (->WolfOut (clamp-coord (+ (:x w) dx) max-x)
+               (clamp-coord (+ (:z w) dz) max-z)
+               energy2
+               fed
+               howl)))
 
