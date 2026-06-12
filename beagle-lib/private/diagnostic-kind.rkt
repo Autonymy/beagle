@@ -213,6 +213,7 @@
    'unknown-option       'type-error
    'type-mismatch        'type-error
    'duplicate            'type-error
+   'unresolved-alias     'type-error
    'missing-default      'type-error
    'cross-file-conflict  'type-error))
 

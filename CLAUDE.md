@@ -102,6 +102,14 @@ Nullable-honest stdlib returns (`parse-long` → `Int?`,
 `System/getenv` → `String?`, …) live as clj-table overrides;
 unguarded use in a non-nil position is a pointed compile error.
 
+**Qualified-call resolution (clj/cljs, 2026-06-12):** an unresolved
+namespace alias (`fs/x` with no `(require babashka.fs :as fs)`) is a
+pointed compile error suggesting the require line; a missing member in
+a catalog-known namespace gets a did-you-mean note; a required
+namespace with no typed entries gets one "unchecked" note — the
+demand-driven to-type queue for stdlib-bb.rkt. Sibling-module type
+imports warn (never silently void) on failure.
+
 **Clojure-surface guarantees (hardened 2026-06-12):** the full
 `(ns name "doc"? (:require libspec...) (:import spec...))` form, quoted
 `(require '[lib :as a])` libspecs, `#(... % %2 %&)` fn shorthand,

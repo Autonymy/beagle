@@ -43,12 +43,29 @@
             (raise-syntax-error 'beagle (augment-with-hint (exn-message e)) target)]))
 
        (define forms (syntax->list #'(form ...)))
+       ;; Source path of the USER's file. Target wrappers (beagle/clj's
+       ;; clj-module-begin etc.) re-template the module-begin form, so
+       ;; (syntax-source stx) is the wrapper module (beagle-lib/clj/main.rkt)
+       ;; — which silently broke sibling-module type imports under #lang
+       ;; loads (resolve-module-path searched beagle-lib/clj/). The user's
+       ;; forms keep their own srclocs: take the first form source that
+       ;; differs from the wrapper's, falling back to the wrapper source
+       ;; (the plain `#lang beagle` case, where they coincide).
+       (define wrapper-src (syntax-source stx))
+       (define user-src-path
+         (or (for/or ([f (in-list forms)])
+               (let ([s (syntax-source f)])
+                 (and s
+                      (not (equal? s wrapper-src))
+                      (or (path? s) (string? s))
+                      s)))
+             wrapper-src))
        (define prog
          (with-handlers ([exn:fail? handle-error])
-           (parse-program forms #:source-path (syntax-source stx))))
+           (parse-program forms #:source-path user-src-path)))
 
        ;; Extension/header mismatch check
-       (let ([src-path (syntax-source stx)])
+       (let ([src-path user-src-path])
          (when src-path
            (define path-str (if (path? src-path) (path->string src-path) src-path))
            (when (string? path-str)

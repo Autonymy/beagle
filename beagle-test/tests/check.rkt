@@ -1260,3 +1260,42 @@
   '(define-target clj)
   '(def a :- Bool (> 2.5 1))
   '(def b :- Bool (<= 1 2)))
+
+;; --- 2026-06-12 qualified-call resolution (clj/cljs) --------------------------
+
+(check-err/rx "qualified: unresolved alias is an error naming the require"
+  #rx"require babashka\\.fs :as fs"
+  '(define-target clj)
+  '(def x (fs/exists? "/tmp")))
+
+(check-ok "qualified: required alias resolves"
+  '(define-target clj)
+  '(require babashka.fs :as fs)
+  '(def x :- Bool (fs/exists? "/tmp")))
+
+(check-warns "qualified: catalog miss in known namespace notes did-you-mean"
+  #rx"did you mean: fs/exists\\?"
+  '(define-target clj)
+  '(require babashka.fs :as fs)
+  '(def x (fs/exits? "/tmp")))
+
+(check-warns "qualified: uncatalogued namespace notes once"
+  #rx"selmer\\.parser has no typed catalog entries"
+  '(define-target clj)
+  '(require selmer.parser :as tmpl)
+  (list 'def 'x (list 'tmpl/render "t" (mt)))
+  (list 'def 'y (list 'tmpl/render-file "f" (mt))))
+
+(check-ok "qualified: quoted data and clojure.* are exempt"
+  '(define-target clj)
+  '(def data (quote (fs/exists? other/thing)))
+  '(def y (clojure.core/identity 1)))
+
+(check-ok "qualified: Java static prefixes are exempt"
+  '(define-target clj)
+  '(def t :- Int (System/currentTimeMillis))
+  '(def u (SomeUnknownClass/method 1)))
+
+(check-ok "qualified: nix target is untouched by the pass"
+  '(define-target nix)
+  '(def x (lib/mkDefault 1)))

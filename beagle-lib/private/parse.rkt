@@ -281,7 +281,23 @@
                               #:symbol-ns [imp-symbol-ns #f]
                               #:union-members [imp-union-members #f]
                               #:parametric-unions [imp-param-unions #f])
-  (define datums (read-beagle-datums mod-path))
+  (define raw-datums (read-beagle-datums mod-path))
+  ;; Docstrings are surface the importer must see through, same as the
+  ;; main parser: (defn name "doc" [params] ...) / (def name "doc" v) /
+  ;; (def name :- T "doc" v). Strip them up front so the match arms below
+  ;; stay docstring-blind. (The importer missing this erased a module's
+  ;; whole type surface — found 2026-06-12 by the import-failure warning.)
+  (define (strip-doc d)
+    (match d
+      [(list* (and head (or 'defn 'defn-)) (? symbol? name) (? string? _) rest)
+       #:when (pair? rest)
+       (list* head name rest)]
+      [(list (and head (or 'def 'defonce)) (? symbol? name) ':- type-expr (? string? _) value)
+       (list head name ':- type-expr value)]
+      [(list (and head (or 'def 'defonce)) (? symbol? name) (? string? _) value)
+       (list head name value)]
+      [_ d]))
+  (define datums (map strip-doc raw-datums))
   (define (reg! name type)
     (hash-set! externs (qualify-name prefix name) type)
     (unless (hash-has-key? externs name)
@@ -294,6 +310,12 @@
   (define (defn-reg! name type)
     (reg! name type))
   (for ([d (in-list datums)])
+    ;; One unparseable form must not erase the rest of the module's
+    ;; types — warn and continue per form.
+    (with-handlers ([exn:fail?
+                     (lambda (e)
+                       (eprintf "warning: type import from ~a skipped a form: ~a\n"
+                                mod-ns (exn-message e)))])
     (match d
       [(list 'declare-extern (? symbol? name) type-expr)
        (reg! name (parse-type type-expr))]
@@ -460,7 +482,7 @@
        (define rtype (and rest-p (or (param-type rest-p) (type-prim 'Any))))
        ;; No claim pre-pass: claim is gone. Bare defn imports infer ANY return.
        (defn-reg! name (type-fn ptypes rtype (type-prim 'Any)))]
-      [_ (void)])))
+      [_ (void)]))))
 
 ;; --- reader-conditional resolution ----------------------------------------
 ;;
@@ -667,7 +689,15 @@
   (define (register-require! rn alias refer-syms)
     (validate-module-path! rn)
     (define prefix (or alias (string->symbol (last-of (split-ns-segments rn)))))
-    (with-handlers ([exn:fail? (lambda (_e) (void))])
+    ;; A failed sibling-module import must be VISIBLE: silently voiding it
+    ;; (the pre-2026-06-12 behavior) meant a parse error in the required
+    ;; module just erased its types, and downstream code typed as Any.
+    ;; External (non-beagle) requires never reach the handler — they fail
+    ;; resolve-module-path and skip the import cleanly.
+    (with-handlers ([exn:fail?
+                     (lambda (e)
+                       (eprintf "warning: type import from ~a failed: ~a\n"
+                                rn (exn-message e)))])
       (define mod-path (resolve-module-path rn source-path))
       (when mod-path
         (import-module-types! mod-path prefix externs registry imp-rec-fields imp-rec-field-order imp-rec-ns rn

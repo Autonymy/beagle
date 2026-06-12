@@ -379,8 +379,27 @@
   (define used (make-hasheq))
   (for ([form (in-list (program-forms prog))])
     (collect-symbols form used))
+  ;; Names imported from required beagle modules also land in
+  ;; program-externs (bare + alias-qualified). Importing a module is not
+  ;; a commitment to call every export — skip them; the lint is about
+  ;; EXPLICIT (declare-extern ...) forms only.
+  (define imported (program-imported-symbol-ns prog))
+  (define (imported-name? name)
+    (define s (symbol->string name))
+    (define idx (for/first ([i (in-naturals)]
+                            [c (in-string s)]
+                            #:when (char=? c #\/))
+                  i))
+    (cond
+      [idx
+       (define p (substring s 0 idx))
+       (define base (string->symbol (substring s (+ idx 1))))
+       (define reg-prefix (hash-ref imported base #f))
+       (and reg-prefix (equal? (symbol->string reg-prefix) p))]
+      [else (hash-has-key? imported name)]))
   (for ([(name _) (in-hash (program-externs prog))])
-    (unless (hash-has-key? used name)
+    (unless (or (hash-has-key? used name)
+                (imported-name? name))
       (warn "unused declare-extern: ~a" name))))
 
 (define (collect-symbols form used)

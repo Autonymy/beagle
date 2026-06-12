@@ -311,6 +311,7 @@
     [(nixos-type-mismatch)  "E015"]
     [(template-splice)     "E016"]
     [(macro-expansion-type-error) "E017"]
+    [(unresolved-alias)    "E018"]
     [else                 "E000"]))
 
 (define (raise-diag kind message details #:src [src #f])
@@ -464,6 +465,7 @@
                         (if (eq? macro-ctx #f) #f macro-ctx)])
           (check-target-form form)
           (check-form form env))))
+    (check-qualified-resolution! prog env)
     (check-scalar-provenance! prog)))
 
 ;; --- environment -----------------------------------------------------------
@@ -2515,7 +2517,12 @@
         (with-handlers ([exn:fail? (lambda (e) (error-handler e orig-stx))])
           (parameterize ([current-macro-expansion-ctx
                           (if (eq? macro-ctx #f) #f macro-ctx)])
-            (check-form form env)))))))
+            (check-form form env))))
+      ;; Qualified-call resolution runs program-wide (it aggregates all
+      ;; violations into one diagnostic), so it reports through the same
+      ;; handler with no specific form stx.
+      (with-handlers ([exn:fail? (lambda (e) (error-handler e #f))])
+        (check-qualified-resolution! prog env)))))
 
 ;; =============================================================================
 ;; Scalar provenance lint pass
@@ -3064,6 +3071,239 @@
       [else (void)]))
   (go e)
   syms)
+
+;; --- qualified-call resolution (clj/cljs) -----------------------------------
+;;
+;; Qualified symbols (alias/name) were previously exempt from every
+;; undefined-symbol check, so a typo'd alias or missing require was
+;; silent until bb crashed at load. Three-tier resolution (2026-06-12):
+;;
+;;   1. prefix not required at all          → ERROR (statically certain
+;;      to crash at bb load); suggests the require line when the alias
+;;      matches a catalog namespace's tail segment.
+;;   2. required + namespace in the typed catalog, member missing
+;;      → NOTE with levenshtein did-you-mean (the catalog is
+;;      deliberately partial, so this can't be an error).
+;;   3. required + namespace with no catalog entries (and not a sibling
+;;      beagle module) → one NOTE per namespace: calls are unchecked.
+;;      This doubles as the demand-driven to-type queue.
+;;
+;; Exempt: capitalized prefixes (Java statics), `clojure.*` (bb
+;; auto-loads), `str` (the emit-clj auto-inject), quoted data
+;; (the walker never descends into `quoted`), keywords, dot-methods.
+
+(define (walk-exprs-for-syms form src-table visit!)
+  ;; Visit every evaluated symbol with the nearest enclosing srcloc.
+  ;; Quoted data is deliberately not walked. [else] arms under-visit
+  ;; (safe: under-checking, never a false positive).
+  (define (loc-of e fallback)
+    (or (and src-table (hash-ref src-table e #f)) fallback))
+  (define (go-body body loc) (for ([b (in-list body)]) (go b loc)))
+  (define (go-bindings bs loc)
+    (for ([b (in-list bs)]) (go (let-binding-value b) loc)))
+  (define (go e [loc #f])
+    (define l (loc-of e loc))
+    (cond
+      [(symbol? e) (visit! e l)]
+      [(call-form? e)
+       (if (symbol? (call-form-fn e))
+           (visit! (call-form-fn e) l)
+           (go (call-form-fn e) l))
+       (go-body (call-form-args e) l)]
+      [(threading-marker? e) (go (threading-marker-desugared e) l)]
+      [(let-form? e) (go-bindings (let-form-bindings e) l)
+                     (go-body (let-form-body e) l)]
+      [(letfn-form? e)
+       (for ([f (in-list (letfn-form-fns e))])
+         (go-body (letfn-fn-body f) l))
+       (go-body (letfn-form-body e) l)]
+      [(loop-form? e) (go-bindings (loop-form-bindings e) l)
+                      (go-body (loop-form-body e) l)]
+      [(recur-form? e) (go-body (recur-form-args e) l)]
+      [(if-form? e) (go (if-form-cond-expr e) l)
+                    (go (if-form-then-expr e) l)
+                    (when (if-form-else-expr e) (go (if-form-else-expr e) l))]
+      [(when-form? e) (go (when-form-cond-expr e) l)
+                      (go-body (when-form-body e) l)]
+      [(do-form? e) (go-body (do-form-body e) l)]
+      [(cond-form? e)
+       (for ([c (in-list (cond-form-clauses e))])
+         (unless (eq? (cond-clause-test c) 'else)
+           (go (cond-clause-test c) l))
+         (go-body (cond-clause-body c) l))]
+      [(condp-form? e)
+       (go (condp-form-pred-fn e) l)
+       (go (condp-form-test-expr e) l)
+       (for ([c (in-list (condp-form-clauses e))])
+         (go (car c) l) (go (cdr c) l))
+       (when (condp-form-default e) (go (condp-form-default e) l))]
+      [(for-form? e)
+       (for ([c (in-list (for-form-clauses e))])
+         (cond [(for-binding? c) (go (for-binding-expr c) l)]
+               [(for-when? c) (go (for-when-test c) l)]
+               [(for-let? c) (go-bindings (for-let-bindings c) l)]))
+       (go-body (for-form-body e) l)]
+      [(doseq-form? e)
+       (for ([c (in-list (doseq-form-clauses e))])
+         (cond [(for-binding? c) (go (for-binding-expr c) l)]
+               [(for-when? c) (go (for-when-test c) l)]
+               [(for-let? c) (go-bindings (for-let-bindings c) l)]))
+       (go-body (doseq-form-body e) l)]
+      [(with-open-form? e) (go-bindings (with-open-form-bindings e) l)
+                           (go-body (with-open-form-body e) l)]
+      [(doto-form? e) (go (doto-form-target e) l)
+                      (go-body (doto-form-forms e) l)]
+      [(fn-form? e) (go-body (fn-form-body e) l)]
+      [(vec-form? e) (go-body (vec-form-items e) l)]
+      [(set-form? e) (go-body (set-form-items e) l)]
+      [(map-form? e)
+       (for ([p (in-list (map-form-pairs e))])
+         (go (car p) l)
+         (when (cdr p) (go (cdr p) l)))]
+      [(kw-access? e) (go (kw-access-target e) l)
+                      (when (kw-access-default e) (go (kw-access-default e) l))]
+      [(method-call? e) (go (method-call-target e) l)
+                        (go-body (method-call-args e) l)]
+      [(static-call? e) (go-body (static-call-args e) l)]
+      [(with-form? e)
+       (go (with-form-target e) l)
+       (for ([u (in-list (with-form-updates e))])
+         (go (with-update-value u) l))]
+      [(try-form? e)
+       (go-body (try-form-body e) l)
+       (for ([c (in-list (try-form-catches e))])
+         (go-body (catch-clause-body c) l))
+       (when (try-form-finally-body e)
+         (go-body (try-form-finally-body e) l))]
+      [(match-form? e)
+       (go (match-form-target e) l)
+       (for ([c (in-list (match-form-clauses e))])
+         (go-body (match-clause-body c) l))]
+      [(rescue-form? e) (go (rescue-form-expr e) l)
+                        (go (rescue-form-fallback e) l)]
+      [(check-expr? e) (go (check-expr-expr e) l)]
+      [(set!-form? e) (go (set!-form-target e) l)
+                      (go (set!-form-value e) l)]
+      [else (void)]))
+  (cond
+    [(def-form? form) (go (def-form-value form))]
+    [(defonce-form? form) (go (defonce-form-value form))]
+    [(defn-form? form) (go-body (defn-form-body form) #f)]
+    [(defn-multi? form)
+     (for ([a (in-list (defn-multi-arities form))])
+       (go-body (arity-clause-body a) #f))]
+    [(extend-type-form? form)
+     (for ([impl (in-list (extend-type-form-impls form))])
+       (for ([m (in-list (type-impl-methods impl))])
+         (go-body (impl-method-body m) #f)))]
+    [else (go form)]))
+
+(define (check-qualified-resolution! prog env)
+  (when (and (memq (program-target prog) '(clj cljs))
+             (eq? (program-mode prog) 'strict)
+             (>= (current-check-profile) 1))
+    (define src-table (program-src-table prog))
+    ;; alias/full-ns → ns-sym; `str` rides the emit auto-inject.
+    (define required (make-hash))
+    (hash-set! required "str" 'clojure.string)
+    (for ([r (in-list (program-requires prog))])
+      (define ns (require-entry-ns r))
+      (hash-set! required (symbol->string ns) ns)
+      (when (require-entry-alias r)
+        (hash-set! required (symbol->string (require-entry-alias r)) ns)))
+    ;; catalog: ns-string → member-strings, from qualified stdlib keys.
+    (define catalog (make-hash))
+    (for ([(k _) (in-hash (builtin-env-for-target (program-target prog)))])
+      (define s (symbol->string k))
+      (define idx (let loop ([i 0])
+                    (cond [(= i (string-length s)) #f]
+                          [(char=? (string-ref s i) #\/) i]
+                          [else (loop (+ i 1))])))
+      (when (and idx (> idx 0)
+                 (char-alphabetic? (string-ref s 0))
+                 (char-lower-case? (string-ref s 0)))
+        (hash-update! catalog (substring s 0 idx)
+                      (lambda (ms) (cons (substring s (+ idx 1)) ms))
+                      '())))
+    ;; sibling beagle modules register under their alias prefix.
+    (define module-prefixes
+      (for/set ([(_ p) (in-hash (program-imported-symbol-ns prog))])
+        (symbol->string p)))
+    (define noted-ns (mutable-set))
+    (define violations '())
+    (define (visit! sym loc)
+      (define s (symbol->string sym))
+      (define idx (let loop ([i 0])
+                    (cond [(>= i (string-length s)) #f]
+                          [(char=? (string-ref s i) #\/) i]
+                          [else (loop (+ i 1))])))
+      (when (and idx (> idx 0) (< idx (sub1 (string-length s)))
+                 (char-alphabetic? (string-ref s 0))
+                 (char-lower-case? (string-ref s 0))
+                 (not (string-prefix? s "clojure."))
+                 (not (hash-has-key? env sym)))
+        (define p (substring s 0 idx))
+        (define member (substring s (+ idx 1)))
+        (define ns (hash-ref required p #f))
+        (cond
+          [ns
+           (define ns-str (symbol->string ns))
+           (cond
+             [(hash-ref catalog ns-str #f)
+              => (lambda (members)
+                   (define best
+                     (let ([scored (sort (for/list ([m (in-list members)])
+                                           (cons (levenshtein member m) m))
+                                         < #:key car)])
+                       (and (pair? scored)
+                            (<= (caar scored)
+                                (max 2 (quotient (string-length member) 3)))
+                            (cdar scored))))
+                   (fprintf (current-error-port)
+                            "note: ~a is not in the typed catalog for ~a — call is unchecked (Any)~a~a\n"
+                            s ns-str
+                            (if best (format "\n  did you mean: ~a/~a?" p best) "")
+                            (format "\n  (a one-line entry in stdlib-bb.rkt types it)")))]
+             [(set-member? module-prefixes p) (void)]
+             [else
+              (unless (set-member? noted-ns ns)
+                (set-add! noted-ns ns)
+                (fprintf (current-error-port)
+                         "note: ~a has no typed catalog entries — its calls type as Any (unchecked)\n  (add entries to stdlib-bb.rkt when worth checking)\n"
+                         ns-str))])]
+          [else
+           (set! violations (cons (list sym p loc) violations))])))
+    (for ([form (in-list (program-forms prog))])
+      (walk-exprs-for-syms form src-table visit!))
+    (when (pair? violations)
+      (define vs (reverse violations))
+      (define (suggest-for p)
+        (for/first ([ns-str (in-hash-keys catalog)]
+                    #:when (or (equal? ns-str p)
+                               (string-suffix? ns-str (string-append "." p))))
+          ns-str))
+      (define lines
+        (for/list ([v (in-list vs)])
+          (define sym (car v))
+          (define p (cadr v))
+          (define loc (caddr v))
+          (define sugg (suggest-for p))
+          (format "  ~a~a — alias `~a` is not required~a"
+                  (car v)
+                  (if (and loc (src-loc-line loc))
+                      (format " (line ~a)" (src-loc-line loc))
+                      "")
+                  p
+                  (if sugg
+                      (format "; did you mean (require ~a :as ~a)?" sugg p)
+                      ""))))
+      (raise-diag 'unresolved-alias
+                  (format "unresolved namespace alias~a — these will crash at ~a load:\n~a\nAdd the missing (require NS :as ALIAS) form(s), or fix the alias."
+                          (if (> (length vs) 1) "es" "")
+                          (program-target prog)
+                          (string-join lines "\n"))
+                  (hasheq 'count (length vs))
+                  #:src (caddr (car vs))))))
 
 (provide type-check! type-check-with-locs!
          check-scalar-provenance!
