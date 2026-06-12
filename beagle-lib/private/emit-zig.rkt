@@ -663,39 +663,84 @@
                   (for/list ([a (in-list extra-args)]) (format ", ~a" a))))
    "    }\n}"))
 
+(define (system-promote-fields entry ename oname)
+  (define efields (hash-ref (current-records) ename))
+  (for/list ([p (in-list (hash-ref (current-records) oname))]
+             #:when (let ([q (findf (lambda (q) (eq? (param-name q) (param-name p)))
+                                    efields)])
+                      (and q
+                           (begin
+                             (unless (equal? (type->zig (param-type q))
+                                             (type->zig (param-type p)))
+                               (unsupported "engine promotion field type mismatch"
+                                            (format "~a.~a and ~a.~a share a name but not a type"
+                                                    oname (param-name p) ename (param-name p))))
+                             #t))))
+    p))
+
+;; Lifecycle convention: an `alive :- Bool` field on the OUTPUT record
+;; is the entity's survival verdict, decided by its own step. Promotion
+;; becomes order-preserving compaction returning the new live count.
+;; `alive` belongs to the output only — it's a verdict, not state.
+(define (system-alive-field entry ename oname)
+  (define o-alive
+    (findf (lambda (p) (eq? (param-name p) 'alive))
+           (hash-ref (current-records) oname)))
+  (define e-alive
+    (findf (lambda (p) (eq? (param-name p) 'alive))
+           (hash-ref (current-records) ename)))
+  (when (and o-alive e-alive)
+    (unsupported (format "~a lifecycle" (defn-form-name entry))
+                 (format "alive is the survival verdict and belongs to the output record only — remove it from ~a"
+                         ename)))
+  (when (and o-alive
+             (not (and (type-prim? (param-type o-alive))
+                       (eq? (type-prim-name (param-type o-alive)) 'Bool))))
+    (unsupported (format "~a lifecycle" (defn-form-name entry))
+                 (format "~a.alive must be Bool — it is the survival verdict" oname)))
+  o-alive)
+
 (define (emit-system-promote entry ename oname)
   (define fname (fn-ident (defn-form-name entry)))
-  (define promote-name (string-append fname "PromoteAll"))
-  (define efields (hash-ref (current-records) ename))
-  (define common
-    (for/list ([p (in-list (hash-ref (current-records) oname))]
-               #:when (let ([q (findf (lambda (q) (eq? (param-name q) (param-name p)))
-                                      efields)])
-                        (and q
-                             (begin
-                               (unless (equal? (type->zig (param-type q))
-                                               (type->zig (param-type p)))
-                                 (unsupported "engine promotion field type mismatch"
-                                              (format "~a.~a and ~a.~a share a name but not a type"
-                                                      oname (param-name p) ename (param-name p))))
-                               #t))))
-      p))
-  (string-append
-   "/// Commit-boundary promotion: copy world-lifetime fields\n"
-   (format "/// (name-matched between ~a and ~a) into the next read\n"
-           (ident oname) (ident ename))
-   "/// buffer. Output-only fields are transients and stay behind in\n"
-   "/// tick memory.\n"
-   (format "pub fn ~a(out: *const ~a, next: *~a, n: usize) void {\n"
-           promote-name (soa-name oname) (soa-name ename))
-   (if (null? common)
-       "    _ = out;\n    _ = next;\n    _ = n;\n"
-       (string-join
-        (for/list ([p (in-list common)])
-          (format "    @memcpy(next.~a[0..n], out.~a[0..n]);\n"
-                  (ident (param-name p)) (ident (param-name p))))
-        ""))
-   "}"))
+  (define common (system-promote-fields entry ename oname))
+  (cond
+    [(system-alive-field entry ename oname)
+     (string-append
+      "/// Commit-boundary COMPACTION: entities whose alive verdict\n"
+      "/// survives are copied (name-matched fields, index order\n"
+      "/// preserved) into the next read buffer; the dead stay behind\n"
+      "/// in tick memory. Returns the new live count.\n"
+      (format "pub fn ~aCompactAll(out: *const ~a, next: *~a, n: usize) usize {\n"
+              fname (soa-name oname) (soa-name ename))
+      "    var w: usize = 0;\n"
+      "    var i: usize = 0;\n"
+      "    while (i < n) : (i += 1) {\n"
+      "        if (!out.alive[i]) continue;\n"
+      (string-join
+       (for/list ([p (in-list common)])
+         (format "        next.~a[w] = out.~a[i];\n"
+                 (ident (param-name p)) (ident (param-name p))))
+       "")
+      "        w += 1;\n"
+      "    }\n"
+      "    return w;\n}")]
+    [else
+     (string-append
+      "/// Commit-boundary promotion: copy world-lifetime fields\n"
+      (format "/// (name-matched between ~a and ~a) into the next read\n"
+              (ident oname) (ident ename))
+      "/// buffer. Output-only fields are transients and stay behind in\n"
+      "/// tick memory.\n"
+      (format "pub fn ~aPromoteAll(out: *const ~a, next: *~a, n: usize) void {\n"
+              fname (soa-name oname) (soa-name ename))
+      (if (null? common)
+          "    _ = out;\n    _ = next;\n    _ = n;\n"
+          (string-join
+           (for/list ([p (in-list common)])
+             (format "    @memcpy(next.~a[0..n], out.~a[0..n]);\n"
+                     (ident (param-name p)) (ident (param-name p))))
+           ""))
+      "}")]))
 
 ;; A system: name ends in -step, first param is Ctx. (A *-step fn
 ;; whose first param is NOT Ctx is an ordinary function — the Ctx

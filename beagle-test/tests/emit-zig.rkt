@@ -286,6 +286,44 @@
   (test-case "engine: generated engine layer compiles as zig"
     (check-true (zig-compiles? (compile-zig-string ENGINE-SRC) "engine-layer"))))
 
+;; --- lifecycle: alive verdict → generated compaction ---------------------------
+
+(define LIFECYCLE-SRC
+  (string-append
+   "(ns g)\n"
+   "(defrecord E [x :- Int hp :- Int])\n"
+   "(defrecord O [x :- Int hp :- Int alive :- Bool])\n"
+   "(defn life-step [ctx :- Ctx e :- E] :- O\n"
+   "  (->O (:x e) (- (:hp e) 1) (> (:hp e) 1)))"))
+
+(test-case "lifecycle: alive on the output record generates compaction, not promotion"
+  (define out (compile-zig-string LIFECYCLE-SRC))
+  (check-true (regexp-match? #rx"pub fn lifeStepCompactAll.out: \\*const OSoA, next: \\*ESoA, n: usize. usize" out))
+  (check-true (regexp-match? #rx"if ..out.alive.i.. continue;" out))
+  (check-false (regexp-match? #rx"lifeStepPromoteAll" out))
+  ;; alive is the verdict — it is not copied into next state
+  (check-false (regexp-match? #rx"next.alive" out)))
+
+(when ZIG
+  (test-case "lifecycle: generated compaction compiles as zig"
+    (check-true (zig-compiles? (compile-zig-string LIFECYCLE-SRC) "lifecycle"))))
+
+(check-unsupported/src "lifecycle: alive on both records is rejected pointedly"
+  #rx"alive is the survival verdict"
+  (string-append
+   "(ns g)\n"
+   "(defrecord E [x :- Int alive :- Bool])\n"
+   "(defrecord O [x :- Int alive :- Bool])\n"
+   "(defn life-step [ctx :- Ctx e :- E] :- O (->O (:x e) true))"))
+
+(check-unsupported/src "lifecycle: a non-Bool alive is rejected pointedly"
+  #rx"alive must be Bool"
+  (string-append
+   "(ns g)\n"
+   "(defrecord E [x :- Int])\n"
+   "(defrecord O [x :- Int alive :- Int])\n"
+   "(defn life-step [ctx :- Ctx e :- E] :- O (->O (:x e) 1))"))
+
 (check-unsupported/src "engine: param 1 must be the entity record"
   #rx"tick-step param 1"
   "(ns g)\n(defrecord S [v :- Int])\n(defn tick-step [ctx :- Ctx n :- Int] :- S (->S n))")
