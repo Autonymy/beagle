@@ -14,6 +14,36 @@ const render_mod = @import("render.zig");
 
 pub const DEFAULT_SEED: u64 = 0xBEA61E;
 
+/// Differential-oracle mode: generate the same case stream as
+/// bb/run_cases.clj (shared Splitmix64) and print one line per case.
+fn runDif(n: u64, seed: u64) !void {
+    const sim = @import("sim.zig");
+    const det = @import("determinism.zig");
+    var gen = det.Splitmix64.init(seed);
+    var crng = det.Splitmix64.init(seed + 1);
+    var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena_state.deinit();
+    var ctx = sim.Ctx{ .tick = arena_state.allocator(), .rng = &crng };
+    var i: u64 = 0;
+    while (i < n) : (i += 1) {
+        const m = sim.MindIn{
+            .x = @intCast(gen.below(64)),
+            .z = @intCast(gen.below(64)),
+            .belief = @intCast(gen.below(1200)),
+            .alarm = @intCast(gen.below(1100)),
+        };
+        const obs = sim.Obs{
+            .well_threat = @intCast(gen.below(1001)),
+            .social = @intCast(gen.below(1001)),
+            .well_dx = @as(i64, @intCast(gen.below(3))) - 1,
+            .well_dz = @as(i64, @intCast(gen.below(3))) - 1,
+        };
+        const b = sim.beliefUpdate(&ctx, m, obs);
+        const d = sim.decide(&ctx, m, b, obs);
+        std.debug.print("{d} {d} {d} {d} {d}\n", .{ b.belief, b.alarm, d.act, d.dx, d.dz });
+    }
+}
+
 // --- windowed state (sokol callbacks are global) ------------------------------
 
 const App = struct {
@@ -65,6 +95,7 @@ pub fn main(init_: std.process.Init.Minimal) !void {
     const alloc = gpa.allocator();
 
     var headless: ?u64 = null;
+    var dif: ?u64 = null;
     var seed: u64 = DEFAULT_SEED;
     var it = std.process.Args.Iterator.init(init_.args);
     _ = it.next(); // argv[0]
@@ -72,10 +103,18 @@ pub fn main(init_: std.process.Init.Minimal) !void {
         if (std.mem.eql(u8, arg, "--headless")) {
             const v = it.next() orelse return error.MissingTickCount;
             headless = try std.fmt.parseInt(u64, v, 10);
+        } else if (std.mem.eql(u8, arg, "--dif")) {
+            const v = it.next() orelse return error.MissingCaseCount;
+            dif = try std.fmt.parseInt(u64, v, 10);
         } else if (std.mem.eql(u8, arg, "--seed")) {
             const v = it.next() orelse return error.MissingSeed;
             seed = try std.fmt.parseInt(u64, v, 0);
         }
+    }
+
+    if (dif) |n| {
+        try runDif(n, seed);
+        return;
     }
 
     if (headless) |n| {

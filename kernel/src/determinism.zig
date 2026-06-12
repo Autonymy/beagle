@@ -1,29 +1,11 @@
-//! Deterministic primitives: Splitmix64 PRNG and the FNV-1a conformance
-//! hash. No wall clock, no host RNG, anywhere. The same Splitmix64 will
-//! be implemented in the Babashka prelude (unchecked 64-bit ops) so the
-//! differential oracle draws identical streams.
+//! Deterministic primitives. No wall clock, no host RNG, anywhere.
+//!
+//! Splitmix64 lives in the prelude (beagle_rt.zig) — ONE canonical
+//! implementation shared nominally by harness and emitted code through
+//! rt.Ctx; the Babashka prelude mirrors it with unchecked 64-bit ops so
+//! the differential oracle draws identical streams.
 
-pub const Splitmix64 = struct {
-    state: u64,
-
-    pub fn init(seed: u64) Splitmix64 {
-        return .{ .state = seed };
-    }
-
-    pub fn next(self: *Splitmix64) u64 {
-        self.state = self.state +% 0x9E3779B97F4A7C15;
-        var z = self.state;
-        z = (z ^ (z >> 30)) *% 0xBF58476D1CE4E5B9;
-        z = (z ^ (z >> 27)) *% 0x94D049BB133111EB;
-        return z ^ (z >> 31);
-    }
-
-    /// Uniform in [0, n) — n must be > 0. Simple modulo (bias is
-    /// irrelevant here; determinism is what matters).
-    pub fn below(self: *Splitmix64, n: u64) u64 {
-        return self.next() % n;
-    }
-};
+pub const Splitmix64 = @import("beagle_rt.zig").Splitmix64;
 
 /// FNV-1a, 64-bit. The conformance fingerprint: every decision and every
 /// voxel edit of every tick folds through this. Identical streams of

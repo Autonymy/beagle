@@ -201,7 +201,7 @@ pub const World = struct {
         const w = self.write();
         for (0..N_MINDS) |i| {
             var alarm = beliefs[i].alarm;
-            if (decisions[i].act == @intFromEnum(sim.Act.dig)) {
+            if (decisions[i].act == sim.ACT_DIG) {
                 try digs.append(tick_alloc, .{ .x = r.x[i], .z = r.z[i] });
                 alarm = sim.digRelief(alarm);
             }

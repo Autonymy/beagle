@@ -1,0 +1,71 @@
+(ns sim-kernel)
+
+(comment
+  "The mind kernel, authored in beagle (Phase 1 of thread
+  20260612232001). Compiled twice: zig target -> kernel/src/sim.zig
+  (replacing the handwritten Phase 0 file), clj target -> the babashka
+  differential oracle. Integer math only; rng drawn through
+  kernel.rt/rng-below in strict call order so every backend sees the
+  same stream.")
+
+(declare-extern kernel.rt/rng-below [Ctx Int -> Int])
+
+(defrecord MindIn [x :- Int z :- Int belief :- Int alarm :- Int])
+(defrecord Obs [well_threat :- Int social :- Int well_dx :- Int well_dz :- Int])
+(defrecord BeliefOut [belief :- Int alarm :- Int])
+(defrecord Decision [act :- Int dx :- Int dz :- Int])
+
+(def ACT_IDLE :- Int 0)
+(def ACT_WANDER :- Int 1)
+(def ACT_AVOID :- Int 2)
+(def ACT_FLEE :- Int 3)
+(def ACT_DIG :- Int 4)
+
+(def ALARM_MAX :- Int 1000)
+(def RISE_THRESHOLD :- Int 220)
+(def DECAY :- Int 9)
+(def WARY_AT :- Int 250)
+(def ALARMED_AT :- Int 500)
+(def PANIC_AT :- Int 750)
+(def DIG_RELIEF :- Int 320)
+
+(defn clamp-alarm [a :- Int] :- Int
+  (cond
+    [(> a ALARM_MAX) ALARM_MAX]
+    [(< a 0) 0]
+    [:else a]))
+
+(defn belief-update
+  "EMA toward the observed threat, then the alarm escalation machine."
+  [ctx :- Ctx m :- MindIn obs :- Obs] :- BeliefOut
+  (let [observed (+ (:well_threat obs) (bit-shift-right (:social obs) 2))
+        belief (+ (:belief m) (bit-shift-right (- observed (:belief m)) 3))
+        rising (> belief RISE_THRESHOLD)
+        alarm (if rising
+                (+ (:alarm m) (bit-shift-right belief 4))
+                (- (:alarm m) DECAY))]
+    (->BeliefOut belief (clamp-alarm alarm))))
+
+(defn decide
+  "Alarm level picks the behavior; rng only for wander."
+  [ctx :- Ctx m :- MindIn b :- BeliefOut obs :- Obs] :- Decision
+  (cond
+    [(>= (:alarm b) PANIC_AT)
+     (->Decision ACT_DIG 0 0)]
+    [(>= (:alarm b) ALARMED_AT)
+     (->Decision ACT_FLEE (* (:well_dx obs) 2) (* (:well_dz obs) 2))]
+    [(>= (:alarm b) WARY_AT)
+     (->Decision ACT_AVOID (:well_dx obs) (:well_dz obs))]
+    [:else
+     (let [roll (kernel.rt/rng-below ctx 8)]
+       (if (< roll 3)
+         (let [dx (- (kernel.rt/rng-below ctx 3) 1)
+               dz (- (kernel.rt/rng-below ctx 3) 1)]
+           (->Decision ACT_WANDER dx dz))
+         (->Decision ACT_IDLE 0 0)))]))
+
+(defn dig-relief
+  "Digging vents alarm."
+  [alarm :- Int] :- Int
+  (let [a (- alarm DIG_RELIEF)]
+    (if (< a 0) 0 a)))
