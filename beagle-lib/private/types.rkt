@@ -229,6 +229,12 @@
     ;; Qualified names (mod/Type) match their unqualified base (Type).
     [(and (type-prim? actual) (type-prim? expected))
      (or (eq? (type-prim-name actual) (type-prim-name expected))
+         ;; Int widens to Float, one direction only (JVM/Clojure
+         ;; numeric semantics: (defn g [] :- Float (+ 1 2)) passes;
+         ;; the Zig compiler stays the strict second wall on that
+         ;; target, where comptime ints coerce to f64 anyway).
+         (and (eq? (type-prim-name expected) 'Float)
+              (eq? (type-prim-name actual) 'Int))
          (eq? (unqualify-type-name (type-prim-name actual))
               (unqualify-type-name (type-prim-name expected)))
          (let ([members (hash-ref (current-union-members) (type-prim-name expected) #f)])

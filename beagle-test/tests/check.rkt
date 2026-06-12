@@ -1299,3 +1299,46 @@
 (check-ok "qualified: nix target is untouched by the pass"
   '(define-target nix)
   '(def x (lib/mkDefault 1)))
+
+;; =============================================================================
+;; Tests — numeric-preserving arithmetic (cracks thread 20260613013145 #3)
+;; =============================================================================
+
+(check-ok "numeric: all-Int chain keeps Int"
+  '(def a :- Int (+ 1 (* 2 3))))
+
+(check-ok "numeric: mixed Int/Float produces Float"
+  '(def b :- Float (+ 1 2.5)))
+
+(check-ok "numeric: Int result widens into a Float annotation"
+  '(def c :- Float (+ 1 2)))
+
+(check-err/rx "numeric: Float result does NOT narrow into Int"
+  #rx"expected Int, got Float"
+  '(def d :- Int (+ 1 2.5)))
+
+(check-ok "numeric: inc accepts and preserves Float"
+  '(def e :- Float (inc 2.5)))
+
+(check-ok "numeric: variadic max keeps Int when all-Int"
+  '(def f :- Int (max 1 2 3)))
+
+(check-ok "numeric: max goes Float on a mixed tower"
+  '(def g :- Float (max 1 2.5)))
+
+(check-err/rx "numeric: inc still rejects non-numbers pointedly"
+  #rx"expected Number, got String"
+  '(def h :- Int (inc "s")))
+
+(check-ok "numeric: Any operand falls back to today's behavior"
+  '(defn k [x :- Any] :- Int (+ x 1)))
+
+(check-ok "numeric: Number operand degrades to Number, satisfies Float"
+  '(defn m [x :- Number] :- Float (+ x 1.0)))
+
+(check-ok "numeric: defn interior chains carry Int to the return"
+  '(defn n [a :- Int b :- Int] :- Int (+ (* a b) (- a b) (abs a))))
+
+(check-err/rx "numeric: interior Float chain caught against Int return"
+  #rx"got Float"
+  '(defn p [a :- Int] :- Int (* (+ a 0.5) 2)))

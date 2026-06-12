@@ -4,5 +4,5 @@ const rt = @import("beagle_rt.zig");
 pub const Ctx = rt.Ctx;
 
 pub fn poke(x: i64) void {
-    if ((x > 0)) { _ = blk1: { break :blk1 (x + 1); }; }
+    if ((x > 0)) { _ = blk1: { break :blk1 null; }; }
 }

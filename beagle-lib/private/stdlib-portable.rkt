@@ -75,11 +75,15 @@
    ;; inc/dec re-adopted (audit row d): cheap Clojure stdlib sugar; no type or
    ;; backend justification for absence. Lowering happens in the per-target
    ;; stdlib emitters (or trivially as (+ x 1) / (- x 1)).
-   'inc        (fn-of '(Int) 'Int)
-   'dec        (fn-of '(Int) 'Int)
-   'min        (fn-of '(Int) 'Int #:rest 'Int)
-   'max        (fn-of '(Int) 'Int #:rest 'Int)
-   'abs        (fn-of '(Int) 'Int)
+   ;; Params are Number (Clojure's are polymorphic; (inc 2.5) was a false
+   ;; positive). The declared Int return is only the fallback for operands
+   ;; the numeric-preserving refinement can't classify (Any): the checker
+   ;; computes Int/Float/Number from the actual operand types.
+   'inc        (fn-of '(Number) 'Int)
+   'dec        (fn-of '(Number) 'Int)
+   'min        (fn-of '(Number) 'Int #:rest 'Number)
+   'max        (fn-of '(Number) 'Int #:rest 'Number)
+   'abs        (fn-of '(Number) 'Int)
    'zero?      (fn-of '(Number) 'Bool)
    'pos?       (fn-of '(Number) 'Bool)
    'neg?       (fn-of '(Number) 'Bool)

@@ -2079,10 +2079,11 @@
          raw-type))
      (cond
        [(type-fn? fn-type)
-        (check-args (call-form-fn e) fn-type (call-form-args e) env e)
+        (define arg-types
+          (check-args (call-form-fn e) fn-type (call-form-args e) env e))
         (when (>= (current-check-profile) 2)
           (check-scalar-predicate-literal (call-form-fn e) (call-form-args e) e))
-        (type-fn-ret fn-type)]
+        (numeric-refine (call-form-fn e) arg-types (type-fn-ret fn-type))]
        [(and (type-union? fn-type)
              (andmap type-fn? (type-union-alts fn-type)))
         (define n-args (length (call-form-args e)))
@@ -2386,6 +2387,46 @@
   out)
 
 ;; Variadic-aware argument checking.
+;; --- numeric-preserving arithmetic (cracks thread 20260613013145 #3) ---------
+;;
+;; + - * inc dec min max abs keep Int when every operand is Int and
+;; produce Float on mixed Int/Float — interiors stop dissolving into
+;; Any at the first arithmetic chain. A Number operand degrades to
+;; Number; anything else (Any, strings, …) falls back to the declared
+;; stdlib return, which is exactly today's behavior. `/` is excluded
+;; deliberately (Clojure `/` can produce Ratio). The refinement only
+;; fires when the declared return is itself numeric-or-Any, so a
+;; user-shadowed op with a different contract is untouched.
+
+(define NUMERIC-PRESERVING-OPS '(+ - * inc dec min max abs))
+
+(define (numeric-class t)
+  (cond
+    [(and (type-prim? t) (eq? (type-prim-name t) 'Int)) 'int]
+    [(and (type-prim? t) (eq? (type-prim-name t) 'Float)) 'float]
+    [(and (type-prim? t) (eq? (type-prim-name t) 'Number)) 'number]
+    [(and (type-union? t)
+          (pair? (type-union-alts t))
+          (for/and ([a (in-list (type-union-alts t))])
+            (memq (numeric-class a) '(int float number))))
+     'number]
+    [else 'other]))
+
+(define (numeric-refine op arg-types declared)
+  (cond
+    [(not (memq op NUMERIC-PRESERVING-OPS)) declared]
+    [(not (or (any-type? declared)
+              (and (type-prim? declared)
+                   (memq (type-prim-name declared) '(Int Float Number)))))
+     declared]
+    [else
+     (define classes (map numeric-class arg-types))
+     (cond
+       [(memq 'other classes) declared]
+       [(memq 'float classes) (type-prim 'Float)]
+       [(memq 'number classes) (type-prim 'Number)]
+       [else (type-prim 'Int)])]))
+
 (define (check-args fn-name fn-type args env call-node)
   (define fixed   (type-fn-params fn-type))
   (define rest-t  (type-fn-rest-type fn-type))
@@ -2414,10 +2455,11 @@
                     #:src call-src))
      (define fixed-args (take* args n-fixed))
      (define rest-args  (drop* args n-fixed))
-     (for ([p (in-list fixed)] [a (in-list fixed-args)] [i (in-naturals 1)])
-       (check-one-arg fn-name fn-type i p a env call-src))
-     (for ([a (in-list rest-args)] [i (in-naturals (+ n-fixed 1))])
-       (check-one-arg fn-name fn-type i rest-t a env call-src))]
+     (append
+      (for/list ([p (in-list fixed)] [a (in-list fixed-args)] [i (in-naturals 1)])
+        (check-one-arg fn-name fn-type i p a env call-src))
+      (for/list ([a (in-list rest-args)] [i (in-naturals (+ n-fixed 1))])
+        (check-one-arg fn-name fn-type i rest-t a env call-src)))]
     [else
      (unless (= n-fixed n-args)
        (define help
@@ -2442,9 +2484,13 @@
                             'variadic #f
                             'help help)
                     #:src call-src))
-     (for ([p (in-list fixed)] [a (in-list args)] [i (in-naturals 1)])
+     (for/list ([p (in-list fixed)] [a (in-list args)] [i (in-naturals 1)])
        (check-one-arg fn-name fn-type i p a env call-src))]))
 
+;; Checks one argument and returns its inferred type (check-args
+;; collects these so callers can refine return types — numeric
+;; preservation — without re-inferring, which would duplicate
+;; diagnostics from nested calls).
 (define (check-one-arg fn-name fn-type i expected-type arg env call-src)
   (define a-type (infer-expr arg env))
   (unless (type-compatible? a-type expected-type)
@@ -2482,7 +2528,8 @@
                         'arg-expr (or arg-expr-str 'null)
                         'arg-signature (or arg-sig 'null)
                         'suggestions suggestions)
-                #:src (or call-src arg-src))))
+                #:src (or call-src arg-src)))
+  a-type)
 
 (define (take* xs n)
   (if (or (zero? n) (null? xs)) '() (cons (car xs) (take* (cdr xs) (- n 1)))))
