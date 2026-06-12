@@ -82,33 +82,67 @@ decides how fast):
 ## The crossing — script→engine (2026-06-13)
 
 The §9.7 question ("should the emitter generate the SoA layout and
-iteration loop?") is answered: yes, and it's shipped. From tick-step's
-typed signature alone, the zig backend now generates the engine layer
-in sim.zig:
-
-- `MindInSoA` / `StepOutSoA` — one slice per record field, with
-  alloc/get/set/copyFrom (harness owns lifetimes; emitted code still
-  never frees).
-- `tickAllRange(tick, seed, tick_no, in, obs, max_x, max_z, out, lo, hi)`
-  — the gather→step→scatter range loop. The counter-rng determinism
-  policy (`mix64(seed ^ mix64(tick_no+1) ^ mix64(i + C))`) moved INTO
-  generated code; record-typed params ride as per-entity arrays,
-  scalars broadcast.
-- `promoteAll` — commit promotion as bulk @memcpy of the name-matched
-  world-lifetime fields; output-only transients (act) stay behind in
-  tick memory.
-
+iteration loop?") is answered: yes, and it's shipped. The zig backend
+generates the ENGINE LAYER in sim.zig from typed signatures alone.
 world.zig shrank to genuinely world-side work: grid/wells/fields,
-observation gathering, thread spawns, fingerprint. Acceptance: both
-conformance hashes held bit-exact through the handover, and the
-generated engine is FASTER than the handwritten harness loop it
-replaced (bulk promotion + direct SoA access): 4.5 → 3.7ms/tick on
-the big profile.
+observation gathering, thread spawns, fingerprint. Both conformance
+hashes held bit-exact through the handover, and the generated engine
+BEAT the handwritten loop it replaced (4.5 → 3.7ms/tick on the big
+profile at the time of the swap).
 
-Convention (pointed errors otherwise): `tick-step [ctx :- Ctx,
-entity :- E, rest...] :- O`; E/O fields scalar (they cross the commit
-boundary by memcpy); record params per-entity, scalar params
-broadcast.
+## Systems — the ECS shape (2026-06-13, night)
+
+A SYSTEM is any defn whose name ends `-step` with a Ctx first param:
+
+    (defn wolf-step [ctx :- Ctx w :- WolfIn obs :- WolfObs ...] :- WolfOut ...)
+
+Each system gets, generated from its signature:
+
+- **Stores** — `<Record>SoA` per entity/output record (deduped across
+  systems): slice-per-field, alloc/get/set/copyFrom, no deinit
+  (emitted code never frees; the harness owns lifetimes).
+- **Iteration** — `<name>AllRange(tick, seed, tick_no, in, <args>, out, lo, hi)`:
+  the gather→step→scatter loop. Record params ride as per-entity
+  arrays; scalars broadcast. The counter-rng policy lives HERE, with
+  a per-system LANE (FNV-1a of the system name folded into the
+  counter mix) so two systems stepping the same index on the same
+  tick draw provably distinct streams.
+- **Lifecycle** — if the output record carries `alive :- Bool` (the
+  entity's survival verdict, decided by its own step), promotion
+  becomes `<name>CompactAll`: order-preserving copy of survivors,
+  returns the new live count, the dead stay behind in tick memory.
+  Otherwise `<name>PromoteAll`: bulk memcpy of name-matched
+  world-lifetime fields; output-only transients stay behind.
+
+Convention violations (param 0 not Ctx is just an ordinary fn; but a
+conforming system with a non-record entity, non-scalar fields, name
+collisions, alive-on-both-records, non-Bool alive) are pointed
+compile errors.
+
+## The ecosystem — wolves (2026-06-13, night)
+
+Second archetype: wolves hunt by scent — the per-cell alarm aggregate
+IS the smell of fear. Minds observe predators (Obs gains
+wolf_near/wolf_dx/wolf_dz/wolf_here); predator presence is direct
+fear and overrides everything but cornered panic. A wolf standing in
+your cell eats you one time in four (the mind's own rng, own
+verdict). Wolves drain energy, feed on co-located prey, howl when
+starved, and die at zero energy. The predator/prey loop closes
+through OBSERVATION alone — no commit coupling, no shared mutable
+state, bit-determinism intact (5000-case differential covers both
+systems).
+
+Two emergent regimes from the same two beagle functions (seed
+0xBEA61E):
+
+| profile | world | outcome |
+|---|---|---|
+| small | 300 minds, 6 wolves, 64² | wolves eat 62, prey thins, ALL wolves starve by t=1000; flee acts collapse 67k→12k after the last wolf dies |
+| big | 200k minds, 1024 wolves, 512² | density inverts it: 1017/1024 wolves thrive, minds collapse 200k→26k in 500 ticks |
+
+Famine follows feast in the small world; apocalypse in the big one.
+Balance is content, not engine — tune the constants in
+sim_kernel.bgl and re-baseline.
 
 ## Phase 3 benchmark — minds per millisecond (same beagle module)
 
@@ -120,11 +154,13 @@ broadcast.
 | zig ReleaseSafe, 8 threads | 200,000 minds | 5.8ms    | ~34,500      |
 | zig ReleaseFast, 8 threads | 200,000 minds | 4.5ms    | ~44,300       |
 | zig ReleaseFast, generated engine | 200,000 minds | 3.7ms | ~54,000  |
+| zig ReleaseFast, full ecosystem | 200k minds + 1024 wolves | ~2.5ms at full population | — |
 | babashka (same source)     | per-call      | —        | ~62           |
 
-200k minds at 3.7ms/tick = 22% of a 60fps frame budget. Headroom
-before the next wall: more threads and @Vector in the hot pass. Watch
-it: `zig build run -Dbig=true -Doptimize=ReleaseSafe`.
+Full-population ticks fit in ~15% of a 60fps frame; as predation
+thins the world, ticks drop toward 0.4ms. Headroom: more threads and
+@Vector in the hot pass. Watch it:
+`zig build run -Dbig=true -Doptimize=ReleaseSafe`.
 
 ## Conformance
 
