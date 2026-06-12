@@ -89,7 +89,10 @@
              "emit-zig.rkt"
              ;; Form × live-backend matrix: every cell emits or rejects
              ;; pointedly (cracks thread 20260613013145 #2).
-             "emit-matrix.rkt"))
+             "emit-matrix.rkt"
+             ;; Query-tool extractors (beagle-sig/-fields/-callers) —
+             ;; pinned against the canonical surface after rotting twice.
+             "query.rkt"))
 
   (demoted . (;; behavioral runs that hit external interpreters
               "emit-js-behavioral.rkt")) ; requires bun
