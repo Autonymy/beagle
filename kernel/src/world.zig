@@ -17,8 +17,8 @@
 //! Script→engine crossing (2026-06-13): the engine layer is GENERATED.
 //! sim.zig (emitted from sim_kernel.bgl) now owns the SoA buffers
 //! (sim.MindInSoA / sim.StepOutSoA), the gather→step→scatter range
-//! loop with the counter-rng policy (sim.tickAllRange), and commit
-//! promotion (sim.promoteAll) — all derived from tick-step's typed
+//! loop with the counter-rng policy (sim.tickStepAllRange), and commit
+//! promotion (sim.tickStepPromoteAll) — all derived from tick-step's typed
 //! signature. This harness keeps what is genuinely world-side:
 //! resources (grid, wells, precomputed fields), observation gathering,
 //! thread spawns, and the conformance fingerprint.
@@ -219,7 +219,7 @@ pub const World = struct {
                 .well_dz = self.away_z[fo],
             };
         }
-        sim.tickAllRange(tick_alloc, self.seed, self.tick_no, r, obs, voxel.SIZE_X, voxel.SIZE_Z, out, lo, hi);
+        sim.tickStepAllRange(tick_alloc, self.seed, self.tick_no, r, obs, voxel.SIZE_X, voxel.SIZE_Z, out, lo, hi);
     }
 
     pub fn tick(self: *World, tick_alloc: std.mem.Allocator) !void {
@@ -269,7 +269,7 @@ pub const World = struct {
             self.last_decisions[i] = out.act[i];
             self.act_counts[@intCast(out.act[i])] += 1;
         }
-        sim.promoteAll(&out, w, N_MINDS);
+        sim.tickStepPromoteAll(&out, w, N_MINDS);
         const applied = self.grid.applyDigs(digs.items);
         self.digs_applied += applied;
         self.read_ix = 1 - self.read_ix;

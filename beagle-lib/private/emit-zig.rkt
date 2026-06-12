@@ -485,17 +485,16 @@
             (if (null? discards) "" (string-append (string-join discards "\n") "\n"))
             (emit-fn-body (defn-form-body f) ret "    "))))
 
-(define ZIG-TICK-ENTRIES '(world-tick tick-step))
-
-;; Commit-boundary copy for the tick entry's world-lifetime return type.
-;; The escape check (check.rkt) guarantees the type is slice-free, so v1
+;; Commit-boundary copy for the whole-world entry's return type. The
+;; escape check (check.rkt) guarantees the type is slice-free, so v1
 ;; promotion is a by-value struct copy — but the boundary stays an
-;; explicit, generated artifact the harness must call.
+;; explicit, generated artifact the harness must call. Per-entity
+;; systems (*-step) get their own SoA promotion in the engine layer.
 (define (emit-promote prog)
   (define entries
     (for/list ([f (in-list (program-forms prog))]
                #:when (and (defn-form? f)
-                           (memq (defn-form-name f) ZIG-TICK-ENTRIES)))
+                           (eq? (defn-form-name f) 'world-tick)))
       f))
   (cond
     [(null? entries) '()]
@@ -504,8 +503,6 @@
        (remove-duplicates
         (for/list ([f (in-list entries)])
           (type-prim-name (defn-form-return-type f)))))
-     (unless (= 1 (length rets))
-       (unsupported "multiple tick entries with different world types"))
      (define rec (ident (car rets)))
      (list (format (string-append
                     "/// Commit-boundary copy: world state leaves tick memory by\n"
@@ -513,27 +510,45 @@
                     "pub fn promote(v: ~a) ~a {\n    return v;\n}")
                    rec rec))]))
 
-;; --- engine layer (script → engine crossing) ----------------------------------
+;; --- engine layer (script → engine crossing, ECS systems) ---------------------
 ;;
-;; When the program defines a per-entity tick entry (tick-step), the
-;; backend additionally generates the engine layer around it: SoA
-;; buffers for the entity and output records, the gather→step→scatter
-;; range loop carrying the counter-rng determinism policy, and
-;; name-matched commit promotion. The iteration semantics live here,
-;; derived from the typed signature; the harness shrinks to world
-;; resources + thread spawns.
+;; Every per-entity SYSTEM — a defn whose name ends in `-step` with a
+;; Ctx first param — gets an engine block generated around it: SoA
+;; buffers for its entity and output records (deduped across systems),
+;; a gather→step→scatter range loop carrying the counter-rng
+;; determinism policy, and name-matched commit promotion. Multiple
+;; systems = multiple archetypes: wolves and minds each get their own
+;; stores and loops from their own typed signatures. The iteration
+;; semantics live here; the harness shrinks to world resources +
+;; observation gathering + thread spawns.
+;;
+;; Per-system rng LANES: each system folds a constant derived from its
+;; own name into the counter mix, so two systems stepping the same
+;; entity index on the same tick draw from provably distinct streams.
 ;;
 ;; Signature convention (violations are pointed errors):
-;;   (defn tick-step [ctx :- Ctx  e :- E  rest...] :- O ...)
+;;   (defn NAME-step [ctx :- Ctx  e :- E  rest...] :- O ...)
 ;;   - param 0: Ctx
 ;;   - param 1: entity record E → ESoA, indexed per entity
 ;;   - rest:    record-typed params ride as per-entity []const R arrays;
 ;;              everything else broadcasts unchanged
 ;;   - E and O fields must be scalar (Int/Float/Bool): they cross the
 ;;     commit boundary by @memcpy
+;;   - generated names derive from the system name: wolf-step →
+;;     wolfStepAllRange / wolfStepPromoteAll
 
 (define ENGINE-RESERVED
   '("tick" "seed" "tick_no" "in" "out" "lo" "hi" "i" "crng" "ctx" "n" "a" "v" "self" "src"))
+
+;; Per-system rng lane: FNV-1a of the system name folded into the base
+;; counter constant. Deterministic across compilations (pure function
+;; of the name), distinct across systems.
+(define (fnv1a64 s)
+  (for/fold ([h #xCBF29CE484222325]) ([b (in-bytes (string->bytes/utf-8 s))])
+    (bitwise-and (* (bitwise-xor h b) #x100000001B3) #xFFFFFFFFFFFFFFFF)))
+
+(define (system-lane name)
+  (bitwise-xor #x517CC1B727220A95 (fnv1a64 (symbol->string name))))
 
 (define (engine-scalar-prim? t)
   (and (type-prim? t) (memq (type-prim-name t) '(Int Float Bool))))
@@ -582,8 +597,11 @@
                               (ident (param-name p)) (ident (param-name p)))))
    "\n    }\n};"))
 
-(define (emit-tick-all entry ename oname extra)
-  (define fname (fn-ident (defn-form-name entry)))
+(define (emit-system-range entry ename oname extra)
+  (define sys-name (defn-form-name entry))
+  (define fname (fn-ident sys-name))
+  (define range-name (string-append fname "AllRange"))
+  (define lane (system-lane sys-name))
   (define extra-sig
     (for/list ([p (in-list extra)])
       (define r (record-type-name (param-type p)))
@@ -598,17 +616,21 @@
   (string-append
    "/// Engine range loop over entities [lo, hi): gather from SoA, run\n"
    (format "/// ~a under the counter-rng policy — rng seeded per\n" fname)
-   "/// (seed, tick_no, entity index), order-independent, so disjoint\n"
-   "/// ranges parallelize without losing bit-determinism — and scatter\n"
-   "/// the result. Record params index per entity; scalars broadcast.\n"
-   (format "pub fn tickAllRange(tick: std.mem.Allocator, seed: u64, tick_no: u64, in: *const ~a~a, out: *~a, lo: usize, hi: usize) void {\n"
+   "/// (seed, tick_no, entity index, system lane), order-independent,\n"
+   "/// so disjoint ranges parallelize without losing bit-determinism —\n"
+   "/// and scatter the result. Record params index per entity; scalars\n"
+   (format "/// broadcast. Lane 0x~a derives from the system name.\n"
+           (string-upcase (format "~x" lane)))
+   (format "pub fn ~a(tick: std.mem.Allocator, seed: u64, tick_no: u64, in: *const ~a~a, out: *~a, lo: usize, hi: usize) void {\n"
+           range-name
            (soa-name ename)
            (apply string-append
                   (for/list ([s (in-list extra-sig)]) (format ", ~a" s)))
            (soa-name oname))
    "    var i = lo;\n"
    "    while (i < hi) : (i += 1) {\n"
-   "        var crng = rt.Splitmix64.init(rt.mix64(seed ^ rt.mix64(tick_no +% 1) ^ rt.mix64(@as(u64, i) +% 0x517CC1B727220A95)));\n"
+   (format "        var crng = rt.Splitmix64.init(rt.mix64(seed ^ rt.mix64(tick_no +% 1) ^ rt.mix64(@as(u64, i) +% 0x~a)));\n"
+           (string-upcase (format "~x" lane)))
    "        var ctx = Ctx{ .tick = tick, .rng = &crng };\n"
    (format "        out.set(i, ~a(&ctx, in.get(i)~a));\n"
            fname
@@ -616,7 +638,9 @@
                   (for/list ([a (in-list extra-args)]) (format ", ~a" a))))
    "    }\n}"))
 
-(define (emit-promote-all ename oname)
+(define (emit-system-promote entry ename oname)
+  (define fname (fn-ident (defn-form-name entry)))
+  (define promote-name (string-append fname "PromoteAll"))
   (define efields (hash-ref (current-records) ename))
   (define common
     (for/list ([p (in-list (hash-ref (current-records) oname))]
@@ -637,8 +661,8 @@
            (ident oname) (ident ename))
    "/// buffer. Output-only fields are transients and stay behind in\n"
    "/// tick memory.\n"
-   (format "pub fn promoteAll(out: *const ~a, next: *~a, n: usize) void {\n"
-           (soa-name oname) (soa-name ename))
+   (format "pub fn ~a(out: *const ~a, next: *~a, n: usize) void {\n"
+           promote-name (soa-name oname) (soa-name ename))
    (if (null? common)
        "    _ = out;\n    _ = next;\n    _ = n;\n"
        (string-join
@@ -648,43 +672,64 @@
         ""))
    "}"))
 
+;; A system: name ends in -step, first param is Ctx. (A *-step fn
+;; whose first param is NOT Ctx is an ordinary function — the Ctx
+;; anchor is what makes the convention unmistakable.)
+(define (system-entry? f)
+  (and (defn-form? f)
+       (regexp-match? #rx"-step$" (symbol->string (defn-form-name f)))
+       (pair? (defn-form-params f))
+       (param? (car (defn-form-params f)))
+       (let ([t (param-type (car (defn-form-params f)))])
+         (and t (type-prim? t) (eq? (type-prim-name t) 'Ctx)))))
+
 (define (emit-engine prog)
-  (define entry
-    (findf (lambda (f) (and (defn-form? f) (eq? (defn-form-name f) 'tick-step)))
-           (program-forms prog)))
+  (define entries (filter system-entry? (program-forms prog)))
   (cond
-    [(not entry) '()]
+    [(null? entries) '()]
     [else
-     (define params (defn-form-params entry))
-     (for ([p (in-list params)])
-       (unless (param? p) (unsupported "destructuring parameter in tick-step")))
-     (unless (>= (length params) 2)
-       (unsupported "tick-step engine signature"
-                    "needs [ctx :- Ctx entity :- E ...] for engine generation"))
-     (unless (and (type-prim? (param-type (car params)))
-                  (eq? (type-prim-name (param-type (car params))) 'Ctx))
-       (unsupported "tick-step param 0" "must be ctx :- Ctx"))
-     (define ename (record-type-name (param-type (cadr params))))
-     (unless ename
-       (unsupported "tick-step param 1"
-                    "must be a record — the per-entity state the engine buffers"))
-     (define oname (record-type-name (defn-form-return-type entry)))
-     (unless oname
-       (unsupported "tick-step return"
-                    "must be a record — the per-entity output the engine scatters"))
-     (engine-check-scalar-record! ename "entity")
-     (engine-check-scalar-record! oname "output")
-     (define extra (cddr params))
-     (for ([p (in-list extra)])
-       (when (member (ident (param-name p)) ENGINE-RESERVED)
-         (unsupported "tick-step param name"
-                      (format "~a collides with a generated engine binding"
-                              (ident (param-name p))))))
+     ;; validate every system, collecting (entry ename oname extra)
+     (define specs
+       (for/list ([entry (in-list entries)])
+         (define who (defn-form-name entry))
+         (define params (defn-form-params entry))
+         (for ([p (in-list params)])
+           (unless (param? p)
+             (unsupported (format "destructuring parameter in ~a" who))))
+         (unless (>= (length params) 2)
+           (unsupported (format "~a engine signature" who)
+                        "needs [ctx :- Ctx entity :- E ...] for engine generation"))
+         (define ename (record-type-name (param-type (cadr params))))
+         (unless ename
+           (unsupported (format "~a param 1" who)
+                        "must be a record — the per-entity state the engine buffers"))
+         (define oname (record-type-name (defn-form-return-type entry)))
+         (unless oname
+           (unsupported (format "~a return" who)
+                        "must be a record — the per-entity output the engine scatters"))
+         (engine-check-scalar-record! ename "entity")
+         (engine-check-scalar-record! oname "output")
+         (define extra (cddr params))
+         (for ([p (in-list extra)])
+           (when (member (ident (param-name p)) ENGINE-RESERVED)
+             (unsupported (format "~a param name" who)
+                          (format "~a collides with a generated engine binding"
+                                  (ident (param-name p))))))
+         (list entry ename oname extra)))
+     ;; SoA structs once per record, first-appearance order across systems
+     (define soa-recs
+       (remove-duplicates
+        (for*/list ([spec (in-list specs)]
+                    [r (in-list (list (cadr spec) (caddr spec)))])
+          r)))
      (append
-      (for/list ([r (in-list (remove-duplicates (list ename oname)))])
-        (emit-soa r))
-      (list (emit-tick-all entry ename oname extra)
-            (emit-promote-all ename oname)))]))
+      (for/list ([r (in-list soa-recs)]) (emit-soa r))
+      (for*/list ([spec (in-list specs)]
+                  [piece (in-list (list (emit-system-range (car spec) (cadr spec)
+                                                           (caddr spec) (cadddr spec))
+                                        (emit-system-promote (car spec) (cadr spec)
+                                                             (caddr spec))))])
+        piece))]))
 
 (define (zig-emit-program prog)
   (parameterize ([current-records (build-record-table prog)])

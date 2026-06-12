@@ -94,12 +94,6 @@ pub fn tickStep(ctx: *rt.Ctx, m: MindIn, obs: Obs, max_x: i64, max_z: i64) StepO
     return StepOut{ .x = clampCoord((m.x + d.dx), max_x), .z = clampCoord((m.z + d.dz), max_z), .belief = b.belief, .alarm = alarm, .act = d.act };
 }
 
-/// Commit-boundary copy: world state leaves tick memory by
-/// value (escape-checked slice-free in v1).
-pub fn promote(v: StepOut) StepOut {
-    return v;
-}
-
 /// SoA buffer for MindIn — engine state, one slice per field.
 /// Allocated by the harness (any allocator); never freed here —
 /// emitted code never frees, the harness owns lifetimes.
@@ -191,13 +185,14 @@ pub const StepOutSoA = struct {
 
 /// Engine range loop over entities [lo, hi): gather from SoA, run
 /// tickStep under the counter-rng policy — rng seeded per
-/// (seed, tick_no, entity index), order-independent, so disjoint
-/// ranges parallelize without losing bit-determinism — and scatter
-/// the result. Record params index per entity; scalars broadcast.
-pub fn tickAllRange(tick: std.mem.Allocator, seed: u64, tick_no: u64, in: *const MindInSoA, obs: []const Obs, max_x: i64, max_z: i64, out: *StepOutSoA, lo: usize, hi: usize) void {
+/// (seed, tick_no, entity index, system lane), order-independent,
+/// so disjoint ranges parallelize without losing bit-determinism —
+/// and scatter the result. Record params index per entity; scalars
+/// broadcast. Lane 0x932B4A9287327F1C derives from the system name.
+pub fn tickStepAllRange(tick: std.mem.Allocator, seed: u64, tick_no: u64, in: *const MindInSoA, obs: []const Obs, max_x: i64, max_z: i64, out: *StepOutSoA, lo: usize, hi: usize) void {
     var i = lo;
     while (i < hi) : (i += 1) {
-        var crng = rt.Splitmix64.init(rt.mix64(seed ^ rt.mix64(tick_no +% 1) ^ rt.mix64(@as(u64, i) +% 0x517CC1B727220A95)));
+        var crng = rt.Splitmix64.init(rt.mix64(seed ^ rt.mix64(tick_no +% 1) ^ rt.mix64(@as(u64, i) +% 0x932B4A9287327F1C)));
         var ctx = Ctx{ .tick = tick, .rng = &crng };
         out.set(i, tickStep(&ctx, in.get(i), obs[i], max_x, max_z));
     }
@@ -207,7 +202,7 @@ pub fn tickAllRange(tick: std.mem.Allocator, seed: u64, tick_no: u64, in: *const
 /// (name-matched between StepOut and MindIn) into the next read
 /// buffer. Output-only fields are transients and stay behind in
 /// tick memory.
-pub fn promoteAll(out: *const StepOutSoA, next: *MindInSoA, n: usize) void {
+pub fn tickStepPromoteAll(out: *const StepOutSoA, next: *MindInSoA, n: usize) void {
     @memcpy(next.x[0..n], out.x[0..n]);
     @memcpy(next.z[0..n], out.z[0..n]);
     @memcpy(next.belief[0..n], out.belief[0..n]);

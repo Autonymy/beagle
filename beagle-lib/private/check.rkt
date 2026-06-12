@@ -3124,21 +3124,29 @@
 
 ;; --- zig world-escape check (thread 20260612232001, Phase 2) ---------------
 ;;
-;; Convention B: a defn named `world-tick` (whole-world transition) or
-;; `tick-step` (per-entity transition) marks its RETURN record type as
+;; Convention B, generalized to systems (ECS direction, 2026-06-13):
+;; `world-tick` (whole-world transition) or ANY `*-step` defn whose
+;; first param is Ctx (a per-entity system — the engine generates SoA
+;; stores and range loops for each) marks its RETURN record type as
 ;; world-lifetime — the value that crosses the commit boundary out of
 ;; tick memory. World-lifetime types must be copyable by value: no
 ;; tick-arena references reachable from their fields. v1: slices
 ;; ((Vec T), String) and maps are rejected; nested records recurse.
-;; The emitter pairs this with a generated `promote` copy function.
+;; The emitter pairs this with generated promotion functions.
 
-(define ZIG-TICK-ENTRIES '(world-tick tick-step))
+(define (zig-tick-entry? form)
+  (and (defn-form? form)
+       (or (eq? (defn-form-name form) 'world-tick)
+           (and (regexp-match? #rx"-step$" (symbol->string (defn-form-name form)))
+                (pair? (defn-form-params form))
+                (param? (car (defn-form-params form)))
+                (let ([t (param-type (car (defn-form-params form)))])
+                  (and t (type-prim? t) (eq? (type-prim-name t) 'Ctx)))))))
 
 (define (check-zig-world-escape! prog)
   (when (eq? (program-target prog) 'zig)
     (for ([form (in-list (program-forms prog))])
-      (when (and (defn-form? form)
-                 (memq (defn-form-name form) ZIG-TICK-ENTRIES))
+      (when (zig-tick-entry? form)
         (define ret (defn-form-return-type form))
         (unless (and ret (type-prim? ret))
           (raise-diag 'world-escape

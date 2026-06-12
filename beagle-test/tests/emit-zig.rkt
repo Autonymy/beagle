@@ -180,10 +180,11 @@
   #rx"tick-lifetime field xs"
   "(ns g)\n(defrecord Bag [xs :- (Vec Int)])\n(defrecord World [bag :- Bag])\n(defn tick-step [ctx :- Ctx w :- World] :- World w)")
 
-(test-case "promote is emitted for tick entries"
+(test-case "value-level promote is the world-tick artifact; systems promote via SoA"
   (define out (compile-zig-string
                "(ns g)\n(defrecord S [v :- Int])\n(defn tick-step [ctx :- Ctx s :- S] :- S s)"))
-  (check-true (regexp-match? #rx"pub fn promote.v: S. S" out)))
+  (check-false (regexp-match? #rx"pub fn promote\\(" out))
+  (check-true (regexp-match? #rx"pub fn tickStepPromoteAll" out)))
 
 ;; --- engine layer (script→engine crossing) -------------------------------------
 
@@ -201,22 +202,60 @@
   (check-true (regexp-match? #rx"pub const MindInSoA = struct" out))
   (check-true (regexp-match? #rx"pub const StepOutSoA = struct" out)))
 
-(test-case "engine: tickAllRange — record params per-entity, scalars broadcast"
+(test-case "engine: per-system range loop — record params per-entity, scalars broadcast"
   (define out (compile-zig-string ENGINE-SRC))
   (check-true (regexp-match?
-               #rx"pub fn tickAllRange.tick: std.mem.Allocator, seed: u64, tick_no: u64, in: \\*const MindInSoA, obs: \\[\\]const Obs, max_x: i64, out: \\*StepOutSoA, lo: usize, hi: usize."
+               #rx"pub fn tickStepAllRange.tick: std.mem.Allocator, seed: u64, tick_no: u64, in: \\*const MindInSoA, obs: \\[\\]const Obs, max_x: i64, out: \\*StepOutSoA, lo: usize, hi: usize."
                out)))
 
-(test-case "engine: counter-rng determinism policy lives in generated code"
+(test-case "engine: counter-rng policy with a name-derived lane"
   (define out (compile-zig-string ENGINE-SRC))
   (check-true (regexp-match? #rx"rt.Splitmix64.init.rt.mix64.seed" out))
-  (check-true (regexp-match? #rx"0x517CC1B727220A95" out)))
+  (check-true (regexp-match? #rx"Lane 0x[0-9A-F]+ derives from the system name" out)))
 
-(test-case "engine: promoteAll copies world-lifetime fields, transients stay behind"
+(test-case "engine: promotion copies world-lifetime fields, transients stay behind"
   (define out (compile-zig-string ENGINE-SRC))
+  (check-true (regexp-match? #rx"pub fn tickStepPromoteAll" out))
   (check-true (regexp-match? #rx"@memcpy.next.x.0..n., out.x.0..n.." out))
   (check-true (regexp-match? #rx"@memcpy.next.belief" out))
   (check-false (regexp-match? #rx"next.act" out)))
+
+(define TWO-SYSTEM-SRC
+  (string-append
+   "(ns g)\n"
+   "(defrecord MindIn [x :- Int alarm :- Int])\n"
+   "(defrecord MindOut [x :- Int alarm :- Int act :- Int])\n"
+   "(defrecord WolfIn [x :- Int energy :- Int])\n"
+   "(defrecord WolfOut [x :- Int energy :- Int howl :- Int])\n"
+   "(defn mind-step [ctx :- Ctx m :- MindIn] :- MindOut\n"
+   "  (->MindOut (:x m) (:alarm m) 0))\n"
+   "(defn wolf-step [ctx :- Ctx w :- WolfIn] :- WolfOut\n"
+   "  (->WolfOut (:x w) (:energy w) 0))"))
+
+(test-case "engine: two systems — two archetypes, each with stores + loop + promote"
+  (define out (compile-zig-string TWO-SYSTEM-SRC))
+  (check-true (regexp-match? #rx"pub const MindInSoA = struct" out))
+  (check-true (regexp-match? #rx"pub const WolfInSoA = struct" out))
+  (check-true (regexp-match? #rx"pub fn mindStepAllRange" out))
+  (check-true (regexp-match? #rx"pub fn wolfStepAllRange" out))
+  (check-true (regexp-match? #rx"pub fn mindStepPromoteAll" out))
+  (check-true (regexp-match? #rx"pub fn wolfStepPromoteAll" out)))
+
+(test-case "engine: per-system rng lanes are distinct"
+  (define out (compile-zig-string TWO-SYSTEM-SRC))
+  (define lanes (regexp-match* #rx"\\+% 0x([0-9A-F]+)\\)\\)\\)" out #:match-select cadr))
+  (check-equal? 2 (length lanes))
+  (check-false (equal? (car lanes) (cadr lanes))))
+
+(when ZIG
+  (test-case "engine: two-system generated layer compiles as zig"
+    (check-true (zig-compiles? (compile-zig-string TWO-SYSTEM-SRC) "two-systems"))))
+
+(test-case "engine: a -step fn without Ctx first is an ordinary function"
+  (define out (compile-zig-string
+               "(ns g)\n(defn two-step [a :- Int b :- Int] :- Int (+ a b))"))
+  (check-false (regexp-match? #rx"AllRange" out))
+  (check-true (regexp-match? #rx"pub fn twoStep" out)))
 
 (test-case "engine: entity = output dedups to a single SoA struct"
   (define out (compile-zig-string
@@ -232,10 +271,6 @@
 (when ZIG
   (test-case "engine: generated engine layer compiles as zig"
     (check-true (zig-compiles? (compile-zig-string ENGINE-SRC) "engine-layer"))))
-
-(check-unsupported/src "engine: param 0 must be Ctx"
-  #rx"tick-step param 0"
-  "(ns g)\n(defrecord S [v :- Int])\n(defn tick-step [n :- Int s :- S] :- S s)")
 
 (check-unsupported/src "engine: param 1 must be the entity record"
   #rx"tick-step param 1"
