@@ -473,6 +473,27 @@
   ;; user-declared external functions
   (for ([(name t) (in-hash (program-externs prog))])
     (hash-set! env name t))
+  ;; Alias-qualified stdlib/extern access: (require babashka.fs :as fs)
+  ;; makes fs/exists? resolve to the babashka.fs/exists? entry. Pre-populate
+  ;; alias-prefixed bindings for every env key under the required namespace
+  ;; so aliased calls get real signatures, not the undefined-fn fallback.
+  (for ([r (in-list (program-requires prog))])
+    (define alias (require-entry-alias r))
+    (when (and alias (not (eq? alias (require-entry-ns r))))
+      (define ns-prefix (string-append (symbol->string (require-entry-ns r)) "/"))
+      (define alias-prefix (string-append (symbol->string alias) "/"))
+      (define additions
+        (for/list ([(k t) (in-hash env)]
+                   #:when (and (symbol? k)
+                               (string-prefix? (symbol->string k) ns-prefix)))
+          (cons (string->symbol
+                 (string-append alias-prefix
+                                (substring (symbol->string k)
+                                           (string-length ns-prefix))))
+                t)))
+      (for ([kv (in-list additions)])
+        (unless (hash-has-key? env (car kv))
+          (hash-set! env (car kv) (cdr kv))))))
   ;; record types imported from other modules
   (for ([(rec-name field-map) (in-hash (program-imported-record-fields prog))])
     (hash-set! RECORD-FIELDS rec-name field-map)
