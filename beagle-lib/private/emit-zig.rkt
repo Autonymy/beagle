@@ -109,6 +109,12 @@
 
 (define current-records (make-parameter (hasheq)))
 (define current-externs (make-parameter (hasheq))) ; declared-extern name → type
+(define current-requires (make-parameter (hasheq))) ; alias sym → namespace sym
+
+;; require'd namespaces the zig runtime prelude provides — a qualified
+;; call through one of these aliases lowers to rt.<fn> (the CLI runtime
+;; in beagle_rt.zig). Everything else qualified stays rejected.
+(define ZIG-RUNTIME-NAMESPACES '(clojure.string babashka.fs clojure.set))
 (define current-optionals (make-parameter '())) ; binding syms with ?T types
 (define current-loop-bindings (make-parameter #f)) ; (listof ident-string) for recur
 (define label-counter (make-parameter (box 0)))
@@ -326,12 +332,23 @@
   ;; iff it was declared as an extern — the zig backend has no module
   ;; system, so the prelude is the only place a qualified name can
   ;; resolve, and `declare-extern` is the author's statement that this
-  ;; name is provided there. `ns/NAME` → `rt.name`. require'd Clojure
-  ;; namespaces (str/trim, …) are not externs, have no zig home, and
-  ;; fall through to a pointed rejection.
-  (and (hash-has-key? (current-externs) sym)
-       (let ([m (regexp-match #rx"/(.+)$" (symbol->string sym))])
-         (and m (format "rt.~a" (ident (string->symbol (cadr m))))))))
+  ;; name is provided there. Also resolved: a require'd alias of a known
+  ;; runtime namespace (clojure.string, babashka.fs) — its fns live in the
+  ;; prelude's CLI runtime. Any other qualified call is rejected.
+  (define s (symbol->string sym))
+  (define m (regexp-match #rx"^([^/]+)/(.+)$" s))
+  (cond
+    [(not m) #f]
+    [(hash-has-key? (current-externs) sym) (format "rt.~a" (rt-fn-name (caddr m)))]
+    [(memq (hash-ref (current-requires) (string->symbol (cadr m)) #f)
+           ZIG-RUNTIME-NAMESPACES)
+     (format "rt.~a" (rt-fn-name (caddr m)))]
+    [else #f]))
+
+;; clojure stdlib fn name → prelude ident: drop ?!, kebab→snake (matches
+;; the prelude's rng_below / starts_with convention).
+(define (rt-fn-name name-str)
+  (string-replace (regexp-replace* #rx"[?!]" name-str "") "-" "_"))
 
 (define (emit-call e)
   (define fn (call-form-fn e))
@@ -450,6 +467,15 @@
        (unsupported "conj" "zig backend spells it (conj ctx v x) — allocation needs ctx"))
      (format "rt.conj(~a, ~a, ~a)"
              (emit-expr (car args)) (emit-expr (cadr args)) (emit-expr (caddr args)))]
+    ;; CLI runtime stdlib (unqualified clojure.core fns the prelude provides)
+    [(eq? fn 'slurp) (format "rt.slurp(~a)" (emit-expr (car args)))]
+    [(eq? fn 'spit) (format "rt.spit(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))]
+    [(and (eq? fn 'subs) (= 3 (length args)))
+     (format "rt.subs3(~a, ~a, ~a)"
+             (emit-expr (car args)) (emit-expr (cadr args)) (emit-expr (caddr args)))]
+    [(eq? fn 'subs) (format "rt.subs(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))]
+    ;; (long x): the checker types it Int already; identity on zig.
+    [(eq? fn 'long) (emit-expr (car args))]
     [(qualified-rt-name fn)
      => (lambda (rt-fn)
           (format "~a(~a)" rt-fn (string-join (emit-args args) ", ")))]
@@ -941,7 +967,12 @@
 
 (define (zig-emit-program prog)
   (parameterize ([current-records (build-record-table prog)]
-                 [current-externs (program-externs prog)])
+                 [current-externs (program-externs prog)]
+                 [current-requires
+                  (for/fold ([h (hasheq)]) ([r (in-list (program-requires prog))])
+                    (if (require-entry-alias r)
+                        (hash-set h (require-entry-alias r) (require-entry-ns r))
+                        h))])
     (define decls
       (append
        (for/list ([f (in-list (program-forms prog))]

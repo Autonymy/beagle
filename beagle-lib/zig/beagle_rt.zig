@@ -125,3 +125,89 @@ pub fn Map(comptime V: type) type {
         }
     };
 }
+
+// --- strings (clojure.string + clojure.core) --------------------------------
+const WS = " \t\r\n";
+pub fn starts_with(s: []const u8, p: []const u8) bool {
+    return std.mem.startsWith(u8, s, p);
+}
+pub fn ends_with(s: []const u8, p: []const u8) bool {
+    return std.mem.endsWith(u8, s, p);
+}
+pub fn includes(s: []const u8, needle: []const u8) bool {
+    return std.mem.indexOf(u8, s, needle) != null;
+}
+pub fn blank(s: []const u8) bool {
+    return std.mem.trim(u8, s, WS).len == 0;
+}
+pub fn trim(s: []const u8) []const u8 {
+    return std.mem.trim(u8, s, WS);
+}
+pub fn trimr(s: []const u8) []const u8 {
+    return std.mem.trimRight(u8, s, WS);
+}
+pub fn subs(s: []const u8, start: i64) []const u8 {
+    return s[@intCast(start)..];
+}
+pub fn subs3(s: []const u8, start: i64, end: i64) []const u8 {
+    return s[@intCast(start)..@intCast(end)];
+}
+pub fn lower_case(s: []const u8) []const u8 {
+    const out = cliAlloc().alloc(u8, s.len) catch @panic("oom");
+    for (s, 0..) |c, i| out[i] = std.ascii.toLower(c);
+    return out;
+}
+pub fn upper_case(s: []const u8) []const u8 {
+    const out = cliAlloc().alloc(u8, s.len) catch @panic("oom");
+    for (s, 0..) |c, i| out[i] = std.ascii.toUpper(c);
+    return out;
+}
+pub fn join(sep: []const u8, parts: []const []const u8) []const u8 {
+    return std.mem.join(cliAlloc(), sep, parts) catch @panic("oom");
+}
+pub fn replace(s: []const u8, needle: []const u8, repl: []const u8) []const u8 {
+    if (needle.len == 0) return s;
+    const size = std.mem.replacementSize(u8, s, needle, repl);
+    const out = cliAlloc().alloc(u8, size) catch @panic("oom");
+    _ = std.mem.replace(u8, s, needle, repl, out);
+    return out;
+}
+pub fn split_lines(s: []const u8) []const []const u8 {
+    var n: usize = 1;
+    for (s) |c| {
+        if (c == '\n') n += 1;
+    }
+    const out = cliAlloc().alloc([]const u8, n) catch @panic("oom");
+    var it = std.mem.splitScalar(u8, s, '\n');
+    var i: usize = 0;
+    while (it.next()) |line| : (i += 1) out[i] = line;
+    return out[0..i];
+}
+/// str (clojure.core) over two args; the common shape. Concatenates.
+pub fn str2(a: []const u8, b: []const u8) []const u8 {
+    return std.mem.concat(cliAlloc(), u8, &.{ a, b }) catch @panic("oom");
+}
+
+// --- file I/O (clojure.core slurp/spit) -------------------------------------
+pub fn slurp(p: []const u8) []const u8 {
+    const f = std.fs.cwd().openFile(p, .{}) catch @panic("slurp: open failed");
+    defer f.close();
+    return f.readToEndAlloc(cliAlloc(), 1 << 30) catch @panic("slurp: read failed");
+}
+pub fn spit(p: []const u8, content: []const u8) void {
+    const f = std.fs.cwd().createFile(p, .{}) catch @panic("spit: create failed");
+    defer f.close();
+    f.writeAll(content) catch @panic("spit: write failed");
+}
+
+// --- paths (babashka.fs) -----------------------------------------------------
+pub fn parent(p: []const u8) []const u8 {
+    return std.fs.path.dirname(p) orelse "";
+}
+pub fn path(a: []const u8, b: []const u8) []const u8 {
+    return std.fs.path.join(cliAlloc(), &.{ a, b }) catch @panic("oom");
+}
+pub fn exists(p: []const u8) bool {
+    std.fs.cwd().access(p, .{}) catch return false;
+    return true;
+}

@@ -154,9 +154,9 @@
   #rx"quot"
   '(defn f [a :- Int b :- Int] :- Int (/ a b)))
 
-(check-unsupported/src "zig rejects general qualified calls"
+(check-unsupported/src "zig rejects qualified calls to non-runtime namespaces"
   #rx"qualified"
-  "(ns g)\n(require clojure.string :as str)\n(defn f [s :- String] :- String (str/trim s))")
+  "(ns g)\n(require some.random.lib :as q)\n(defn f [s :- String] :- String (q/frobnicate s))")
 
 (test-case "extern: a declared extern resolves to the rt prelude (any namespace)"
   ;; The runtime-namespace is the author's choice via declare-extern; the
