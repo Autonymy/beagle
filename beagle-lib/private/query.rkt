@@ -4,6 +4,7 @@
          racket/format
          "parse.rkt"
          "types.rkt"
+         "ast.rkt"
          "extensions.rkt"
          "expand-tool.rkt")
 
@@ -67,8 +68,12 @@
 (define (extract-extern-entry d)
   (match d
     [(list 'declare-extern (? symbol? name) type-expr)
-     (list name (parse-type type-expr))]
-    [_ #f]))
+     (list (list name (parse-type type-expr)))]
+    [(list 'declare-extern (? bracketed? names-form) type-expr)
+     (define t (parse-type type-expr))
+     (for/list ([name (in-list (bracket-body names-form))])
+       (list name t))]
+    [_ '()]))
 
 (define (extract-ns d)
   (match d
@@ -93,9 +98,9 @@
                 [pt (in-list params)])
             (printf "  ~a : ~a\n" pn (type->string pt)))
           (printf "  -> ~a\n" (type->string (type-fn-ret ftype))))
-        (define ext (extract-extern-entry d))
-        (when (and ext (eq? (car ext) target))
-          (printf "~a : ~a  (extern)\n" target (type->string (cadr ext))))))))
+        (for ([ext (in-list (extract-extern-entry d))])
+          (when (eq? (car ext) target)
+            (printf "~a : ~a  (extern)\n" target (type->string (cadr ext)))))))))
 
 ;; --- beagle-fields: print record fields + accessors --------------------------
 
@@ -191,8 +196,7 @@
       (when fn (set! fns (cons fn fns)))
       (define df (extract-def-entry d))
       (when df (set! defs (cons df defs)))
-      (define ext (extract-extern-entry d))
-      (when ext (set! externs (cons ext externs))))
+      (set! externs (append (extract-extern-entry d) externs)))
 
     (unless (null? records)
       (printf "records:\n")

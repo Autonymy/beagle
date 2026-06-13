@@ -318,6 +318,9 @@
                        (eprintf "warning: type import from ~a skipped a form: ~a\n"
                                 mod-ns (exn-message e)))])
     (match d
+      [(list 'declare-extern (? bracketed? names-form) type-expr)
+       (for ([name (in-list (bracket-body names-form))])
+         (reg! name (parse-type type-expr)))]
       [(list 'declare-extern (? symbol? name) type-expr)
        (reg! name (parse-type type-expr))]
       [(list 'define-macro (or 'proc 'beagle) (? symbol? name) typed-params ': ret-type body)
@@ -864,6 +867,15 @@
                                              "macro ~a: parameters must be a list" name)]))
        (register-macro! registry name 'defmacro ps template)]
 
+      [(list 'declare-extern (? bracketed? names-form) type-expr)
+       (for ([name (in-list (bracket-body names-form))])
+         (unless (symbol? name)
+           (raise-parse-error 'bad-meta-value
+             "declare-extern: each name in batch form must be a symbol, got: ~v" name))
+         (validate-identifier! name "extern")
+         (when (hash-has-key? externs name)
+           (raise-parse-error 'duplicate-meta "duplicate declare-extern: ~a" name))
+         (hash-set! externs name (parse-type type-expr)))]
       [(list 'declare-extern (? symbol? name) type-expr)
        (validate-identifier! name "extern")
        (when (hash-has-key? externs name)
@@ -907,7 +919,7 @@
                           "malformed import — expected (import java.pkg.Class) or (import (java.pkg Class1 Class2)), got: ~v" d)]
       [(cons 'declare-extern _)
        (raise-parse-error 'bad-meta-value
-                          "malformed declare-extern — expected (declare-extern name TYPE), e.g. (declare-extern fs/exists? [String -> Bool]), got: ~v" d)]
+                          "malformed declare-extern — expected (declare-extern name TYPE) or (declare-extern [name1 name2 ...] TYPE), got: ~v" d)]
       [(cons 'defmacro _)
        (raise-parse-error 'bad-meta-value
                           "malformed defmacro — expected (defmacro NAME [params] template) with exactly one template form; wrap multiple forms in `(do ...)`, got: ~v" d)]

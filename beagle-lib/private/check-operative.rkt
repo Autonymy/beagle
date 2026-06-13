@@ -30,7 +30,8 @@
 (require racket/match
          racket/format
          racket/list
-         "eval-standard.rkt")
+         "eval-standard.rkt"
+         "ast.rkt")
 
 (provide
   ;; Public entry point
@@ -1137,11 +1138,18 @@
 
 (define (check-declare-extern args env errors)
   ;; (declare-extern NAME ∈ TYPE)
+  ;; (declare-extern [NAME1 NAME2 ...] ∈ TYPE)
   (cond
     [(and (= (length args) 3) (eq? (cadr args) ':type) (symbol? (car args)))
      (with-handlers ([exn:fail? (lambda (_) (void))])
        (tenv-define! env (car args)
                      (parameterize ([current-type-env env]) (parse-type (caddr args)))))
+     (values NIL-TYPE errors)]
+    [(and (= (length args) 3) (eq? (cadr args) ':type) (bracketed? (car args)))
+     (for ([name (in-list (bracket-body (car args)))])
+       (with-handlers ([exn:fail? (lambda (_) (void))])
+         (tenv-define! env name
+                       (parameterize ([current-type-env env]) (parse-type (caddr args))))))
      (values NIL-TYPE errors)]
     [else (values NIL-TYPE errors)]))
 
