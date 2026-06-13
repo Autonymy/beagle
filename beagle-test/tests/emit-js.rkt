@@ -232,6 +232,35 @@
          (let [c (.charCodeAt s i)]
            (if (= c n) i (recur (+ i 1)))))))
 
+   (check-js-contains "async loop/recur -> async IIFE with while"
+     "async () =>"
+     `(declare-extern read-next ,(br 'Any '-> '(Promise Any)))
+     '(defn read-all [(r :- Any)] :- Any
+       (loop [buf nil]
+         (let [v (js/await (read-next r))]
+           (if (nil? v) buf (recur v))))))
+
+   (check-js-contains "async loop/recur -> await inside while body"
+     "await read_next"
+     `(declare-extern read-next ,(br 'Any '-> '(Promise Any)))
+     '(defn read-all [(r :- Any)] :- Any
+       (loop [buf nil]
+         (let [v (js/await (read-next r))]
+           (if (nil? v) buf (recur v))))))
+
+   (check-js-contains "sync loop -> no async prefix"
+     "(() => {"
+     '(defn countdown [(n :- Int)] :- Int
+       (loop [i n]
+         (if (= i 0) i (recur (- i 1))))))
+
+   (check-js-contains "loop with do + recur emits side effects before continue"
+     "console.log"
+     '(defn count-up [(n :- Int)] :- Int
+       (loop [i 0]
+         (if (= i n) i
+           (do (println (str "i=" i)) (recur (+ i 1)))))))
+
    (check-js-contains "try/catch -> try block"
      "try {"
      '(defn safe [(x :- Int)] :- Int

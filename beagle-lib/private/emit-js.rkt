@@ -952,6 +952,9 @@
     [(loop-form? e)
      (define bindings (loop-form-bindings e))
      (define body (loop-form-body e))
+     (define has-await (or (for/or ([b (in-list bindings)])
+                             (expr-has-await? (let-binding-value b)))
+                           (contains-await? body)))
      (define loop-names (apply append (map (lambda (b) (names-from-binding-target (let-binding-name b))) bindings)))
      (define bind-names
        (for/list ([b (in-list bindings)])
@@ -965,7 +968,9 @@
        (lambda ()
          (define body-str
            (string-join (map (lambda (e) (emit-loop-stmt e bind-names)) body) "\n    "))
-         (format "(() => { ~a while (true) {\n    ~a\n  } })()"
+         (define prefix (if has-await "async " ""))
+         (format "(~a() => { ~a while (true) {\n    ~a\n  } })()"
+                 prefix
                  (string-join bind-strs " ")
                  body-str)))]
 
@@ -1509,6 +1514,8 @@
          (and (if-form-else-expr e) (expr-contains-recur? (if-form-else-expr e))))]
     [(let-form? e)
      (body-contains-recur? (let-form-body e))]
+    [(do-form? e)
+     (body-contains-recur? (do-form-body e))]
     [(cond-form? e)
      (for/or ([c (in-list (cond-form-clauses e))])
        (body-contains-recur? (cond-clause-body c)))]
@@ -1569,6 +1576,12 @@
            [else
             (format "if (~a) { ~a }" (emit-expr test) body-str)])))
      (string-join parts " else ")]
+    [(and (do-form? e) (body-contains-recur? (do-form-body e)))
+     (define exprs (do-form-body e))
+     (define stmts (drop-right exprs 1))
+     (define last-e (last exprs))
+     (define side-strs (map emit-expr-stmt stmts))
+     (format "~a ~a" (string-join side-strs " ") (emit-loop-stmt last-e bind-names))]
     [(recur-form? e)
      (emit-recur-stmts e bind-names)]
     [else
