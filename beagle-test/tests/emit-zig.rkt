@@ -171,6 +171,44 @@
   (check-true (regexp-match? #rx"rt.tick" out))
   (check-false (regexp-match? #rx"kernel" out)))
 
+;; --- higher-order, monomorphized to flat loops (the typed lowering) ----------
+
+(define (ho-emit body)
+  (compile-zig-string
+   (string-append "(ns g)\n(defn f [ctx :- Ctx xs :- (Vec Int)] :- " body ")")))
+
+(test-case "reduce: fn inlined into a flat fold, no allocation, no fn value"
+  (define out (ho-emit "Int\n  (reduce (fn [acc :- Int x :- Int] :- Int (+ acc x)) 0 xs)"))
+  (check-true  (regexp-match? #rx"var acc: i64 = 0" out))   ; typed, not comptime_int
+  (check-true  (regexp-match? #rx"for " out))               ; flat loop
+  (check-true  (regexp-match? #rx"acc = .acc . x." out))    ; fold step, fn erased
+  (check-false (regexp-match? #rx"alloc" out))              ; reduce folds, no alloc
+  (check-false (regexp-match? #rx"rt.reduce" out)))         ; not a runtime HOF call
+
+(test-case "mapv: fn inlined, output allocated in the tick arena, elem type from :- U"
+  (define out (ho-emit "(Vec Int)\n  (mapv (fn [x :- Int] :- Int (* x 2)) xs)"))
+  (check-true  (regexp-match? #rx"ctx.tick.alloc.i64" out)) ; elem type from :- Int
+  (check-true  (regexp-match? #rx"= .x . 2." out))          ; body inlined
+  (check-false (regexp-match? #rx"rt.mapv" out)))
+
+(test-case "filterv: fn inlined, predicate in the loop, kept-count slice"
+  (define out (ho-emit "(Vec Int)\n  (filterv (fn [x :- Int] :- Bool (> x 0)) xs)"))
+  (check-true (regexp-match? #rx"std.meta.Elem" out))       ; elem type inferred
+  (check-true (regexp-match? #rx"if ..x > 0." out))         ; predicate inlined
+  (check-true (regexp-match? #rx"__n" out))                 ; kept-count
+  (check-false (regexp-match? #rx"rt.filterv" out)))
+
+(test-case "higher-order needs an annotated accumulator/return (typed lowering)"
+  ;; reduce without an acc type can't pick a non-comptime_int var type
+  (check-exn (lambda (e) (regexp-match? #rx"reduce accumulator" (exn-message e)))
+             (lambda () (ho-emit "Int\n  (reduce (fn [acc x] (+ acc x)) 0 xs)"))))
+
+(when ZIG
+  (test-case "monomorphized higher-order compiles as zig"
+    (check-true (zig-compiles?
+                 (ho-emit "Int\n  (reduce (fn [acc :- Int x :- Int] :- Int (+ acc x)) 0 xs)")
+                 "ho-reduce"))))
+
 ;; --- Phase 2: world-escape check + promote ------------------------------------
 
 (define-syntax-rule (check-escape name rx src)

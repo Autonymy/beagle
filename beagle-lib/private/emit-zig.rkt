@@ -235,6 +235,28 @@
       (emit-expr (car body))
       (emit-block-expr '() body)))
 
+;; Inline a fn-literal's body as an expression. Its params are emitted
+;; as their own idents, so the caller binds matching loop vars (capture
+;; / accumulator) and the body references them directly — this is the
+;; monomorphization: the function is erased into the loop, no value, no
+;; call. Optional-typed params unwrap like any other binding.
+(define (fn-literal-params fn who arity)
+  (define ps (fn-form-params fn))
+  (when (fn-form-rest-param fn) (unsupported (format "~a fn variadic" who)))
+  (for ([p (in-list ps)])
+    (unless (param? p) (unsupported (format "~a fn destructuring param" who))))
+  (unless (= (length ps) arity)
+    (unsupported (format "~a fn arity" who) (format "expected ~a param(s)" arity)))
+  ps)
+
+(define (emit-inlined-fn-body fn)
+  (define opt-params
+    (for/list ([p (in-list (fn-form-params fn))]
+               #:when (and (param-type p) (optional-of (param-type p))))
+      (param-name p)))
+  (parameterize ([current-optionals (append opt-params (current-optionals))])
+    (emit-body-expr (fn-form-body fn))))
+
 ;; let/do as a labeled block expression.
 (define (emit-block-expr bindings body)
   (define lbl (fresh-label))
@@ -327,6 +349,51 @@
      (define other (if (eq? (car args) 'nil) (cadr args) (car args)))
      (define raw (parameterize ([raw-optional? #t]) (emit-expr other)))
      (format "(~a ~a null)" raw (if (eq? fn '=) "==" "!="))]
+    ;; --- higher-order seq ops, monomorphized to flat loops ----------------
+    ;; The fn argument is INLINED, not passed as a value. This is the typed
+    ;; lowering: terse (mapv f xs) / (reduce f init xs) becomes a flat,
+    ;; zero-cost native loop with the abstraction compiled away.
+    [(and (eq? fn 'reduce) (= 3 (length args)) (fn-form? (car args)))
+     (define f (car args))
+     (define ps (fn-literal-params f "reduce" 2))
+     (define acc (ident (param-name (car ps))))
+     (define acc-t (param-type (car ps)))
+     (unless acc-t
+       (unsupported "reduce accumulator" "annotate it: (reduce (fn [acc :- T x ...] ...) ...)"))
+     (define x (ident (param-name (cadr ps))))
+     (define lbl (fresh-label))
+     ;; (reduce (fn [acc x] body) init coll) — fold, no allocation. acc is
+     ;; typed from its annotation so the init literal isn't comptime_int.
+     (format "~a: { var ~a: ~a = ~a; for (~a) |~a| { ~a = ~a; } break :~a ~a; }"
+             lbl acc (type->zig acc-t) (emit-expr (cadr args)) (emit-expr (caddr args))
+             x acc (emit-inlined-fn-body f) lbl acc)]
+    [(and (eq? fn 'mapv) (= 2 (length args)) (fn-form? (car args)))
+     (define f (car args))
+     (define ps (fn-literal-params f "mapv" 1))
+     (define ret (fn-form-return-type f))
+     (unless ret
+       (unsupported "mapv fn return" "annotate it: (mapv (fn [x :- T] :- U ...) xs)"))
+     (define x (ident (param-name (car ps))))
+     (define lbl (fresh-label))
+     ;; output allocated in the tick arena; element type from the fn's :- U.
+     (format (string-append "~a: { const __src = ~a; const __out = "
+                            "ctx.tick.alloc(~a, __src.len) catch @panic(\"oom\"); "
+                            "for (__src, 0..) |~a, __i| { __out[__i] = ~a; } "
+                            "break :~a __out; }")
+             lbl (emit-expr (cadr args)) (type->zig ret) x
+             (emit-inlined-fn-body f) lbl)]
+    [(and (eq? fn 'filterv) (= 2 (length args)) (fn-form? (car args)))
+     (define f (car args))
+     (define ps (fn-literal-params f "filterv" 1))
+     (define x (ident (param-name (car ps))))
+     (define lbl (fresh-label))
+     ;; output sized to the input (max), element type via @TypeOf — same
+     ;; type as input, so no annotation needed; sliced to the kept count.
+     (format (string-append "~a: { const __src = ~a; const __out = "
+                            "ctx.tick.alloc(std.meta.Elem(@TypeOf(__src)), __src.len) catch @panic(\"oom\"); "
+                            "var __n: usize = 0; for (__src) |~a| { if (~a) { __out[__n] = ~a; __n += 1; } } "
+                            "break :~a __out[0..__n]; }")
+             lbl (emit-expr (cadr args)) x (emit-inlined-fn-body f) x lbl)]
     [(hash-ref VARIADIC-OPS fn #f)
      => (lambda (op)
           (when (null? args) (unsupported (format "(~a) with no arguments" fn)))
@@ -441,8 +508,12 @@
   (cond
     [(symbol? e) (cons e acc)]
     [(call-form? e)
-     (for/fold ([a (refs-of (call-form-fn e) acc)]) ([x (in-list (call-form-args e))])
+     ;; mapv/filterv monomorphize to a loop that allocates via ctx.tick,
+     ;; so they reference ctx even though it isn't a written argument.
+     (define base (if (memq (call-form-fn e) '(mapv filterv)) (cons 'ctx acc) acc))
+     (for/fold ([a (refs-of (call-form-fn e) base)]) ([x (in-list (call-form-args e))])
        (refs-of x a))]
+    [(fn-form? e) (for/fold ([a acc]) ([x (in-list (fn-form-body e))]) (refs-of x a))]
     [(kw-access? e) (refs-of (kw-access-target e)
                              (if (kw-access-default e)
                                  (refs-of (kw-access-default e) acc)
