@@ -550,17 +550,24 @@
 ;; --- constructor emission ---------------------------------------------------
 
 (define (emit-ctor rec args)
-  (define fields (hash-ref (current-records) rec
-                           (lambda () (unsupported "constructor for unknown record" rec))))
-  (unless (= (length fields) (length args))
-    (unsupported "constructor arity"
-                 (format "->~a expects ~a fields" rec (length fields))))
-  (format "~a{ ~a }" (ident rec)
-          (string-join
-           (for/list ([f (in-list fields)] [a (in-list args)])
-             (format ".~a = ~a" (ident (param-name f))
-                     (emit-typed-value a (param-type f))))
-           ", ")))
+  (define fields (hash-ref (current-records) rec #f))
+  (cond
+    [(and (null? args) (not fields))
+     (format "~a{}" (ident rec))]
+    [(not fields)
+     (unsupported "constructor for unknown record" rec)]
+    [(null? args)
+     (format "~a{}" (ident rec))]
+    [else
+     (unless (= (length fields) (length args))
+       (unsupported "constructor arity"
+                    (format "->~a expects ~a fields" rec (length fields))))
+     (format "~a{ ~a }" (ident rec)
+             (string-join
+              (for/list ([f (in-list fields)] [a (in-list args)])
+                (format ".~a = ~a" (ident (param-name f))
+                        (emit-typed-value a (param-type f))))
+              ", "))]))
 
 ;; --- calls -------------------------------------------------------------------
 
