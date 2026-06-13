@@ -34,13 +34,15 @@
      (string-replace
       (string-replace
        (string-replace
-        (string-replace s "_" "__")
-        "-" "_")
-       "?" "_p")
-      "!" "_bang")
-     "=" "_eq")
-    ">" "_gt")
-   "<" "_lt"))
+        (string-replace
+         (string-replace s "_" "__")
+         "-" "_")
+        "?" "_p")
+       "!" "_bang")
+      "=" "_eq")
+     ">" "_gt")
+    "<" "_lt")
+   "%" "_pct"))
 
 (define (mangle-prop s)
   (string-replace s "-" "_"))

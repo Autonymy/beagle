@@ -18,6 +18,7 @@
          "stdlib-cljs.rkt"
          "stdlib-bb.rkt"
          "stdlib-js.rkt"
+         "stdlib-odin.rkt"
          "dormant/stdlib-sql.rkt"
          "dormant/stdlib-py.rkt")
 
@@ -53,7 +54,7 @@
     [(py)       stdlib-py-combined]
     [(rkt)      STDLIB-PORTABLE]
     [(zig)      STDLIB-PORTABLE]
-    [(odin)     STDLIB-PORTABLE]
+    [(odin)     (merge-hashes STDLIB-PORTABLE STDLIB-ODIN)]
     [else (error 'stdlib-for-target "unknown target: ~a" target)]))
 
 ;; Every bb-runtime entry is JVM/bb-only — excluded from cljs wholesale.
@@ -75,5 +76,6 @@
          STDLIB-PORTABLE STDLIB-CLJ STDLIB-CLJS STDLIB-BB CLJ-EXCLUDE
          STDLIB-JS JS-NO-EMIT
          STDLIB-NIX
+         STDLIB-ODIN
          STDLIB-SQL
          STDLIB-PY)
