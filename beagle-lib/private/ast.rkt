@@ -442,6 +442,7 @@
                  imported-symbol-ns
                  imported-union-members
                  imported-parametric-unions
+                 imported-enums
                  target
                  gen-class?)
   #:transparent)

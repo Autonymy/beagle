@@ -136,11 +136,15 @@
        (define h2 (if (type-fn-rest-type t) (walk (type-fn-rest-type t) module h1) h1))
        (walk (type-fn-ret t) module h2)]
       [else h]))
+  (define self-ns (and (program-namespace prog) (symbol->string (program-namespace prog))))
   (for/fold ([h (hasheq)]) ([(name t) (in-hash (program-externs prog))])
     (define s (symbol->string name))
     (define m (regexp-match #rx"^([^/]+)/(.+)$" s))
     (cond
       [(not m) h]
+      ;; Same-ns sibling (same Odin package): its types are local, referenced
+      ;; unqualified — not opaque cross-module handles.
+      [(and self-ns (string=? (cadr m) self-ns)) h]
       [else
        (define module (extern-ns->module (cadr m)))
        (if (string=? module "rt") h (walk t module h))])))
@@ -1235,11 +1239,14 @@
         [(def-form? f) (refs-of (def-form-value f) acc)]
         [(defn-form? f) (for/fold ([a acc]) ([e (in-list (defn-form-body f))]) (refs-of e a))]
         [else acc])))
+  (define self-ns (and (program-namespace prog) (symbol->string (program-namespace prog))))
   (define mods
     (for/list ([sym (in-list (reverse refs))]
                #:when (and (symbol? sym) (hash-has-key? externs sym))
                #:do [(define m (regexp-match #rx"^([^/]+)/(.+)$" (symbol->string sym)))]
                #:when m
+               ;; Same-ns sibling lives in the same Odin package — no import.
+               #:unless (and self-ns (string=? (cadr m) self-ns))
                #:do [(define mod (extern-ns->module (cadr m)))]
                #:unless (string=? mod "rt"))
       mod))

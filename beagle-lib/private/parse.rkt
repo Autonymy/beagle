@@ -281,7 +281,8 @@
                               #:scalar-preds [imp-scalar-preds #f]
                               #:symbol-ns [imp-symbol-ns #f]
                               #:union-members [imp-union-members #f]
-                              #:parametric-unions [imp-param-unions #f])
+                              #:parametric-unions [imp-param-unions #f]
+                              #:enums [imp-enums #f])
   (define raw-datums (read-beagle-datums mod-path))
   ;; Docstrings are surface the importer must see through, same as the
   ;; main parser: (defn name "doc" [params] ...) / (def name "doc" v) /
@@ -492,7 +493,67 @@
        (define rtype (and rest-p (or (param-type rest-p) (type-prim 'Any))))
        ;; No claim pre-pass: claim is gone. Bare defn imports infer ANY return.
        (defn-reg! name (type-fn ptypes rtype (type-prim 'Any)))]
+      ;; Enum: register the name so keyword literals type-check against it in
+      ;; the importing module (Keyword <: EnumType, types.rkt). Variants emit
+      ;; as enum-qualified members on package targets.
+      [(list* 'defenum (? symbol? name) _variants)
+       (when imp-enums (hash-set! imp-enums name #t))]
       [_ (void)]))))
+
+;; --- multi-module: same-ns sibling auto-import (package targets) -------------
+;;
+;; Package-based targets (Odin, Zig) spread one logical namespace across several
+;; files in a directory (an Odin package == a directory). When compiling file X,
+;; sibling files in the same directory that declare the same (ns N) form one
+;; module together with X: their top-level signatures are pulled into X's import
+;; tables via the same engine as an explicit (require ...). Bare cross-file calls
+;; (chunk-set, ->Chunk, terrain-height, ...) then resolve and type-check instead
+;; of degrading to "call to undefined function" notes.
+;;
+;; Invoked from the module-begin driver (real compiles only), never from the
+;; golden/parse-only test paths which call parse-program directly. Mutates the
+;; program's (mutable) extern/import hashes in place — see parse-program, where
+;; those hashes are stored into the struct by reference. Never raises: a sibling
+;; that fails to read/parse warns and is skipped (it surfaces its own errors when
+;; compiled on its own).
+
+;; Cheap datum-level scan: does file `f` declare exactly (ns target-ns)?
+(define (file-declares-ns? f target-ns)
+  (with-handlers ([exn:fail? (lambda (_e) #f)])
+    (for/or ([d (in-list (read-beagle-datums f))])
+      (match d
+        [(list* 'ns (? symbol? n) _) (eq? n target-ns)]
+        [_ #f]))))
+
+(define (import-same-ns-siblings! prog source-path)
+  (define ns (program-namespace prog))
+  (when (and source-path ns (not (eq? ns DEFAULT-NAMESPACE)))
+    (define self (simplify-path
+                  (path->complete-path
+                   (if (path? source-path) source-path (string->path source-path)))))
+    (define-values (dir _name _dir?) (split-path self))
+    (when (path? dir)
+      (for ([f (in-list (directory-list dir #:build? #t))])
+        (when (and (file-exists? f)
+                   (beagle-source-file? (path->string f))
+                   (not (equal? (simplify-path (path->complete-path f)) self))
+                   (file-declares-ns? f ns))
+          (with-handlers ([exn:fail?
+                           (lambda (e)
+                             (eprintf "warning: sibling type import from ~a failed: ~a\n"
+                                      f (exn-message e)))])
+            (import-module-types! f ns
+                                  (program-externs prog)
+                                  (program-macros prog)
+                                  (program-imported-record-fields prog)
+                                  (program-imported-record-field-order prog)
+                                  (program-imported-record-ns prog)
+                                  ns
+                                  #:scalar-preds (program-imported-scalar-preds prog)
+                                  #:symbol-ns (program-imported-symbol-ns prog)
+                                  #:union-members (program-imported-union-members prog)
+                                  #:parametric-unions (program-imported-parametric-unions prog)
+                                  #:enums (program-imported-enums prog))))))))
 
 ;; --- reader-conditional resolution ----------------------------------------
 ;;
@@ -693,6 +754,7 @@
   (define imp-symbol-ns (make-hash))
   (define imp-union-members (make-hash))
   (define imp-param-unions (make-hash))
+  (define imp-enums (make-hash))
 
   ;; Shared require registration: resolve sibling beagle modules for type
   ;; import, then record the require-entry. Used by the top-level
@@ -987,7 +1049,7 @@
   (define form-stxs (map cdr pairs))
 
   (define prog
-    (program mode ns parsed registry externs (reverse requires) (reverse imports) form-stxs src-table imp-rec-fields imp-rec-field-order imp-rec-ns (hash-keys imp-scalar-fns) imp-scalar-preds imp-symbol-ns imp-union-members imp-param-unions target gen-class?))
+    (program mode ns parsed registry externs (reverse requires) (reverse imports) form-stxs src-table imp-rec-fields imp-rec-field-order imp-rec-ns (hash-keys imp-scalar-fns) imp-scalar-preds imp-symbol-ns imp-union-members imp-param-unions imp-enums target gen-class?))
   ;; Stash the macro-derived-table keyed by the program so check.rkt
   ;; can recover it via program-macro-derived-table after this call
   ;; returns and the parameterize unwinds.
@@ -3296,6 +3358,7 @@
  (all-from-out "parse-js-quote.rkt")
  (all-from-out "parse-sql.rkt")
  parse-program
+ import-same-ns-siblings!
  read-beagle-datums
  read-beagle-syntax
  parse-params

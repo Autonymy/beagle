@@ -512,6 +512,10 @@
   ;; parametric unions imported from other modules (for match narrowing with type-param substitution)
   (for ([(union-name pdef) (in-hash (program-imported-parametric-unions prog))])
     (hash-set! PARAMETRIC-UNIONS union-name pdef))
+  ;; enums imported from sibling modules — register the name so keyword
+  ;; literals type-check against the enum (Keyword <: EnumType, types.rkt).
+  (for ([(enum-name _) (in-hash (program-imported-enums prog))])
+    (hash-set! ENUM-TYPES enum-name #t))
 
   ;; --- def/defn/defonce pre-pass --------------------------------------------
   ;;
@@ -2466,7 +2470,19 @@
       (for/list ([a (in-list rest-args)] [i (in-naturals (+ n-fixed 1))])
         (check-one-arg fn-name fn-type i rest-t a env call-src)))]
     [else
-     (unless (= n-fixed n-args)
+     ;; Package targets (Odin, Zig) render records as struct literals, where
+     ;; partial / zero-value construction is idiomatic: (->Chunk) → Chunk{},
+     ;; (->Color r) → Color{r=r}. Allow a record constructor (->Name) to take
+     ;; 0..n-fixed args on those targets; the emitter fills the remaining
+     ;; fields with the struct's zero value. Too many args is still an error.
+     (define record-ctor-partial?
+       (and (memq (current-check-target) '(odin zig))
+            (let ([s (symbol->string fn-name)])
+              (and (>= (string-length s) 3)
+                   (char=? (string-ref s 0) #\-)
+                   (char=? (string-ref s 1) #\>)))
+            (<= n-args n-fixed)))
+     (unless (or record-ctor-partial? (= n-fixed n-args))
        (define help
          (cond
            [(> n-args n-fixed)

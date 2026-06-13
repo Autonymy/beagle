@@ -5,6 +5,9 @@
 
 (define STDLIB-ODIN
   (hash
+   ;; address-of — (addr x) → &x. Partner of `deref` (stdlib-portable). Odin
+   ;; pointers; typed loosely like deref since the Ptr payload flows as Any.
+   'addr   (fn-of '(Any) 'Any)
    ;; type casts — (f32 x), (u8 x), etc.
    'f32   (fn-of '(Number) 'F32)
    'f64   (fn-of '(Number) 'Float)
