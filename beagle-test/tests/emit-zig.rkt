@@ -35,6 +35,20 @@
   (let-values ([(dir _n _d?) (split-path (syntax-source #'here))])
     (simplify-path (build-path dir 'up 'up "beagle-lib" "zig" "beagle_rt.zig"))))
 
+;; Non-core runtime modules (los_rt, los_yaml, ...) lower to their OWN
+;; `@import("X.zig")` (Phase 1). The golden compile check copies a
+;; self-contained stand-in for each from fixtures/zig-support/ so it stays
+;; independent of the los-bb application repo.
+(define support-dir (simplify-path (build-path fixtures-dir 'up "zig-support")))
+
+;; modules referenced by the emitted source via @import("X.zig"), minus
+;; std and the core prelude (which are copied/builtin separately).
+(define (emitted-support-modules zig-src)
+  (for/list ([m (in-list (regexp-match* #rx"@import\\(\"([a-z0-9_]+)\\.zig\"\\)" zig-src
+                                        #:match-select cadr))]
+             #:unless (member m '("beagle_rt")))
+    m))
+
 (define bless? (and (getenv "BEAGLE_ZIG_BLESS") #t))
 
 (define (compile-zig-src src-path)
@@ -71,6 +85,10 @@
     void
     (lambda ()
       (copy-file kernel-rt (build-path dir "beagle_rt.zig"))
+      (for ([mod (in-list (emitted-support-modules zig-src))])
+        (define support (build-path support-dir (format "~a.zig" mod)))
+        (when (file-exists? support)
+          (copy-file support (build-path dir (format "~a.zig" mod)))))
       (define f (build-path dir (format "~a.zig" name)))
       (call-with-output-file f (lambda (p) (display zig-src p)))
       (define out (open-output-string))
@@ -158,18 +176,35 @@
   #rx"qualified"
   "(ns g)\n(require some.random.lib :as q)\n(defn f [s :- String] :- String (q/frobnicate s))")
 
-(test-case "extern: a declared extern resolves to the rt prelude (any namespace)"
-  ;; The runtime-namespace is the author's choice via declare-extern; the
-  ;; backend doesn't hardcode one. host.rt/draw and lib/tick both land on rt.
+(test-case "extern: core namespaces land on rt; everything else gets its own module"
+  ;; Phase 1: a declared-extern namespace lowers to a MODULE. Core
+  ;; namespaces (clojure.*, babashka.*, kernel.rt) stay on the `rt`
+  ;; prelude; any other namespace lowers to its own module — namespace
+  ;; with '.'→'_' — with a matching @import header. So kernel.rt/draw →
+  ;; rt.draw (no @import beyond beagle_rt), but app.rt/tick → app_rt.tick
+  ;; behind const app_rt = @import("app_rt.zig").
   (define out (compile-zig-string
                (string-append
                 "(ns g)\n"
-                "(declare-extern host.rt/draw [Int -> Int])\n"
-                "(declare-extern lib/tick [Int -> Int])\n"
-                "(defn f [x :- Int] :- Int (lib/tick (host.rt/draw x)))")))
-  (check-true (regexp-match? #rx"rt.draw" out))
-  (check-true (regexp-match? #rx"rt.tick" out))
-  (check-false (regexp-match? #rx"kernel" out)))
+                "(declare-extern kernel.rt/draw [Int -> Int])\n"
+                "(declare-extern app.rt/tick [Int -> Int])\n"
+                "(defn f [x :- Int] :- Int (app.rt/tick (kernel.rt/draw x)))")))
+  (check-true (regexp-match? #rx"rt.draw" out))          ; kernel.rt → core rt
+  (check-true (regexp-match? #rx"app_rt.tick" out))       ; app.rt → own module
+  (check-true (regexp-match? #rx"const app_rt = @import\\(\"app_rt.zig\"\\);" out))
+  (check-false (regexp-match? #rx"const kernel" out)))    ; kernel.rt NOT split
+
+(test-case "los.rt and los.yaml each lower to their own module + @import"
+  (define out (compile-zig-string
+               (string-append
+                "(ns g)\n"
+                "(declare-extern los.rt/slugify [String -> String])\n"
+                "(declare-extern los.yaml/parse [String -> Any])\n"
+                "(defn f [s :- String] :- String (los.rt/slugify s))")))
+  (check-true (regexp-match? #rx"los_rt.slugify" out))
+  (check-true (regexp-match? #rx"const los_rt = @import\\(\"los_rt.zig\"\\);" out))
+  ;; los.yaml is declared but never CALLED → no spurious import.
+  (check-false (regexp-match? #rx"los_yaml" out)))
 
 ;; --- higher-order, monomorphized to flat loops (the typed lowering) ----------
 

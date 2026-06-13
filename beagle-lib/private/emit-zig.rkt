@@ -114,10 +114,27 @@
 (define current-externs (make-parameter (hasheq))) ; declared-extern name → type
 (define current-requires (make-parameter (hasheq))) ; alias sym → namespace sym
 
-;; require'd namespaces the zig runtime prelude provides — a qualified
-;; call through one of these aliases lowers to rt.<fn> (the CLI runtime
-;; in beagle_rt.zig). Everything else qualified stays rejected.
+;; Namespaces the CORE prelude (beagle_rt.zig, imported as `rt`)
+;; provides directly: the clojure/babashka stdlib the CLI runtime
+;; implements, plus the game's kernel.rt (NOT split this phase — left on
+;; `rt` so the game stays untouched). A qualified call through one of
+;; these (or a require'd alias of one of the clojure.* ones) lowers to
+;; rt.<fn>. Everything else qualified resolves to its OWN Zig module
+;; (see extern-ns->module) — los.rt → los_rt, los.yaml → los_yaml — so
+;; an application's runtime is separate from beagle's core prelude.
 (define ZIG-RUNTIME-NAMESPACES '(clojure.string babashka.fs clojure.set))
+(define ZIG-CORE-NAMESPACES '(clojure.string babashka.fs clojure.set kernel.rt))
+
+;; A qualified namespace → the Zig module that provides it. Core
+;; namespaces (clojure.*, babashka.*, kernel.rt) live in the `rt` prelude;
+;; any other namespace declared as an extern gets its own module, named by
+;; replacing '.' with '_' (los.rt → los_rt, los.yaml → los_yaml). This is
+;; how a declared-extern application runtime stays OUT of beagle's core
+;; prelude.
+(define (extern-ns->module ns-str)
+  (if (memq (string->symbol ns-str) ZIG-CORE-NAMESPACES)
+      "rt"
+      (string-replace ns-str "." "_")))
 (define current-optionals (make-parameter '())) ; binding syms with ?T types
 (define current-loop-bindings (make-parameter #f)) ; (listof ident-string) for recur
 (define label-counter (make-parameter (box 0)))
@@ -375,18 +392,20 @@
 ;; --- calls ------------------------------------------------------------------------
 
 (define (qualified-rt-name sym)
-  ;; A qualified call lowers to the runtime prelude (imported as `rt`)
-  ;; iff it was declared as an extern — the zig backend has no module
-  ;; system, so the prelude is the only place a qualified name can
-  ;; resolve, and `declare-extern` is the author's statement that this
-  ;; name is provided there. Also resolved: a require'd alias of a known
-  ;; runtime namespace (clojure.string, babashka.fs) — its fns live in the
-  ;; prelude's CLI runtime. Any other qualified call is rejected.
+  ;; A qualified call lowers to a Zig module iff it was declared as an
+  ;; extern (declare-extern is the author's statement that this name is
+  ;; provided) OR it is a require'd alias of a known clojure.* runtime
+  ;; namespace. The MODULE it resolves to is namespace-driven (see
+  ;; extern-ns->module): core namespaces land on the `rt` prelude;
+  ;; everything else lands on its own module (los.rt → los_rt.<fn>), so
+  ;; an application runtime stays separate from beagle's core. Any other
+  ;; qualified call is rejected.
   (define s (symbol->string sym))
   (define m (regexp-match #rx"^([^/]+)/(.+)$" s))
   (cond
     [(not m) #f]
-    [(hash-has-key? (current-externs) sym) (format "rt.~a" (rt-fn-name (caddr m)))]
+    [(hash-has-key? (current-externs) sym)
+     (format "~a.~a" (extern-ns->module (cadr m)) (rt-fn-name (caddr m)))]
     [(memq (hash-ref (current-requires) (string->symbol (cadr m)) #f)
            ZIG-RUNTIME-NAMESPACES)
      (format "rt.~a" (rt-fn-name (caddr m)))]
@@ -1032,6 +1051,28 @@
                                                              (caddr spec))))])
         piece))]))
 
+;; The non-core Zig modules a program ACTUALLY references: walk every
+;; top-level form's body, collect the qualified symbols that are declared
+;; externs (so they resolve to a module), keep the ones whose namespace
+;; maps to something other than the core `rt` prelude. Returns the distinct
+;; module names in first-appearance order (deterministic emit).
+(define (referenced-extern-modules prog externs)
+  (define refs
+    (for/fold ([acc '()]) ([f (in-list (program-forms prog))])
+      (cond
+        [(def-form? f) (refs-of (def-form-value f) acc)]
+        [(defn-form? f) (for/fold ([a acc]) ([e (in-list (defn-form-body f))]) (refs-of e a))]
+        [else acc])))
+  (define mods
+    (for/list ([sym (in-list (reverse refs))]
+               #:when (and (symbol? sym) (hash-has-key? externs sym))
+               #:do [(define m (regexp-match #rx"^([^/]+)/(.+)$" (symbol->string sym)))]
+               #:when m
+               #:do [(define mod (extern-ns->module (cadr m)))]
+               #:unless (string=? mod "rt"))
+      mod))
+  (remove-duplicates mods))
+
 (define (zig-emit-program prog)
   (parameterize ([current-records (build-record-table prog)]
                  [current-externs (program-externs prog)]
@@ -1052,10 +1093,14 @@
            [else (unsupported (format "top-level form ~a" f))]))
        (emit-promote prog)
        (emit-engine prog)))
+    (define extern-imports
+      (for/list ([mod (in-list (referenced-extern-modules prog (program-externs prog)))])
+        (format "const ~a = @import(\"~a.zig\");\n" mod mod)))
     (string-append
      "// generated by beagle (zig backend) — do not edit\n"
      "const std = @import(\"std\");\n"
      "const rt = @import(\"beagle_rt.zig\");\n"
+     (apply string-append extern-imports)
      "pub const Ctx = rt.Ctx;\n\n"
      (string-join decls "\n\n")
      "\n")))
