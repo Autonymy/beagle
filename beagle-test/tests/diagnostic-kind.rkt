@@ -9,6 +9,7 @@
          beagle/private/diagnostic-kind
          beagle/private/parse
          beagle/private/check
+         beagle/private/check-all
          beagle/private/validate-nix)
 
 ;; ============================================================================
@@ -390,3 +391,23 @@
     (check-pred hash? s (format "no suggestion for ~a" form))
     (check-equal? (hash-ref s 'from) (cadr triple)  (format "from mismatch for ~a" form))
     (check-equal? (hash-ref s 'to)   (caddr triple) (format "to mismatch for ~a" form))))
+
+(test-case "replace-head suggestion rides the check-all JSON error stream"
+  ;; Producer guard (the half struct-level tests miss): diagnostic->json must
+  ;; preserve the parse-error's REAL kind AND fold its machine-applicable
+  ;; suggestion into the emitted JSON object — not collapse it to a generic
+  ;; "compile-error", which strands the fix and forces beagle-repair to
+  ;; re-derive it from the prose message.
+  (define e
+    (with-handlers ([beagle-parse-error? values])
+      (parse-program (list (datum->syntax #f '(assert c b))))
+      'no-error-raised))
+  (check-pred beagle-parse-error? e)
+  (define j (diagnostic->json e #f "test.bclj"))
+  (check-pred jsexpr? j)
+  (check-equal? (hash-ref j 'kind) "bare-nix-form"
+                "parse-error JSON must keep its real kind, not collapse to compile-error")
+  (define s (hash-ref j 'suggestion #f))
+  (check-pred hash? s "suggestion must be folded into the JSON object")
+  (check-equal? (hash-ref s 'type) "replace-head")
+  (check-equal? (hash-ref s 'to) "nix/assert"))

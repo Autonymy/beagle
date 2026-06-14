@@ -289,6 +289,27 @@
          (hash-set with-details 'fix_plan plan)
          with-details)]
 
+    [(beagle-parse-error? e)
+     ;; Structured parse-time rejection (raise-parse-error). Preserve its real
+     ;; kind and fold its details — cause, phase, and crucially any
+     ;; machine-applicable `suggestion` (e.g. replace-head) — into the JSON,
+     ;; exactly as the beagle-diagnostic path does, so tools like beagle-repair
+     ;; can auto-apply the fix instead of re-deriving it from prose. The bare
+     ;; `else` below collapses these to a generic compile-error and drops both.
+     (define d (beagle-parse-error-details e))
+     (define src-line (and stx-file stx-line (read-source-line stx-file stx-line)))
+     (define base
+       (hasheq 'schemaVersion 1
+               'tool "beagle"
+               'kind (symbol->string (beagle-parse-error-kind e))
+               'file (or stx-file 'null)
+               'line (or stx-line 'null)
+               'col (or col 'null)
+               'message (exn-message e)
+               'source_line (or src-line 'null)))
+     (for/fold ([h base]) ([(k v) (in-hash d)])
+       (hash-set h (if (symbol? k) k (string->symbol k)) v))]
+
     [else
      (define src-line (and stx-file stx-line (read-source-line stx-file stx-line)))
      (hasheq 'schemaVersion 1
@@ -474,4 +495,4 @@
 
   (exit (if (zero? total-errors) 0 1)))
 
-(provide run-check-all generate-fix-plan)
+(provide run-check-all generate-fix-plan diagnostic->json)

@@ -9,7 +9,7 @@
 #
 # Evidence layers (in confidence order):
 #   1. specfix-verified: oracle confirms the fix works (0.95)
-#   2. type-error + suggestion: mechanical fix from checker (0.90)
+#   2. pointed-replacement: deterministic head-rename suggestion from parser (0.95)
 #   3. type-error + fix-plan: structured repair hint (0.85)
 #   4. trace + semantic agreement: traced op matches name rule (0.80)
 #   5. semantic suspicion alone (0.65)
@@ -177,6 +177,27 @@ if os.path.exists(check_file):
                     'after': None,
                     'evidence': ['type-checker'],
                     'auto_applicable': False,
+                })
+
+            elif isinstance(d.get('suggestion'), dict) and d['suggestion'].get('type') == 'replace-head':
+                # Machine-applicable pointed-replacement from the parser
+                # (replace-head suggestion). A deterministic head-rename authored
+                # by the compiler — no heuristic — so it auto-applies precisely.
+                # Parse-time rejections carry no line, so the apply path is
+                # head-anchored (scans for the offending '(' + head symbol).
+                sug = d['suggestion']
+                repairs.append({
+                    'confidence': 0.95,
+                    'file': d.get('file', '?'),
+                    'line': d.get('line') or '?',
+                    'category': 'pointed-replacement',
+                    'description': sug.get('label') or d.get('message', ''),
+                    'fix_hint': sug.get('label', ''),
+                    'before': sug.get('from'),
+                    'after': sug.get('to'),
+                    'evidence': ['type-checker', 'structured-suggestion', f"kind:{d.get('kind', '?')}"],
+                    'auto_applicable': True,
+                    '_replace_head': True,
                 })
 
 # --- Parse specfix output ---
@@ -480,6 +501,31 @@ def apply_fix_to_lines(lines, repair):
     """Apply a single repair to a list of lines (mutates). Returns True on success."""
     before = repair.get('before')
     after = repair.get('after')
+
+    # Structured head-rename (replace-head suggestion from the checker): rename
+    # the form's HEAD symbol precisely — `(assert ...)` -> `(nix/assert ...)` —
+    # anchored to a '(' and a token boundary so it never touches `(assert-foo`
+    # or a bare `assert` used as an argument. Parse rejections carry no line, so
+    # try the known line first (if any), then scan; first head-position hit wins
+    # (a parse error aborts the file at the first bad form, so there is just one).
+    if repair.get('_replace_head') and before and after:
+        symcls = r'A-Za-z0-9_?!<>*+/.\-'
+        head_rx = re.compile(r'(\(\s*)' + re.escape(before) + r'(?![' + symcls + r'])')
+        def _rename_head(i):
+            new_line, n = head_rx.subn(lambda m: m.group(1) + after, lines[i], count=1)
+            if n:
+                lines[i] = new_line
+                return True
+            return False
+        line_num = repair.get('line')
+        if line_num and str(line_num).isdigit():
+            idx = int(line_num) - 1
+            if 0 <= idx < len(lines) and _rename_head(idx):
+                return True
+        for i in range(len(lines)):
+            if _rename_head(i):
+                return True
+        return False
 
     # Handle value-swap: scan source for lines containing the two values
     if repair.get('_swap_lines') and repair.get('_swap_values'):

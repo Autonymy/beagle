@@ -131,6 +131,27 @@
                   entries))]
 
          [else void])]
+      [(beagle-parse-error? e)
+       ;; Pointed-replacement rejection carrying a machine-applicable
+       ;; replace-head suggestion — a deterministic head rename (e.g.
+       ;; `(assert ...)` -> `(nix/assert ...)`). Surface it as an auto-fix.
+       (define d (beagle-parse-error-details e))
+       (define sugg (hash-ref d 'suggestion #f))
+       (when (and (hash? sugg)
+                  (equal? (hash-ref sugg 'type #f) "replace-head"))
+         (define from (hash-ref sugg 'from ""))
+         (define to (hash-ref sugg 'to ""))
+         (define stx-line (and loc-stx (syntax-line loc-stx)))
+         (set! entries
+           (cons (fix-entry path (or stx-line 0)
+                            (beagle-parse-error-kind e) "auto" "deterministic"
+                            "pointed-replacement"
+                            (hash-ref sugg 'label
+                                      (format "Replace head `~a` with `~a`" from to))
+                            (format "(~a ...)" from)
+                            (format "(~a ...)" to)
+                            from to)
+                 entries)))]
       [else void]))
 
   (for ([path (in-list files)])
