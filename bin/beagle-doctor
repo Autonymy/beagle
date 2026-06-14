@@ -62,7 +62,14 @@ check_tool() {
 }
 
 check_tool "racket" "$RACKET" "--version"
-check_tool "raco" "$RACO" "--version"
+# raco shares racket's version (same package) and `raco --version` is invalid
+# (raco is a subcommand dispatcher), so probe liveness via `raco help`.
+if "$RACO" help >/dev/null 2>&1; then
+    CHECKS+=("{\"name\":\"raco\",\"status\":\"ok\",\"message\":\"available\"}")
+else
+    STATUS="error"
+    CHECKS+=("{\"name\":\"raco\",\"status\":\"error\",\"message\":\"not found\"}")
+fi
 
 # Clojure CLI
 if command -v clj &>/dev/null; then
@@ -173,25 +180,24 @@ if [[ "$DEEP" == "1" ]]; then
 fi
 rm -rf "$DOC_WORK"
 
-# Target emitters: nix is the live happy path; clj/cljs/js/sql/py/rkt
-# are parked under beagle-lib/private/dormant/. Doctor reports them all
-# as "present" so reactivation is a path flip, not archaeology.
+# Target emitters — derived DYNAMICALLY from the authoritative target map
+# (extensions.rkt EXTENSION-TARGET-MAP) and classified by emitter location, so
+# the inventory never goes stale: live = beagle-lib/private/emit-<t>.rkt,
+# dormant = dormant/emit-<t>.rkt. A target the map declares but that has no
+# emitter is a soft warning, never a repair-loop failure. No hardcoded list.
 TARGETS=()
-for target in clj cljs js nix sql py rkt; do
-    nix_path="$BEAGLE_ROOT/beagle-lib/private/emit-${target}.rkt"
-    dormant_path="$BEAGLE_ROOT/beagle-lib/private/dormant/emit-${target}.rkt"
-    if [[ "$target" == "clj" || "$target" == "cljs" ]]; then
-        dormant_path="$BEAGLE_ROOT/beagle-lib/private/dormant/emit-clj.rkt"
-    fi
-    if [[ "$target" == "nix" && -f "$nix_path" ]]; then
+_extmap="$BEAGLE_ROOT/beagle-lib/private/extensions.rkt"
+while IFS= read -r target; do
+    [ -n "$target" ] || continue
+    if [ -f "$BEAGLE_ROOT/beagle-lib/private/emit-${target}.rkt" ]; then
         TARGETS+=("{\"name\":\"$target\",\"status\":\"live\"}")
-    elif [[ -f "$dormant_path" ]]; then
+    elif [ -f "$BEAGLE_ROOT/beagle-lib/private/dormant/emit-${target}.rkt" ]; then
         TARGETS+=("{\"name\":\"$target\",\"status\":\"dormant\"}")
     else
-        TARGETS+=("{\"name\":\"$target\",\"status\":\"error\",\"message\":\"emitter not found\"}")
-        STATUS="error"
+        TARGETS+=("{\"name\":\"$target\",\"status\":\"not-built\"}")
+        [[ "$STATUS" == "ok" ]] && STATUS="warning"
     fi
-done
+done < <(grep -oE '\.[[:space:]]+[a-z]+\)' "$_extmap" 2>/dev/null | grep -oE '[a-z]+' | sort -u)
 
 # --quiet: a healthy heartbeat says nothing. It speaks only when the REPAIR
 # LOOP degrades — not for a missing unused target emitter or a stale inventory.
@@ -247,6 +253,8 @@ else
         status=$(echo "$target" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["status"])')
         if [[ "$status" == "ok" || "$status" == "live" || "$status" == "dormant" ]]; then
             echo "  [$status]  $name"
+        elif [[ "$status" == "not-built" ]]; then
+            echo "  [warn]    $name: declared in the extension map but no emitter built"
         else
             msg=$(echo "$target" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("message",""))')
             echo "  [ERROR]   $name: $msg"
