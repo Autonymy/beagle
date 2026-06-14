@@ -70,6 +70,7 @@
              "lint.rkt"
              "macro-hygiene.rkt"
              "parse.rkt"
+             "purity.rkt"               ; `!`-purity enforcement (Phase 6, dark by default)
              "quasi-quote-reader.rkt"
              "reader-conditionals.rkt"
              "reader-shorthand.rkt"     ; #() fn shorthand (2026-06-12)

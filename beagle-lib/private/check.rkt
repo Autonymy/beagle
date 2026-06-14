@@ -39,6 +39,19 @@
           (string->number v)
           2))))
 
+;; `!`-purity enforcement (Phase 6 — design-purity.md). Seeded from
+;; BEAGLE_PURITY ('off | 'warn | 'error). Phase 6.0 ships DARK: the default
+;; is 'off, which short-circuits check-purity! entirely so the pass is inert
+;; in every build and cannot turn into a new diagnostic for the live
+;; consumers. Mirrors the BEAGLE_CHECK_PROFILE env precedent exactly. Flip on
+;; per rollout stage (warn/error) without touching consumer source.
+(define current-purity-enforcement
+  (make-parameter
+    (case (getenv "BEAGLE_PURITY")
+      [("warn")  'warn]
+      [("error") 'error]
+      [else      'off])))
+
 (define (merge-types . ts)
   (define non-any (filter (λ (t) (not (any-type? t))) ts))
   (cond
@@ -314,6 +327,7 @@
     [(template-splice)     "E016"]
     [(macro-expansion-type-error) "E017"]
     [(unresolved-alias)    "E018"]
+    [(purity-leak)         "E019"]
     [else                 "E000"]))
 
 ;; Expected/actual detail pair carrying BOTH the human strings (kept verbatim,
@@ -490,7 +504,8 @@
           (check-form form env))))
     (check-qualified-resolution! prog env)
     (check-zig-world-escape! prog)
-    (check-scalar-provenance! prog)))
+    (check-scalar-provenance! prog)
+    (check-purity! prog)))
 
 ;; --- environment -----------------------------------------------------------
 
@@ -3212,6 +3227,162 @@
   syms)
 
 
+;; --- `!`-purity enforcement (Phase 6 — design-purity.md) -------------------
+;;
+;; The operative thesis's load-bearing promise is static-reasoning recovery:
+;; "the absence of mutation markers in a piece of code means that code is
+;; functionally pure." check-purity! makes the `!`-suffix naming convention a
+;; checked invariant, one direction only and purely syntactically:
+;;
+;;   A defn/defn- whose NAME does not end in `!` must have a PURE BODY — its
+;;   body must contain no mutation marker (no set!-form, and no call whose head
+;;   is a symbol ending in `!`). If it does, that is a 'purity-leak.
+;;
+;; Intraprocedural and syntactic only: it descends let/if/do/fn/when/cond/…
+;; (an inner fn's effects still run when this function is called) but never
+;; across defn/def boundaries — those are separate definitions. No
+;; interprocedural inference, no effect rows; the converse (a `!`-named defn
+;; with a pure body) is allowed.
+;;
+;; GATING (so it never breaks the live consumers):
+;;   * mode gate    — runs only under (define-mode strict);
+;;   * env/feature flag — current-purity-enforcement, seeded from BEAGLE_PURITY,
+;;     default 'off. 'off short-circuits the whole pass: it ships DARK.
+;;   * severity is profile-keyed: profile < 3 => warn-only (never blocks the
+;;     build); profile >= 3 => hard error via raise-diag. 'off overrides both.
+
+(define (bang-name? sym)
+  (and (symbol? sym)
+       (let ([s (symbol->string sym)])
+         (and (> (string-length s) 0)
+              (char=? (string-ref s (sub1 (string-length s))) #\!)))))
+
+;; Collect every mutation marker (the symbol 'set!, or the head symbol of a
+;; `!`-headed call) lexically present in an AST subtree. Reuses the same
+;; sub-expression descent as walk-for-provenance/symbols-in so it tracks new
+;; forms automatically; it does NOT recurse across nested defn/def boundaries.
+(define (collect-markers node)
+  (define markers '())
+  (define (note! m) (set! markers (cons m markers)))
+  (define (walk e)
+    (cond
+      [(set!-form? e)
+       (note! 'set!)
+       (walk (set!-form-target e))
+       (walk (set!-form-value e))]
+      [(call-form? e)
+       (define fn (call-form-fn e))
+       (when (bang-name? fn) (note! fn))
+       (walk fn)
+       (for-each walk (call-form-args e))]
+      [(let-form? e)
+       (for ([b (in-list (let-form-bindings e))]) (walk (let-binding-value b)))
+       (for-each walk (let-form-body e))]
+      [(if-form? e)
+       (walk (if-form-cond-expr e))
+       (walk (if-form-then-expr e))
+       (when (if-form-else-expr e) (walk (if-form-else-expr e)))]
+      [(when-form? e)
+       (walk (when-form-cond-expr e))
+       (for-each walk (when-form-body e))]
+      [(do-form? e)
+       (for-each walk (do-form-body e))]
+      ;; Inner fns count — their effects execute in this function's call.
+      [(fn-form? e)
+       (for-each walk (fn-form-body e))]
+      [(cond-form? e)
+       (for ([c (in-list (cond-form-clauses e))])
+         (walk (cond-clause-test c))
+         (for-each walk (cond-clause-body c)))]
+      [(for-form? e)
+       (for ([c (in-list (for-form-clauses e))])
+         (when (for-binding? c) (walk (for-binding-expr c))))
+       (for-each walk (for-form-body e))]
+      [(doseq-form? e)
+       (for ([c (in-list (doseq-form-clauses e))])
+         (when (for-binding? c) (walk (for-binding-expr c))))
+       (for-each walk (doseq-form-body e))]
+      [(case-form? e)
+       (walk (case-form-test e))
+       (for ([c (in-list (case-form-clauses e))]) (walk (case-clause-body c)))
+       (when (case-form-default e) (walk (case-form-default e)))]
+      [(loop-form? e)
+       (for-each walk (loop-form-body e))]
+      [(match-form? e)
+       (walk (match-form-target e))
+       (for ([c (in-list (match-form-clauses e))])
+         (for-each walk (match-clause-body c)))]
+      [(try-form? e)
+       (for-each walk (try-form-body e))
+       (for ([c (in-list (try-form-catches e))]) (for-each walk (catch-clause-body c)))
+       (when (try-form-finally-body e) (for-each walk (try-form-finally-body e)))]
+      [(with-form? e)
+       (walk (with-form-target e))
+       (for ([u (in-list (with-form-updates e))]) (walk (with-update-value u)))]
+      [(vec-form? e)
+       (for-each walk (vec-form-items e))]
+      [(map-form? e)
+       (for ([p (in-list (map-form-pairs e))]) (walk (car p)) (walk (cdr p)))]
+      ;; Stop at nested definitions — those are separate (intraprocedural rule).
+      [(defn-form? e)  (void)]
+      [(defn-multi? e) (void)]
+      [(def-form? e)   (void)]
+      [(pair? e)       (for-each walk e)]
+      [else (void)]))
+  (for-each walk (if (list? node) node (list node)))
+  (remove-duplicates (reverse markers)))
+
+;; Effective severity from the two enforcement dials.
+;;   'off  flag           -> 'off  (nothing fires; the pass is dark)
+;;   'error flag          -> 'error (author pins a hard stop)
+;;   'warn  flag          -> 'warn below profile 3, escalated to 'error at >= 3
+;;                           (severity profile-keyed per design-purity.md §b)
+(define (purity-severity)
+  (case (current-purity-enforcement)
+    [(off)   'off]
+    [(error) 'error]
+    [(warn)  (if (>= (current-check-profile) 3) 'error 'warn)]
+    [else    'off]))
+
+(define (check-defn-purity name body src-table node)
+  (define markers (collect-markers body))
+  (when (and (not (bang-name? name)) (pair? markers))
+    (define src (and src-table (hash-ref src-table node #f)))
+    (define msg
+      (format "purity leak: '~a' has no '!' suffix but its body uses ~a — rename to '~a!' or remove the effect"
+              name
+              (string-join (map (lambda (m) (format "~a" m)) markers) ", ")
+              name))
+    (case (purity-severity)
+      [(warn)
+       (fprintf (current-error-port)
+                "warning: ~a~a\n"
+                msg
+                (if src (format "\n  --> ~a:~a" (or (src-loc-source src) "?") (src-loc-line src)) ""))]
+      [(error)
+       (raise-diag 'purity-leak msg (hasheq) #:src src)]
+      [else (void)])))
+
+(define (check-purity! prog)
+  (when (and (eq? (program-mode prog) 'strict)
+             (not (eq? (current-purity-enforcement) 'off)))
+    ;; Mode + flag gate passed; per-diagnostic severity is decided by
+    ;; purity-severity (warn below profile 3, hard error at >= 3).
+    (define st (program-src-table prog))
+    (for ([form (in-list (program-forms prog))])
+      (let walk ([f form])
+        (cond
+          [(defn-form? f)
+           (check-defn-purity (defn-form-name f) (defn-form-body f) st f)]
+          [(defn-multi? f)
+           (for ([a (in-list (defn-multi-arities f))])
+             (check-defn-purity (defn-multi-name f) (arity-clause-body a) st f))]
+          ;; Descend through wrapper forms (js/export, target-case, …) that may
+          ;; carry a defn payload — same transitive walk type-check! uses.
+          [(and (pair? f) (list? f)) (for-each walk (filter pair? (cdr f)))]
+          [else (void)])))))
+
+
 ;; --- zig world-escape check (thread 20260612232001, Phase 2) ---------------
 ;;
 ;; Convention B, generalized to systems (ECS direction, 2026-06-13):
@@ -3507,8 +3678,10 @@
 
 (provide type-check! type-check-with-locs!
          check-scalar-provenance!
+         check-purity!
          beagle-diagnostic beagle-diagnostic?
          beagle-diagnostic-kind beagle-diagnostic-details
          kind->error-code
          current-check-profile
+         current-purity-enforcement
          check-form infer-expr build-initial-env)

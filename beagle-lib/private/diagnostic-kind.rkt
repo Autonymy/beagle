@@ -86,6 +86,14 @@
 ;;                        from generic type-error so the histogram can
 ;;                        track "macro hygiene/typing bugs" separately
 ;;                        from author-written type errors.
+;;   purity-leak        : a defn/defn- whose name lacks a `!` suffix has a
+;;                        body that lexically uses a mutation marker (set! or
+;;                        a `!`-headed call). The `!`-suffix convention is the
+;;                        author's promise that an unmarked name is pure (safe
+;;                        to compile-time-evaluate / reorder); a leak breaks
+;;                        the static-reasoning guarantee. Type-error: the form
+;;                        parses fine; the rejection is a name/body
+;;                        consistency check. Off by default (BEAGLE_PURITY).
 (define check-kind-cause-table
   (hasheq
    'target-form         'surface-divergence
@@ -104,7 +112,8 @@
    'sql-column          'type-error
    'sql-type            'type-error
    'nixos-unknown-option 'type-error
-   'macro-expansion-type-error 'type-error))
+   'macro-expansion-type-error 'type-error
+   'purity-leak          'type-error))
 
 ;; parse.rkt kinds — emitted by raise-parse-error helper that we add
 ;; in this phase to the high-traffic subset (removed-forms,

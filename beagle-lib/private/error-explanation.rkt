@@ -171,7 +171,16 @@
       "(fs/exists? p)  ;; ERROR: unresolved alias `fs` — add a require"
       "(require [babashka.fs :as fs])\n(fs/exists? p)"
       "Add the missing require, or fix the alias to one that is required."
-      #:since "0.16")))
+      #:since "0.16")
+
+   (E "E019" "Purity leak"
+      "A defn/defn- whose name lacks a `!` suffix has a body that mutates."
+      "The `!`-suffix convention is the author's promise that an unmarked name is pure (safe to compile-time-evaluate / inline / reorder). Mixing a mutation (a set! or a `!`-headed call like swap!/reset!/conj!) into a pure-named function breaks the static-reasoning guarantee the compiler relies on."
+      "(defn save [box v] (reset! box v))  ;; ERROR: 'save' has no '!' but its body uses reset!"
+      "(defn save! [box v] (reset! box v))"
+      "Rename the function to end in `!` (save → save!), or remove the effect so the body is pure. Off by default; gated by BEAGLE_PURITY (off/warn/error) and the check profile (warn below 3, error at >= 3)."
+      #:severity 'warning
+      #:since "0.17")))
 
 (define CODE->EXPL
   (let ([h (make-hash)])

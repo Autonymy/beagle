@@ -487,10 +487,12 @@
           (let ([sink (open-output-string)])
             (parameterize ([current-error-port sink])
               (check-scalar-provenance! prog)
+              (check-purity! prog)
               (run-semantic-analysis! prog #:file path))
             (set! lint-count (count-lint-warnings prog)))
           (begin
             (check-scalar-provenance! prog)
+            (check-purity! prog)
             (run-semantic-analysis! prog #:file path)))))
 
   (values error-count lint-count (reverse agent-errors)))
