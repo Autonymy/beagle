@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# beagle-cheatsheet: print the capability cheatsheet (what the language can do).
+# Generated from beagle-lib/private/cheatsheet.rkt; every example is parse +
+# type-checked by the test suite, so this never goes stale. See also `bin/beagle`.
+source "$(dirname "$0")/_beagle-racket"
+BEAGLE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec "$RACKET" "$BEAGLE_ROOT/beagle-lib/private/cheatsheet.rkt" "$@"

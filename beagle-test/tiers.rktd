@@ -59,6 +59,7 @@
 #hasheq(
   (active . (;; target-agnostic infrastructure
              "check.rkt"
+             "cheatsheet.rkt"           ; capability cheatsheet — every example must parse+check
              "defmacro.rkt"
              "diagnostic-kind.rkt"
              "error-explanation.rkt"    ; in-compiler explanation registry

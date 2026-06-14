@@ -36,6 +36,7 @@ There is no static reference; the surface churns. Query it:
 | fields of record R? | `bin/beagle fields R FILE...` |
 | who calls X? | `bin/beagle callers X FILE...` |
 | what does FILE export? | `bin/beagle provides FILE` |
+| what can the language DO? | `bin/beagle-cheatsheet` (or read `CHEATSHEET.md`) |
 | the form set / surface syntax? | read `beagle-lib/private/parse.rkt` |
 | what's in the stdlib? | read `stdlib-nix.rkt` / `stdlib-portable.rkt` |
 | the full command list? | `bin/beagle` (no args) |
