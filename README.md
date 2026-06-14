@@ -102,17 +102,16 @@ Every snippet above passes `bin/beagle-syntax`.
 
 ## Surface highlights
 
-- **Inline `:-` annotations** on `def` / `defn` / `defonce` / `let`.
-  The interim `claim` form is gone.
-- **`defmacro` + quasi-quote / unquote / unquote-splicing.** Old
-  `define-macro` removed.
+- **Inline `:-` annotations** on the typed boundaries `def` / `defn` /
+  `defonce` / `defrecord`; interiors and `let`-locals are inferred.
+- **`defmacro` + quasi-quote / unquote / unquote-splicing.**
 - **Clojure threading family:** `->`, `->>`, `as->`, `cond->`,
-  `cond->>`, `some->`, `some->>`. The old pipe family is gone.
+  `cond->>`, `some->`, `some->>`.
 - **Reader conditionals** `#?(:clj … :cljs … :nix … :default …)` and
   `#?@(…)` splice.
 - **Quoted containers** `'[…]`, `'{…}`, `'#{…}` self-evaluate.
 - **Sourcemap fidelity:** author position survives every
-  canonicalization (11/11 on the fidelity bench, up from 5/11).
+  canonicalization (11/11 on the fidelity bench).
 - **Typo suggestions** against the 16k-option NixOS schema:
   segment-aware Levenshtein, 96.9% Top-1, ~130 ms/query.
 - **Per-target prefixes** (`nix/`, `js/`, …) for forms whose meaning
@@ -155,6 +154,7 @@ Static reference docs are intentionally thin while the surface is
 moving. The compiler is the source of truth; query it directly:
 
 ```sh
+bin/beagle-doctor                   # is the repair loop online and working?
 bin/beagle-syntax FILE              # parse check + repair
 bin/beagle-validate [FILE...]       # parse + check + schema validation
 bin/beagle-check FILE               # typed checker
@@ -165,9 +165,11 @@ bin/beagle-callers NAME FILE...     # call sites
 bin/beagle-rejection-stats DIR      # diagnostics by cause-class
 ```
 
-`CLAUDE.md` lists the full set including the daemon-backed query tools
-and the repair pipeline (`beagle-repair`, `beagle-blame`,
-`beagle-specfix`).
+The repair loop — a watch daemon, an on-edit syntax/type hook, and
+machine-applicable fixes — is what makes the types pay off;
+`beagle-doctor` health-checks it end to end. `CLAUDE.md` lists the full
+tool set including the daemon-backed queries and the repair pipeline
+(`beagle-repair`, `beagle-blame`, `beagle-specfix`).
 
 ## Design discipline
 
