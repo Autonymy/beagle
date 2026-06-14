@@ -129,6 +129,8 @@
         (define err-line (or (hash-ref d 'error-line #f)
                              (and loc-stx (syntax-line loc-stx))
                              0))
+        (define err-col (or (hash-ref d 'error-col #f)
+                            (and loc-stx (syntax-column loc-stx))))
         (define sig (hash-ref d 'signature #f))
         (define suggestions (hash-ref d 'suggestions '()))
         (define function (hash-ref d 'function #f))
@@ -147,6 +149,7 @@
                        '("high"))))
         (set! errors
               (cons (hasheq 'line err-line
+                            'col (or err-col 'null)
                             'kind kind
                             'message (exn-message e)
                             'function (or function 'null)

@@ -56,13 +56,44 @@
              s))))
 
 ;; --- source locations ------------------------------------------------------
-(struct src-loc (line col source) #:transparent)
+;; A position carries line/col/source PLUS an origin tag and a canonical
+;; flag, mirroring Lean's SourceInfo (original / synthetic(canonical?) /
+;; none). `origin` is one of:
+;;   'original  — built straight from the author's syntax object.
+;;   'synthetic — produced by a desugar/macro expansion (generated code).
+;;   'none      — no real position.
+;; `canonical` only matters for synthetic positions: when #t, the position
+;; is to be trusted for blame *as if the user wrote it* (Lean's `canonical`
+;; flag), so canonical-aware blame can skip incidental synthetic glue while
+;; still pointing at a synthetic-but-trustworthy spot (e.g. a macro call
+;; site that a generated node should be blamed on). Original positions are
+;; always blamable; canonical synthetic ones are too.
+(struct src-loc (line col source origin canonical) #:transparent)
 
 (define (stx->src-loc s)
   (and (syntax? s)
        (let ([line (syntax-line s)]
              [src  (syntax-source s)])
-         (and line (src-loc line (syntax-column s) src)))))
+         (and line (src-loc line (syntax-column s) src 'original #f)))))
+
+;; Derive a synthetic position from a base (a src-loc or a syntax object),
+;; optionally flagged canonical. This is the analog of Lean's
+;; `SourceInfo.fromRef … (canonical := …)`: a generated node borrows a real
+;; span but records that it is generated. Returns #f if no base position.
+(define (synthetic-src-loc base #:canonical? [canonical? #f])
+  (define l (cond [(src-loc? base) base]
+                  [(syntax? base) (stx->src-loc base)]
+                  [else #f]))
+  (and l (src-loc (src-loc-line l) (src-loc-col l) (src-loc-source l)
+                  'synthetic canonical?)))
+
+;; Blame predicate for canonical-aware lookup: an original position, or a
+;; synthetic one explicitly marked canonical, is trustworthy to blame.
+;; Non-canonical synthetic glue is not. (Lean's `canonicalOnly` lookup.)
+(define (loc-blamable? loc)
+  (and (src-loc? loc)
+       (or (eq? (src-loc-origin loc) 'original)
+           (src-loc-canonical loc))))
 
 (define (->datum x) (if (syntax? x) (syntax->datum x) x))
 (define (stx-subs x) (and (syntax? x) (syntax->list x)))
@@ -459,7 +490,7 @@
  ;; Identifier safety
  validate-identifier! unsafe-ident-rx validate-module-path! valid-module-path-rx
  ;; Source locations
- (struct-out src-loc) stx->src-loc
+ (struct-out src-loc) stx->src-loc synthetic-src-loc loc-blamable?
  ->datum stx-subs stx-ref stx-tail
  current-registry current-src-table store-src!
  current-body-locs-table body-loc-at

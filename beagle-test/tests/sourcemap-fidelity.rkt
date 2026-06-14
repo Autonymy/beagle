@@ -103,7 +103,8 @@
          racket/string
          beagle/private/parse
          beagle/private/check
-         beagle/private/types)
+         beagle/private/types
+         beagle/private/ast)
 
 (provide benchmark-entries
          run-benchmark
@@ -131,9 +132,11 @@
   tmp)
 
 ;; Parse + type-check FIXTURE-PATH; capture the first diagnostic raised.
-;; Returns (vector 'diag KIND ERROR-LINE TOP-STX-LINE MSG) on diagnostic,
-;; (vector 'parse-err KIND #f #f MSG) on parse error,
-;; (vector 'no-err #f #f #f #f) if no error fires.
+;; Returns (vector 'diag KIND ERROR-LINE TOP-STX-LINE MSG ERROR-COL) on
+;;   diagnostic,
+;; (vector 'parse-err KIND #f #f MSG #f) on parse error,
+;; (vector 'no-err #f #f #f #f #f) if no error fires.
+;; (All result vectors are 6-wide so slot 5 — error-col — is always safe.)
 (define (capture-first-diagnostic fixture-path)
   (with-handlers
     ([beagle-parse-error?
@@ -142,10 +145,11 @@
                 (beagle-parse-error-kind e)
                 #f
                 #f
-                (exn-message e)))])
+                (exn-message e)
+                #f))])
     (define forms (read-beagle-syntax fixture-path))
     (define prog (parse-program forms))
-    (define result (box (vector 'no-err #f #f #f #f)))
+    (define result (box (vector 'no-err #f #f #f #f #f)))
     (with-handlers
       ([beagle-diagnostic?
         (lambda (e)
@@ -155,7 +159,8 @@
                             (beagle-diagnostic-kind e)
                             (hash-ref d 'error-line #f)
                             #f
-                            (exn-message e))))])
+                            (exn-message e)
+                            (hash-ref d 'error-col #f))))])
       (type-check-with-locs! prog
         (lambda (e stx)
           (cond
@@ -166,10 +171,11 @@
                                (beagle-diagnostic-kind e)
                                (hash-ref d 'error-line #f)
                                (syntax-line stx)
-                               (exn-message e)))]
+                               (exn-message e)
+                               (hash-ref d 'error-col #f)))]
             [else
              (set-box! result
-                       (vector 'exn 'exn-fail #f #f (exn-message e)))]))))
+                       (vector 'exn 'exn-fail #f #f (exn-message e) #f))]))))
     (unbox result)))
 
 ;; Compute the "effective" line — what write-json-error would emit. This
@@ -177,6 +183,13 @@
 (define (effective-line result)
   (case (vector-ref result 0)
     [(diag) (or (vector-ref result 2) (vector-ref result 3))]
+    [else #f]))
+
+;; The precise per-node column the diagnostic carries (0-based, matching
+;; Racket's syntax-column). #f when no diagnostic / no column.
+(define (effective-col result)
+  (case (vector-ref result 0)
+    [(diag) (vector-ref result 5)]
     [else #f]))
 
 ;; =============================================================================
@@ -505,6 +518,66 @@
   (check-equal? (effective-line result) expected
                 (format "direct-if control should report line ~a; got ~v"
                         expected result)))
+
+;; --- Column fidelity (gate #4: preserve error-col through canonicalization) -
+;;
+;; Precise line and precise column come from the SAME src-loc, so the
+;; invariant is: whenever a diagnostic carries a precise line (from #:src),
+;; it must also carry a precise column. Before this work, src-loc-col was
+;; captured but never propagated (raise-diag dropped it; every consumer read
+;; col from the whole top-level form). These tests pin the propagation.
+
+(test-case "precise column propagates wherever a precise line does"
+  (for ([entry (in-list benchmark-entries)])
+    (define fixture (write-fixture (hash-ref entry 'src)))
+    (define result (capture-first-diagnostic fixture))
+    (delete-file fixture)
+    (when (eq? (vector-ref result 0) 'diag)
+      (define line (vector-ref result 2))  ; precise error-line (from #:src)
+      (define col  (effective-col result))
+      (when line
+        (check-true (number? col)
+                    (format "~a: precise line ~a but no precise column"
+                            (hash-ref entry 'id) line))))))
+
+(test-case "column points at the offending sub-expression, not the whole form"
+  ;; Both fixtures blame the call `(g "boom")` which is indented 4 spaces on
+  ;; its line, so the precise column is 4 (0-based). A degraded column would
+  ;; report the enclosing `(defn f …)` form's column (0).
+  (for ([id (in-list '(control-if-direct-body-mismatch when-body-type-error))])
+    (define entry (findf (lambda (e) (eq? (hash-ref e 'id) id))
+                         benchmark-entries))
+    (define fixture (write-fixture (hash-ref entry 'src)))
+    (define result (capture-first-diagnostic fixture))
+    (delete-file fixture)
+    (check-equal? (effective-col result) 4
+                  (format "~a: expected column 4 (the `(g …)` call), got ~v"
+                          id (effective-col result)))))
+
+;; --- Origin / canonical model (Lean SourceInfo 3-state) ---------------------
+
+(test-case "src-loc origin/canonical model"
+  (define s (datum->syntax #f 'x (list "f.bclj" 7 3 99 1)))
+  (define l (stx->src-loc s))
+  (check-equal? (src-loc-line l) 7)
+  (check-equal? (src-loc-col l) 3)
+  (check-equal? (src-loc-origin l) 'original)
+  (check-false (src-loc-canonical l))
+  (check-true (loc-blamable? l) "original positions are always blamable")
+  ;; synthetic, non-canonical: generated glue, NOT blamable
+  (define syn (synthetic-src-loc l))
+  (check-equal? (src-loc-origin syn) 'synthetic)
+  (check-false (src-loc-canonical syn))
+  (check-false (loc-blamable? syn))
+  ;; synthetic, canonical: trustworthy blame point (Lean fromRef canonical)
+  (define cano (synthetic-src-loc l #:canonical? #t))
+  (check-equal? (src-loc-origin cano) 'synthetic)
+  (check-true (src-loc-canonical cano))
+  (check-true (loc-blamable? cano))
+  ;; line/col/source survive synthetic derivation
+  (check-equal? (src-loc-line cano) 7)
+  (check-equal? (src-loc-col cano) 3)
+  (check-equal? (src-loc-source cano) "f.bclj"))
 
 ;; Allow running this file standalone to print the benchmark report:
 (module+ main

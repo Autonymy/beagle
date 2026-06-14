@@ -173,8 +173,9 @@
      (define kind (beagle-diagnostic-kind e))
      (define msg (exn-message e))
 
-     ;; Prefer expression-level line from src-table over top-level form line
+     ;; Prefer expression-level line/col from src-table over top-level form
      (define err-line (or (hash-ref d 'error-line #f) stx-line))
+     (define err-col (hash-ref d 'error-col #f))
      (define err-file (or (hash-ref d 'error-file #f) file))
 
      (define code (hash-ref d 'error-code "E000"))
@@ -185,7 +186,9 @@
      (emit (format "error[~a]: ~a" code msg))
 
      (when (and err-file err-line)
-       (emit (format "  --> ~a:~a" err-file err-line))
+       (if err-col
+           (emit (format "  --> ~a:~a:~a" err-file err-line err-col))
+           (emit (format "  --> ~a:~a" err-file err-line)))
        (define src-line (read-source-line err-file err-line))
        (when src-line
          (define gw (string-length (number->string err-line)))
@@ -259,9 +262,12 @@
     [(beagle-diagnostic? e)
      (define d (beagle-diagnostic-details e))
      (define error-line-raw (hash-ref d 'error-line #f))
+     (define error-col-raw (hash-ref d 'error-col #f))
      (define error-file-raw (hash-ref d 'error-file #f))
      (define file (or error-file-raw stx-file))
      (define line (or error-line-raw stx-line))
+     ;; Prefer the precise per-node column; fall back to whole-form col.
+     (define ecol (or error-col-raw col))
      (define src-line (and file line (read-source-line file line)))
      (define base
        (hasheq 'schemaVersion 1
@@ -269,7 +275,7 @@
                'kind (symbol->string (beagle-diagnostic-kind e))
                'file (or file 'null)
                'line (or line 'null)
-               'col (or col 'null)
+               'col (or ecol 'null)
                'message (exn-message e)
                'source_line (or src-line 'null)))
      (define with-details

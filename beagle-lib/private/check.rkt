@@ -341,11 +341,18 @@
               (symbol->string (kind->cause-class effective-kind))))
   (define details+src
     (if src
-        (hash-set (hash-set with-cause 'error-line (src-loc-line src))
-                  'error-file (let ([s (src-loc-source src)])
-                                (cond [(path? s) (path->string s)]
-                                      [(string? s) s]
-                                      [else #f])))
+        (hash-set* with-cause
+                   'error-line (src-loc-line src)
+                   ;; Precise author column, surviving canonicalization. This
+                   ;; is the gate-#4 deliverable: the column comes from the
+                   ;; SAME src-loc as error-line (the innermost original
+                   ;; position the desugar machinery preserves), so it points
+                   ;; at the offending sub-expression, not the whole form.
+                   'error-col (src-loc-col src)
+                   'error-file (let ([s (src-loc-source src)])
+                                 (cond [(path? s) (path->string s)]
+                                       [(string? s) s]
+                                       [else #f])))
         with-cause))
   (raise (beagle-diagnostic
           (format "beagle: ~a" message)

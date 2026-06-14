@@ -101,6 +101,9 @@
      (define msg (exn-message msg-or-exn))
      (define file (or (hash-ref d 'error-file #f) (path-or-source stx)))
      (define line (or (hash-ref d 'error-line #f) (and stx (syntax-line stx))))
+     ;; Prefer the precise per-node column from the diagnostic over the
+     ;; whole-form fallback (Lean SourceInfo: blame the offending span).
+     (define col (or (hash-ref d 'error-col #f) (and stx (syntax-column stx))))
      (define base
        (hasheq 'schemaVersion 1
                'tool "beagle"
@@ -108,7 +111,7 @@
                'message msg
                'file (or file 'null)
                'line (or line 'null)
-               'col (or (and stx (syntax-column stx)) 'null)))
+               'col (or col 'null)))
      (define enriched
        (for/fold ([h base]) ([(k v) (in-hash d)])
          (hash-set h (if (symbol? k) k (string->symbol k)) v)))
