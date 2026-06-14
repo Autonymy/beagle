@@ -1109,8 +1109,12 @@
         (for/list ([d (in-list datums)]
                    [s (in-list stxs)]
                    #:unless (meta-form? d))
+          ;; Same unified resolver as parse-expr (head-meaning): the top-level
+          ;; loop orders macro-first before parse-top -> parse-expr. The
+          ;; #%splice-forms / parse-macro-output / blame-on-`s` handling below
+          ;; is top-level-only and stays exactly as-is.
           (define from-macro?
-            (and (pair? d) (symbol? (car d)) (lookup-macro registry (car d))))
+            (and (pair? d) (eq? (head-meaning registry (car d)) 'macro)))
           (define expanded
             (if from-macro? (expand-fully registry d) d))
           (define (parse-macro-output form-datum)
@@ -1267,7 +1271,10 @@
     [(pair? d)
      (define reg (current-registry))
      (cond
-       [(and reg (symbol? (car d)) (lookup-macro reg (car d)))
+       ;; Head dispatch goes through the unified resolver (head-meaning): macros
+       ;; outrank built-in combiners outrank legacy. The macro branch below is
+       ;; the same code that ran before step 5 — only the guard moved.
+       [(eq? (head-meaning reg (car d)) 'macro)
         ;; Parse the expansion result with current-macro-expansion-ctx
         ;; set so that any parse rejection on the macro output is
         ;; bucketed as 'macro-expansion-parse-error. Also record the
@@ -1671,6 +1678,30 @@
 (define (register-combiner! head handler) (hash-set! COMBINERS head handler))
 (define (lookup-combiner head) (hash-ref COMBINERS head #f))
 
+;; --- unified head resolver (thread 20260615034227, step 5) -----------------
+;; `head-meaning` is the single authority on "what does this head mean?". It
+;; names the precedence that is implicit across the two head sites today
+;; (the macro arm in parse-expr, which runs BEFORE parse-list-form/COMBINERS):
+;;
+;;   'macro   — `reg` holds a user macro for this head; the macro path owns it.
+;;   'builtin — a built-in special form lives in the global COMBINERS table.
+;;   'legacy  — neither; falls through to the hardcoded parse-list-form* dispatch.
+;;
+;; Precedence is macro > builtin > legacy, so a user macro named like a built-in
+;; (e.g. `if`) shadows the built-in — exactly as before this refactor.
+;;
+;; The two TABLES stay separate by design (see register-combiner! doc): COMBINERS
+;; is a shared, process-global `hasheq`; the macro registry `reg` is a per-program
+;; `make-hash` with qualified names. This resolver routes BOTH through one rule
+;; without merging them — the macro branch's extra inputs (call-site syntax for
+;; blame, per-call ctx, `reg`) are a superset of the `(d subs)` combiner contract,
+;; so the unifying object is this function, not a merged table.
+(define (head-meaning reg head)
+  (cond
+    [(and reg (symbol? head) (lookup-macro reg head)) 'macro]
+    [(and (symbol? head) (lookup-combiner head))      'builtin]
+    [else                                             'legacy]))
+
 ;; `do` — sequence; value is its last expression. (First form migrated.)
 (register-combiner! 'do
   (lambda (d subs)
@@ -1879,6 +1910,16 @@
     (parse-try-form (or (stx-tail subs 1) (cdr d)))))
 
 (define (parse-list-form d subs)
+  ;; Invariant: macro heads are resolved in parse-expr (and the top-level loop)
+  ;; BEFORE control reaches here, so a 'macro head must never arrive — if one
+  ;; does, the resolver and the call sites have drifted out of sync. Fail loudly
+  ;; rather than silently mis-dispatching to a built-in/legacy arm. On valid
+  ;; input this arm never fires, so goldens are unaffected.
+  (when (and (pair? d)
+             (eq? (head-meaning (current-registry) (car d)) 'macro))
+    (error 'beagle
+           "internal: macro head ~a reached parse-list-form (should be handled in parse-expr)"
+           (car d)))
   (cond
     [(and (pair? d) (symbol? (car d)) (lookup-combiner (car d)))
      => (lambda (handler) (handler d subs))]
