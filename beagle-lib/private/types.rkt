@@ -303,48 +303,74 @@
 (define (any-type? t)
   (and (type-prim? t) (eq? (type-prim-name t) 'Any)))
 
+;; --- the type delaborator: an extensible head-keyed render registry --------
+;; type->string is the single universal type renderer (every consumer — sig,
+;; hover, error messages, explain-type — routes through it). Dispatch is a
+;; registry of per-head renderers rather than a fixed cond, so a new type
+;; constructor's rendering is one `register-type-delab!` call with no edit to
+;; the dispatcher. This is the inverse of elaboration, à la Lean's delaborator
+;; (@[delab] / getExprKind + delabFor). Each renderer takes (t recur) where
+;; recur is the top-level renderer, so renderers compose. Output is identical
+;; to the previous hand-written cond.
+
+(define (type-head t)
+  (cond [(not t)         '?]
+        [(type-prim? t)  'prim]
+        [(type-fn? t)    'fn]
+        [(type-app? t)   'app]
+        [(type-union? t) 'union]
+        [(type-var? t)   'var]
+        [(type-poly? t)  'poly]
+        [else            'unknown]))
+
+(define TYPE-DELAB (make-hasheq))
+(define (register-type-delab! head renderer) (hash-set! TYPE-DELAB head renderer))
+(define (default-type-delab t recur) (~v t))
+
 (define (type->string t)
-  (cond
-    [(not t) "?"]
-    [(type-prim? t) (symbol->string (type-prim-name t))]
-    [(type-fn? t)
-     (define rest (type-fn-rest-type t))
-     (format "[~a~a -> ~a]"
-             (string-join (map type->string (type-fn-params t)) " ")
-             (if rest (format " & ~a" (type->string rest)) "")
-             (type->string (type-fn-ret t)))]
-    [(type-app? t)
-     (format "(~a ~a)"
-             (type-app-ctor t)
-             (string-join (map type->string (type-app-args t)) " "))]
-    [(type-union? t)
-     (define alts (type-union-alts t))
-     (define alt-names (and (andmap type-prim? alts) (map type-prim-name alts)))
-     (cond
-       [(and alt-names (= (length alts) 2)
-             (member 'Int alt-names) (member 'Float alt-names))
-        "Number"]
-       [(and (= (length alts) 2)
-             (ormap (lambda (a) (and (type-prim? a) (eq? (type-prim-name a) 'Nil))) alts))
-        (let ([non-nil (findf (lambda (a) (not (and (type-prim? a) (eq? (type-prim-name a) 'Nil)))) alts)])
-          (format "~a?" (type->string non-nil)))]
-       [else
-        (format "(U ~a)"
-                (string-join (map type->string (type-union-alts t)) " "))])]
-    [(type-var? t) (symbol->string (type-var-name t))]
-    [(type-poly? t)
-     (define bounds (type-poly-bounds t))
-     (define var-strs
-       (map (lambda (v)
-              (define b (and bounds (hash-ref bounds v #f)))
-              (if b
-                (format "(~a <: ~a)" v (type->string b))
-                (symbol->string v)))
-            (type-poly-vars t)))
-     (format "(forall [~a] ~a)"
-             (string-join var-strs " ")
-             (type->string (type-poly-body t)))]
-    [else (~v t)]))
+  ((hash-ref TYPE-DELAB (type-head t) default-type-delab) t type->string))
+
+(register-type-delab! '? (lambda (t recur) "?"))
+(register-type-delab! 'prim (lambda (t recur) (symbol->string (type-prim-name t))))
+(register-type-delab! 'fn
+  (lambda (t recur)
+    (define rest (type-fn-rest-type t))
+    (format "[~a~a -> ~a]"
+            (string-join (map recur (type-fn-params t)) " ")
+            (if rest (format " & ~a" (recur rest)) "")
+            (recur (type-fn-ret t)))))
+(register-type-delab! 'app
+  (lambda (t recur)
+    (format "(~a ~a)"
+            (type-app-ctor t)
+            (string-join (map recur (type-app-args t)) " "))))
+(register-type-delab! 'union
+  (lambda (t recur)
+    (define alts (type-union-alts t))
+    (define alt-names (and (andmap type-prim? alts) (map type-prim-name alts)))
+    (cond
+      [(and alt-names (= (length alts) 2)
+            (member 'Int alt-names) (member 'Float alt-names))
+       "Number"]
+      [(and (= (length alts) 2)
+            (ormap (lambda (a) (and (type-prim? a) (eq? (type-prim-name a) 'Nil))) alts))
+       (let ([non-nil (findf (lambda (a) (not (and (type-prim? a) (eq? (type-prim-name a) 'Nil)))) alts)])
+         (format "~a?" (recur non-nil)))]
+      [else
+       (format "(U ~a)" (string-join (map recur alts) " "))])))
+(register-type-delab! 'var (lambda (t recur) (symbol->string (type-var-name t))))
+(register-type-delab! 'poly
+  (lambda (t recur)
+    (define bounds (type-poly-bounds t))
+    (define var-strs
+      (map (lambda (v)
+             (define b (and bounds (hash-ref bounds v #f)))
+             (if b (format "(~a <: ~a)" v (recur b)) (symbol->string v)))
+           (type-poly-vars t)))
+    (format "(forall [~a] ~a)"
+            (string-join var-strs " ")
+            (recur (type-poly-body t)))))
+(register-type-delab! 'unknown default-type-delab)
 
 (define (string-join xs sep)
   (cond
@@ -421,6 +447,7 @@
  SET-TAG
  PRIMITIVES
  BUILTIN-UNION-ALIASES
+ register-type-delab! type-head
  (struct-out type-prim)
  (struct-out type-fn)
  (struct-out type-app)
