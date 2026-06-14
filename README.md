@@ -1,26 +1,41 @@
 # Beagle
 
-Beagle is a typed Clojure subset designed to emit idiomatic code to
-multiple targets from a single AST. Five targets are live today —
-**Clojure**, **ClojureScript**, **JavaScript**, **Nix**, and **Odin**
-— with **Zig**, **Python**, **SQL**, and **Typed Racket** emitters
-parked under `dormant/`, one flag (`BEAGLE_ALL_TARGETS=1`) away.
+Beagle is a typed Clojure subset that emits idiomatic code to multiple
+targets from a single AST. Five targets are live today, four more dormant:
 
-The active distribution effort is **Nix-first**: the language people
-actively dislike using, with no incumbent typed alternative, and a
-failure profile (eval errors, schema violations, type mismatches in
-module composition) that beagle's type system catches at compile time
-against a 16k-option typed environment. The language *is* multi-target.
-The *campaign* is Nix-first.
+| Target        | Status  |
+|---------------|---------|
+| Clojure       | Live    |
+| ClojureScript | Live    |
+| JavaScript    | Live    |
+| Nix           | Live    |
+| Odin          | Live    |
+| Zig           | Dormant |
+| Python        | Dormant |
+| SQL           | Dormant |
+| Typed Racket  | Dormant |
 
-Types exist to make authoring, diagnostics, and AI repair reliable;
-they check at compile time and erase before emit. The point isn't to
-reject bad code — it's to tell repair tools what kind of mistake
-happened, where in the source, after which canonicalization, against
-which target.
+Dormant emitters sit under `dormant/`, one flag (`BEAGLE_ALL_TARGETS=1`)
+away.
 
-Already used by [firnos](https://github.com/tompassarelli/firnos) to
-author a NixOS system end to end against the typed schema.
+Distribution is Nix-first. Nix is the language people actively dislike
+using, has no incumbent typed alternative, and its failure profile —
+eval errors, schema violations, type mismatches in module composition —
+is exactly what Beagle's types catch at compile time, against a
+16k-option typed environment. The language is multi-target. The campaign
+is Nix-first.
+
+Types exist to make authoring, diagnostics, and AI repair reliable; they
+check at compile time and erase before emit. The point isn't to reject
+bad code — it's to tell repair tools what kind of mistake happened, where
+in the source, after which canonicalization, against which target.
+
+Real codebases author against Beagle:
+
+- [firnos](https://github.com/tompassarelli/firnos) uses Beagle to author
+  a complete NixOS system, end-to-end against the typed schema (Nix target).
+- [gjoa](https://github.com/tompassarelli/gjoa) uses Beagle's JS target for
+  a Firefox overlay UI — 43 `.bjs` modules, type-checked end to end.
 
 ## How it compiles
 
