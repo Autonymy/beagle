@@ -128,12 +128,9 @@
             "nix-property.rkt"          ; BEAGLE_NIX_EVAL_CHECK=1
             "oracle.rkt"                ; BEAGLE_ORACLE=1
             "oracle-bun.rkt"            ; BEAGLE_ORACLE=1
-            "py-exec-oracle.rkt"        ; requires python at runtime
-            ;; Operative checker — experimental, quarantined.
-            ;; BEAGLE_EXPERIMENTAL_OPERATIVE=1. See thread
-            ;; 20260530180100-beagle_type_system_implementation_against_v0_15_surface.md
-            "check-operative.rkt"
-            "emit-operative.rkt"
-            "operative-integration.rkt"
-            "pipeline.rkt"
-            "operative-quarantine.rkt")))
+            "py-exec-oracle.rkt")))     ; requires python at runtime
+            ;; (The quarantined "operative" checker/evaluator prototype was
+            ;; deleted 2026-06-15 — it never ran on the live build path. The
+            ;; operative *vision* is realized as the compile-time combiner layer
+            ;; in the live compiler; see CLAUDE.md "Architecture" + thread
+            ;; 20260615034227.)

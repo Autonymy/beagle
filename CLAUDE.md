@@ -11,6 +11,39 @@ or stdlib. The surface churns; static docs go stale within a day. The
 compiler is the source of truth — query it (`bin/beagle sig|fields|syntax`,
 or `bin/beagle` for the full command list).
 
+## Architecture — read this before touching the front end
+
+There is **exactly one compiler**, and it is an ordinary ahead-of-time
+compiler: `parse → check → emit`. The entry points are `beagle-lib/main.rkt`
+(`#lang beagle`) and `beagle-lib/private/check-all.rkt` (`bin/beagle
+check/build`). The type checker is `check.rkt`. That's it. Verify any doubt
+with the require closure of `check-all.rkt` — nothing else runs.
+
+**On "operatives" — the single most confusing thing in this repo, now
+settled:** beagle's *design* (threads `20260528223000`, role-locality) frames
+the language around Kernel-style **operatives** (head-tagged combiners; macros
+and special forms unified under one rule). That is a real, good vision — but
+it describes a **compile-time** mechanism, NOT runtime fexprs. Runtime fexprs
+are **impossible** for beagle because we emit Nix (no runtime `eval`/reified
+environments). So:
+
+- The live language realizes operatives **at compile time**: the goal is one
+  combiner/form-handler registry where built-in forms (`let`/`if`/`defn`/…)
+  and user macros are dispatched by one rule and lowered to **typed IR**
+  (never straight to emitted code), before any backend runs. As of
+  2026-06-15 this unification is **in progress** — today built-in special
+  forms are still hardcoded in `parse.rkt`/`check.rkt` and macros are a
+  separate registry (`macros.rkt`). Naming: call it **"compile-time
+  combiners"**, not "operatives" — the word "operative" implies runtime
+  fexprs and is what caused months of confusion.
+- A quarantined prototype (`check-operative.rkt`, `emit-operative.rkt`,
+  `eval-standard.rkt`, `eval.rkt`, `pipeline.rkt`, `macro-expand.rkt`, the
+  `beagle-op-*` tools) once explored a *runtime* operative evaluator + a second
+  checker. **It never ran on the live build and was DELETED 2026-06-15.** Do
+  not resurrect it; it was the source of the "two checkers / are we using
+  operatives?" confusion. The vision lives on as the compile-time combiner
+  work above, not as that code.
+
 ## Standing operating mode — apply the spec, don't ratify it
 
 The spec is **generative.** Three statements determine every surface
