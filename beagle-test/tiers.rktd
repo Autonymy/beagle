@@ -75,6 +75,7 @@
              "test-tags.rkt"
              "threading.rkt"
              "threading-marker.rkt"
+             "type-view.rkt"            ; types-as-view delaborator (explain-type)
              "types.rkt"
              ;; Nix (load-bearing target — the live happy path)
              "emit-nix.rkt"

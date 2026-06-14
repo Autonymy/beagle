@@ -157,6 +157,35 @@
     (hash-set! (current-src-table) node loc))
   node)
 
+;; --- per-node inferred-type capture (the delaborator's input) ----------------
+;; Mirrors the src-table: the checker records each expression node's INFERRED
+;; type here, so a renderer (types-as-view / beagle-explain-type) can PROJECT
+;; "doubled :- (Vec Int)" with no type living in the source. This is the
+;; anti-reification half of types-as-view — a pure side-channel derived from
+;; the check pass, never stored in or drifting from the program. Same
+;; interned-leaf exclusion as store-src! (bare symbols/literals are shared,
+;; so they can't be keyed by identity); non-leaf nodes (call-form, …) are
+;; captured. Populated at the infer-expr choke point in check.rkt.
+(define current-type-table (make-parameter #f))
+
+(define (store-type! node ty)
+  ;; Last-write-wins: a node may be inferred more than once (and/or args,
+  ;; narrowed branches) but its type is stable, so overwriting is harmless.
+  (when (and ty (current-type-table)
+             (not (string? node)) (not (boolean? node))
+             (not (number? node)) (not (symbol? node)))
+    (hash-set! (current-type-table) node ty))
+  ty)
+
+;; Cross-pass storage for the type-table, keyed by program identity (mirrors
+;; PROGRAM->BODY-LOCS): type-check-with-locs! registers the populated table so
+;; tools can read per-node inferred types after the check pass completes.
+(define PROGRAM->TYPES (make-weak-hasheq))
+(define (register-program-type-table! prog tbl)
+  (hash-set! PROGRAM->TYPES prog tbl))
+(define (program-type-table prog)
+  (hash-ref PROGRAM->TYPES prog #f))
+
 ;; --- symbol predicates -----------------------------------------------------
 (define (dot-method-sym? sym)
   (and (symbol? sym)
@@ -495,6 +524,8 @@
  current-registry current-src-table store-src!
  current-body-locs-table body-loc-at
  register-program-body-locs-table! program-body-locs-table
+ current-type-table store-type!
+ register-program-type-table! program-type-table
  ;; Symbol predicates
  dot-method-sym? static-method-sym? dynamic-var-sym? constructor-sym? keyword-sym?
  ;; Parse injection

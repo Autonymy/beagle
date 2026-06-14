@@ -442,13 +442,24 @@ Each names the rule, the contrast-doc justification (thread
    ≥30 days of Phase 0 telemetry showing the type-error bucket would
    actually benefit. Neither condition is current.
 
-3. **Types-as-view is a separate experiment with a 3-month kill
-   criterion.** Reason: highest-novelty, zero-precedent piece in the
-   contrast (§4.3). Start with a `beagle-explain-type` CLI; scale
-   only if it gets used in real diagnostic-debugging sessions over
-   3 months; delete otherwise. Runs on its own cadence — does NOT
-   touch the classic checker, does NOT block other type-system
-   work.
+3. **Types-as-view is ACTIVE work — build the delaborator as the
+   unified type-render layer (gate LIFTED 2026-06-14).** The old
+   3-month kill-criterion framing assumed a *storage*-shaped feature
+   (types parked in a separate claim block keyed by name). That framing
+   was **RDF reification smuggling**: a parallel layer of
+   statements-about-the-program that has to be kept in sync and drifts
+   the moment it diverges — the exact drift tax the thesis exists to
+   kill. The clean version stores **nothing**: the view is a pure
+   projection `view = f(checked-program)` — the inverse of elaboration
+   (Lean's delaborator). Zero drift is *structural*, not maintained,
+   because there is no second copy. It is also **not** redundant with
+   inference: inference *knows* the type; types-as-view *shows* it, at
+   any verbosity, with no type living in the source. And it
+   *generalizes the renderer `bin/beagle-sig` already ships* — this is
+   "extend what exists," not speculation. Build it as ONE extensible
+   head-keyed render engine (`Type`/expr-node → surface) that powers
+   `beagle-explain-type`, editor hover/inlay, error-message type
+   rendering, and multi-target views. See thread `20260614120025`.
 
 4. **Sourcemap fidelity (preserving error-col through
    canonicalization) is the precondition for un-deferring refinement

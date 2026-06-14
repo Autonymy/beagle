@@ -1614,7 +1614,18 @@
 
 ;; --- inference -------------------------------------------------------------
 
+;; infer-expr is the single choke point through which every expression's type
+;; flows. The thin wrapper records each node's inferred type into
+;; current-type-table (when bound) so types-as-view / beagle-explain-type can
+;; project per-node types. store-type! applies the interned-leaf exclusion and
+;; is a no-op when no table is bound (the normal check path), so this adds
+;; nothing to ordinary type-checking. The real cond body is infer-expr*.
 (define (infer-expr e env)
+  (define t (infer-expr* e env))
+  (store-type! e t)
+  t)
+
+(define (infer-expr* e env)
   (check-target-form e)
   (cond
     [(or (string? e) (boolean? e) (exact-integer? e) (real? e))
@@ -2588,8 +2599,13 @@
           (hash-set! SQL-FKS tbl-col target))))
     (define macro-tbl (program-macro-derived-table prog))
     (define body-locs-tbl (program-body-locs-table prog))
+    ;; Capture per-node inferred types for types-as-view / beagle-explain-type
+    ;; and stash the table on the program so tools can read it post-pass.
+    (define type-tbl (make-hasheq))
+    (register-program-type-table! prog type-tbl)
     (parameterize ([current-check-src-table (program-src-table prog)]
                    [current-body-locs-table body-locs-tbl]
+                   [current-type-table type-tbl]
                    [current-check-target (program-target prog)]
                    [current-union-members UNION-MEMBERS]
                    [current-enum-types ENUM-TYPES]
