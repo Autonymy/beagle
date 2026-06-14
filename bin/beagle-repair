@@ -113,7 +113,7 @@ echo "" >&2
 echo "─── Repair Queue ───" >&2
 echo "" >&2
 
-python3 - "$WORK_DIR" "$THRESHOLD" "$AUTO_MODE" "$SOURCE_DIR" "$EMIT_PATCH" << 'PYEOF'
+python3 - "$WORK_DIR" "$THRESHOLD" "$AUTO_MODE" "$SOURCE_DIR" "$EMIT_PATCH" "$BEAGLE_BIN" << 'PYEOF'
 import sys, os, re, json
 
 work_dir = sys.argv[1]
@@ -121,6 +121,21 @@ threshold = float(sys.argv[2])
 auto_mode = sys.argv[3] == 'true'
 source_dir = sys.argv[4]
 emit_patch = sys.argv[5] == 'true'
+beagle_bin = sys.argv[6]
+
+# Shared, unit-tested apply helpers (bin/beagle_repair_apply.py).
+sys.path.insert(0, beagle_bin)
+from beagle_repair_apply import insert_match_clauses
+
+def conv_annotation(r):
+    """One-line structured conversion summary from the typed fix-plan, e.g.
+    '  => Vec[0]: String->Int'. Empty when the repair carries no conversion."""
+    c = r.get('_conversion')
+    if not c or not c.get('from'):
+        return ''
+    pos = c.get('position')
+    posstr = f"[{pos}]" if pos is not None else ""
+    return f"  => {c.get('collection','')}{posstr}: {c['from']}->{c['to']}"
 
 repairs = []
 
@@ -173,6 +188,19 @@ if os.path.exists(check_file):
                         '_insert_line': plan.get('insert-line') or d.get('line'),
                     })
                 else:
+                    # Consume the STRUCTURED conversion data (from the typed
+                    # MessageData), not just the prose hint: for a collection
+                    # type-argument mismatch the plan carries from/to/position/
+                    # collection, and the diagnostic carries the full
+                    # expected/actual type trees. Agents act on these directly.
+                    conversion = None
+                    if plan.get('from-type'):
+                        conversion = {
+                            'from': plan.get('from-type'),
+                            'to': plan.get('to-type'),
+                            'position': plan.get('position'),
+                            'collection': plan.get('collection'),
+                        }
                     repairs.append({
                         'confidence': confidence,
                         'file': d.get('file', '?'),
@@ -184,6 +212,9 @@ if os.path.exists(check_file):
                         'after': plan.get('after'),
                         'evidence': ['type-checker', f"E{d.get('kind', '?')}"],
                         'auto_applicable': confidence >= 0.85 and plan.get('after'),
+                        '_conversion': conversion,
+                        '_expected_type': d.get('expected-type'),
+                        '_actual_type': d.get('actual-type'),
                     })
             elif d.get('kind') in ('type-mismatch', 'arity'):
                 # Type error without fix plan — still useful
@@ -518,88 +549,6 @@ def resolve_source_file(repair_entry):
 
 import difflib
 
-def _insert_match_clauses(text, anchor_line, clauses):
-    """Insert clause skeletons before the closing paren of the (match ...) form
-    anchored at anchor_line (1-based). The checker hands back throw-bodied
-    skeletons with correct constructor + binder arity, so the result is a
-    well-formed, exhaustive match that re-verifies. Returns new text, or None."""
-    try:
-        anchor = int(anchor_line)
-    except (TypeError, ValueError):
-        return None
-    src_lines = text.split('\n')
-    if anchor < 1 or anchor > len(src_lines):
-        return None
-    pre = sum(len(l) + 1 for l in src_lines[:anchor - 1])
-    # Find the real `(match` from the anchor, skipping any `(match` that sits
-    # inside a string literal (string-aware, so a decoy in a string doesn't win).
-    open_off = None
-    j, in_str = pre, False
-    while j < len(text):
-        c = text[j]
-        if in_str:
-            if c == '\\':
-                j += 2
-                continue
-            if c == '"':
-                in_str = False
-        elif c == '"':
-            in_str = True
-        elif c == '(' and re.match(r'\(\s*match\b', text[j:]):
-            open_off = j
-            break
-        j += 1
-    if open_off is None:
-        return None
-    # Balance parens from the match's '(' to its ')', skipping string contents.
-    depth = 0
-    in_str = False
-    i, n = open_off, len(text)
-    close_off = None
-    while i < n:
-        c = text[i]
-        if in_str:
-            if c == '\\':
-                i += 2
-                continue
-            if c == '"':
-                in_str = False
-        elif c == '"':
-            in_str = True
-        elif c == '(':
-            depth += 1
-        elif c == ')':
-            depth -= 1
-            if depth == 0:
-                close_off = i
-                break
-        i += 1
-    if close_off is None:
-        return None
-    form = text[open_off:close_off]
-    if '\n' not in form:
-        # Single-line match: keep it on one line, space-separated, so we never
-        # emit a stray newline mid-form (which produced broken output before).
-        insertion = ''.join(' ' + c for c in clauses)
-    else:
-        # Multi-line: reuse the indentation of the first existing own-line clause.
-        indent = None
-        for ln in form.split('\n')[1:]:
-            stripped = ln.lstrip()
-            if stripped.startswith('['):
-                indent = ln[:len(ln) - len(stripped)]
-                break
-        if indent is None:
-            # No own-line clause (all clauses share the (match line); indent one
-            # step under the match's own line — NOT the whole line prefix.
-            line_start = text.rfind('\n', 0, open_off) + 1
-            base = text[line_start:open_off]
-            base_ws = base[:len(base) - len(base.lstrip())]
-            indent = base_ws + '  '
-        insertion = ''.join('\n' + indent + c for c in clauses)
-    return text[:close_off] + insertion + text[close_off:]
-
-
 def apply_fix_to_lines(lines, repair):
     """Apply a single repair to a list of lines (mutates). Returns True on success."""
     before = repair.get('before')
@@ -610,7 +559,7 @@ def apply_fix_to_lines(lines, repair):
     # because paren-balancing spans lines.
     if repair.get('_insert_clauses'):
         text = ''.join(lines)
-        new_text = _insert_match_clauses(
+        new_text = insert_match_clauses(
             text, repair.get('_insert_line') or repair.get('line'),
             repair['_insert_clauses'])
         if not new_text or new_text == text:
@@ -801,7 +750,7 @@ if emit_patch:
         print(f"\n{'─' * 60}", file=sys.stderr)
         print(f"Remaining ({len(suggestions)} items, need manual review):", file=sys.stderr)
         for i, r in enumerate(suggestions):
-            print(f"  [{i+1}] {r['confidence']:.2f}  {r['file']}:{r['line']}  {r['description']}", file=sys.stderr)
+            print(f"  [{i+1}] {r['confidence']:.2f}  {r['file']}:{r['line']}  {r['description']}{conv_annotation(r)}", file=sys.stderr)
 
 else:
     # --- Human-readable queue output ---
@@ -814,6 +763,9 @@ else:
         print(f"[{i+1}] {mode}  confidence: {r['confidence']:.2f}  {r['file']}:{r['line']}")
         print(f"    evidence: {', '.join(r['evidence'])}")
         print(f"    {r['category']}: {r['description']}")
+        conv = conv_annotation(r)
+        if conv:
+            print(f"   {conv.strip()}")
         if r['fix_hint']:
             print(f"    fix: {r['fix_hint']}")
         if r.get('before') and r.get('after') and r['before'] != 'null' and r['after'] != 'null':

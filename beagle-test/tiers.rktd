@@ -63,6 +63,7 @@
              "diagnostic-kind.rkt"
              "error-explanation.rkt"    ; in-compiler explanation registry
              "exhaustive-match-fix.rkt" ; missing-case clause-skeleton repair fix
+             "repair-apply.rkt"         ; beagle-repair clause-insertion (python unit tests)
              "expected-errors.rkt"      ; inline #guard_msgs-style diagnostics
 
              "lint.rkt"
