@@ -938,12 +938,20 @@
        (for/fold ([strs '()]
                   [bound (current-js-bound)])
                  ([b (in-list bindings)])
-         (define s (parameterize ([current-js-bound bound])
-                     (format "const ~a = ~a;"
-                             (emit-binding-target (let-binding-name b))
-                             (emit-expr (let-binding-value b)))))
+         (define val-str (parameterize ([current-js-bound bound])
+                           (emit-expr (let-binding-value b))))
+         (define s (format "const ~a = ~a;"
+                           (emit-binding-target (let-binding-name b))
+                           val-str))
+         (define as-strs
+           (if (and (map-destructure? (let-binding-name b))
+                    (map-destructure-as-name (let-binding-name b)))
+               (list (format "const ~a = ~a;"
+                             (mangle-name (map-destructure-as-name (let-binding-name b)))
+                             val-str))
+               '()))
          (define new-names (names-from-binding-target (let-binding-name b)))
-         (values (append strs (list s))
+         (values (append strs (list s) as-strs)
                  (set-union bound (list->set new-names)))))
      (with-bindings let-names
        (lambda ()
@@ -1486,7 +1494,14 @@
 (define (emit-destructure p)
   (cond
     [(map-destructure? p)
-     (format "{~a}" (string-join (map mangle-name (map-destructure-keys p)) ", "))]
+     (define or-alist (map-destructure-or-defaults p))
+     (define key-strs
+       (for/list ([k (in-list (map-destructure-keys p))])
+         (define default-pair (assq k or-alist))
+         (if default-pair
+             (format "~a = ~a" (mangle-name k) (emit-expr (cdr default-pair)))
+             (mangle-name k))))
+     (format "{~a}" (string-join key-strs ", "))]
     [(seq-destructure? p)
      (define mangled (map mangle-name (seq-destructure-names p)))
      (cond
