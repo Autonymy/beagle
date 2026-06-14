@@ -1185,16 +1185,26 @@
   (format "~a :: enum u8 {\n~a\n}" name (string-join entries "\n")))
 
 (define (emit-def f)
-  (unless (def-form-type f)
-    (unsupported "untyped def" "odin backend needs (def name :- Type value)"))
-  (define v (def-form-value f))
-  (define rhs
-    (parameterize ([temp-counter (box 0)])
-      (emit-typed-value v (def-form-type f))))
-  (format "~a: ~a : ~a;"
-          (ident (def-form-name f))
-          (type->odin (def-form-type f))
-          rhs))
+  (cond
+    ;; Untyped def whose value is a bare identifier = a constant alias, e.g. a
+    ;; mode-2 hygiene alias `(def helper__hyg helper)`. Emit an Odin constant
+    ;; alias `name :: value` (type inferred from the aliased binding). Since
+    ;; fn-ident == ident here, the alias name matches its call sites and the
+    ;; aliased name matches the original def/proc — so this works whether the
+    ;; aliased binding is a proc (defn) or a value (def).
+    [(and (not (def-form-type f)) (symbol? (def-form-value f)))
+     (format "~a :: ~a;" (ident (def-form-name f)) (ident (def-form-value f)))]
+    [else
+     (unless (def-form-type f)
+       (unsupported "untyped def" "odin backend needs (def name :- Type value)"))
+     (define v (def-form-value f))
+     (define rhs
+       (parameterize ([temp-counter (box 0)])
+         (emit-typed-value v (def-form-type f))))
+     (format "~a: ~a : ~a;"
+             (ident (def-form-name f))
+             (type->odin (def-form-type f))
+             rhs)]))
 
 (define (emit-defn f)
   (define name (fn-ident (defn-form-name f)))
