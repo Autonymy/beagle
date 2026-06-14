@@ -19,7 +19,8 @@
          racket/string
          "types.rkt"
          "tags.rkt"
-         "macro-eval.rkt")
+         "macro-eval.rkt"
+         (only-in "ast.rkt" current-registry))
 
 (struct macro-def (kind fixed-params rest-param template) #:transparent)
 ;; kind: 'safe or 'proc
@@ -741,7 +742,13 @@
       [(symbol? datum)
        (when (and (module-def-name? datum)
                   (not (memq datum macro-params))
-                  (not (memq datum binders)))
+                  (not (memq datum binders))
+                  ;; A name that is ALSO a registered macro must not be
+                  ;; aliased — it expands, and renaming it would suppress the
+                  ;; expansion (a defmacro/defn name collision is pathological
+                  ;; but must stay correct).
+                  (not (and (current-registry)
+                            (lookup-macro (current-registry) datum))))
          (add! datum))]
       [(pair? datum)
        (cond

@@ -1082,12 +1082,20 @@
   (define body-locs-table (make-hasheq))
   ;; Mode-2 hygiene: the set of this program's top-level definition names, and
   ;; a fresh alias table the expander fills with free-ref -> alias entries.
+  ;; GATED to the live targets that emit the injected `(def alias orig)`
+  ;; correctly — clj/cljs/nix/js, and odin (emit-odin renders an untyped
+  ;; identifier-valued def as a constant alias `name :: value`). Dormant
+  ;; targets (sql/py/rkt/zig) keep use-site resolution until their emitters
+  ;; are verified to handle the alias form. When the set is #f, free-ref
+  ;; resolution is inert and expansion is unchanged.
+  (define hygiene-capable? (memq target '(clj cljs nix js odin)))
   (define module-def-name-set
-    (for/fold ([acc (hasheq)]) ([d (in-list datums)])
-      (if (and (pair? d) (memq (car d) '(def defn defonce))
-               (pair? (cdr d)) (symbol? (cadr d)))
-          (hash-set acc (cadr d) #t)
-          acc)))
+    (and hygiene-capable?
+         (for/fold ([acc (hasheq)]) ([d (in-list datums)])
+           (if (and (pair? d) (memq (car d) '(def defn defonce))
+                    (pair? (cdr d)) (symbol? (cadr d)))
+               (hash-set acc (cadr d) #t)
+               acc))))
   (define hygiene-alias-table (make-hasheq))
   (define pairs
     (parameterize ([current-registry registry]

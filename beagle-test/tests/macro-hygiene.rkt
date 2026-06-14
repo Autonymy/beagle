@@ -26,6 +26,8 @@
 ;; relax the assertion.
 
 (require rackunit
+         racket/file
+         racket/port
          beagle/private/parse
          beagle/private/types
          beagle/private/macros
@@ -132,6 +134,37 @@
               "a `(def helper__hyg helper)` alias must be injected")
   (check-eq? (def-form-value alias-def) 'helper
              "the alias must point at the module's helper"))
+
+;; EMIT-LEVEL coverage: a mode-2 program must actually COMPILE on every live
+;; target with the hygiene alias present. (The parse-only tests above missed
+;; that odin's emit-def rejected the untyped alias — this catches that class.)
+;; Driven through the #lang loader so the reader handles the backtick/comma.
+(define HYG-EMIT-SRC
+  (string-append
+   "(defn helper [x :- Int] :- Int (* x 100))\n"
+   "(defmacro double [x] `(helper ,x))\n"
+   "(defn use [n :- Int] :- Int (double n))\n"))
+
+(define (emit-via-lang target ext)
+  (define tmp (make-temporary-file (format "hyg-~a-~~a.~a" target ext)))
+  (call-with-output-file tmp
+    (lambda (o) (fprintf o "#lang beagle/~a\n~a" target HYG-EMIT-SRC))
+    #:exists 'truncate/replace)
+  (dynamic-wind
+   void
+   (lambda () (with-output-to-string (lambda () (dynamic-require tmp #f))))
+   (lambda () (delete-file tmp))))
+
+(test-case "mode-2 hygiene compiles with the alias on every live target"
+  (for ([spec (in-list '((clj "bclj") (cljs "bcljs") (nix "bnix")
+                         (js "bjs") (odin "bodin")))])
+    (define tgt (car spec))
+    (define out (emit-via-lang tgt (cadr spec)))
+    (check-true (regexp-match? #rx"hyg" out)
+                (format "~a: expected a hygiene alias in the emit:\n~a" tgt out))
+    ;; the macro's call goes through the alias, not bare `helper`
+    (check-true (regexp-match? #rx"helper.*hyg|hyg.*[(]?n" out)
+                (format "~a: macro call should use the alias:\n~a" tgt out))))
 
 ;; --- 3. quasi-quote splice with name collision ----------------------------
 ;;
