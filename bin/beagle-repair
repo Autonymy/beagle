@@ -531,10 +531,26 @@ def _insert_match_clauses(text, anchor_line, clauses):
     if anchor < 1 or anchor > len(src_lines):
         return None
     pre = sum(len(l) + 1 for l in src_lines[:anchor - 1])
-    m = re.search(r'\(\s*match\b', text[pre:])
-    if not m:
+    # Find the real `(match` from the anchor, skipping any `(match` that sits
+    # inside a string literal (string-aware, so a decoy in a string doesn't win).
+    open_off = None
+    j, in_str = pre, False
+    while j < len(text):
+        c = text[j]
+        if in_str:
+            if c == '\\':
+                j += 2
+                continue
+            if c == '"':
+                in_str = False
+        elif c == '"':
+            in_str = True
+        elif c == '(' and re.match(r'\(\s*match\b', text[j:]):
+            open_off = j
+            break
+        j += 1
+    if open_off is None:
         return None
-    open_off = pre + m.start()
     # Balance parens from the match's '(' to its ')', skipping string contents.
     depth = 0
     in_str = False
@@ -560,17 +576,27 @@ def _insert_match_clauses(text, anchor_line, clauses):
         i += 1
     if close_off is None:
         return None
-    # Reuse the indentation of the first existing clause line.
-    indent = None
-    for ln in text[open_off:close_off].split('\n')[1:]:
-        stripped = ln.lstrip()
-        if stripped.startswith('['):
-            indent = ln[:len(ln) - len(stripped)]
-            break
-    if indent is None:
-        line_start = text.rfind('\n', 0, open_off) + 1
-        indent = text[line_start:open_off] + '  '
-    insertion = ''.join('\n' + indent + c for c in clauses)
+    form = text[open_off:close_off]
+    if '\n' not in form:
+        # Single-line match: keep it on one line, space-separated, so we never
+        # emit a stray newline mid-form (which produced broken output before).
+        insertion = ''.join(' ' + c for c in clauses)
+    else:
+        # Multi-line: reuse the indentation of the first existing own-line clause.
+        indent = None
+        for ln in form.split('\n')[1:]:
+            stripped = ln.lstrip()
+            if stripped.startswith('['):
+                indent = ln[:len(ln) - len(stripped)]
+                break
+        if indent is None:
+            # No own-line clause (all clauses share the (match line); indent one
+            # step under the match's own line — NOT the whole line prefix.
+            line_start = text.rfind('\n', 0, open_off) + 1
+            base = text[line_start:open_off]
+            base_ws = base[:len(base) - len(base.lstrip())]
+            indent = base_ws + '  '
+        insertion = ''.join('\n' + indent + c for c in clauses)
     return text[:close_off] + insertion + text[close_off:]
 
 
