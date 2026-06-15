@@ -40,17 +40,17 @@
           2))))
 
 ;; `!`-purity enforcement (Phase 6 — design-purity.md). Seeded from
-;; BEAGLE_PURITY ('off | 'warn | 'error). Phase 6.0 ships DARK: the default
-;; is 'off, which short-circuits check-purity! entirely so the pass is inert
-;; in every build and cannot turn into a new diagnostic for the live
-;; consumers. Mirrors the BEAGLE_CHECK_PROFILE env precedent exactly. Flip on
-;; per rollout stage (warn/error) without touching consumer source.
+;; BEAGLE_PURITY ('off | 'warn | 'error). Default is now 'error: a strict-mode
+;; defn whose body mutates (set! or a `!`-named call) must itself be `!`-named,
+;; or it is a hard compile error. Opt down with BEAGLE_PURITY=off|warn. All
+;; live consumers (gjoa/chelonia/nixos) and beagle's own corpus are clean at
+;; 'error as of the flip; mirrors the BEAGLE_CHECK_PROFILE env precedent.
 (define current-purity-enforcement
   (make-parameter
     (case (getenv "BEAGLE_PURITY")
+      [("off")   'off]
       [("warn")  'warn]
-      [("error") 'error]
-      [else      'off])))
+      [else      'error])))
 
 (define (merge-types . ts)
   (define non-any (filter (λ (t) (not (any-type? t))) ts))
