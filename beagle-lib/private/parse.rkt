@@ -2652,6 +2652,211 @@
                           "quasiquote (`` ` ``) outside defmacro body — beagle's quasiquote is macro-template-only; use literal data containers (`'[…]` / `'{…}` / `'(…)`) for inert data construction")]
       [_ (parse-list-form* d subs)])))
 
+;; --- nix family migrated to the compile-time combiner registry ---
+
+;; `flake-input` — typed access to flake-input attribute paths.
+(register-combiner! 'flake-input
+  (lambda (d subs)
+    (match d
+      [(list 'flake-input input-name namespace rest ...)
+       (unless (keyword-sym? input-name)
+         (error 'beagle
+                "flake-input: input-name must be a keyword (e.g. :quickshell), got ~v"
+                input-name))
+       (unless (keyword-sym? namespace)
+         (error 'beagle
+                "flake-input: namespace must be a keyword (e.g. :packages or :legacyPackages), got ~v"
+                namespace))
+       ;; Use rest (raw datum from match destructuring) rather than stx-tail —
+       ;; segments are bare symbols, no source-location preservation needed.
+       (for ([s (in-list rest)])
+         (unless (or (keyword-sym? s) (symbol? s))
+           (error 'beagle
+                  "flake-input: path segment must be keyword or symbol, got ~v" s)))
+       (flake-input-form input-name namespace rest)]
+      [_ (parse-list-form* d subs)])))
+
+;; `nix/assert` — canonical Nix assertion form.
+(register-combiner! 'nix/assert
+  (lambda (d subs)
+    (match d
+      [(list 'nix/assert cond-expr body-expr)
+       ;; Canonical Nix assertion form. Bare `(assert ...)` is HARD-REJECTED —
+       ;; see the bare-`assert` arm below.
+       (nix-assert (parse-expr (or (stx-ref subs 1) cond-expr))
+                   (parse-expr (or (stx-ref subs 2) body-expr)))]
+      [_ (parse-list-form* d subs)])))
+
+;; `nix/with-cfg` — config-path scoped let-binding form.
+(register-combiner! 'nix/with-cfg
+  (lambda (d subs)
+    (match d
+      [(list 'nix/with-cfg path-expr body-expr)
+       ;; (nix/with-cfg config.myConfig.modules.X BODY) → introduces `cfg = config...;`
+       ;; let-binding and rewrites config.myConfig.modules.X.foo to cfg.foo in BODY.
+       ;; Bare `(with-cfg ...)` is HARD-REJECTED — see the bare-`with-cfg` arm below.
+       (nix-with-cfg (parse-expr (or (stx-ref subs 1) path-expr))
+                     (parse-expr (or (stx-ref subs 2) body-expr)))]
+      [_ (parse-list-form* d subs)])))
+
+;; `with-cfg` — bare form HARD-REJECTED; point at `nix/with-cfg`.
+(register-combiner! 'with-cfg
+  (lambda (d subs)
+    (match d
+      [(list 'with-cfg _ _)
+       (raise-parse-error 'bare-nix-form
+                          "(with-cfg ...) — bare `with-cfg` is not supported. Beagle namespaces target-specific forms; use `(nix/with-cfg PATH BODY)`."
+                          #:suggestion (replace-head-suggestion 'with-cfg 'nix/with-cfg))]
+      [_ (parse-list-form* d subs)])))
+
+;; `nix/fn-set` — attrset-destructuring lambda: { a, b }: body
+(register-combiner! 'nix/fn-set
+  (lambda (d subs)
+    (match d
+      [(list 'nix/fn-set formals body-expr)
+       (define-values (fl at-name)
+         (parse-nix-fn-set-formals (or (stx-ref subs 1) formals)))
+       (nix-fn-set fl #f at-name (parse-expr (or (stx-ref subs 2) body-expr)))]
+      [_ (parse-list-form* d subs)])))
+
+;; `fn-set` — bare form HARD-REJECTED; point at `nix/fn-set`.
+(register-combiner! 'fn-set
+  (lambda (d subs)
+    (match d
+      [(list 'fn-set _ _)
+       (raise-parse-error 'bare-nix-form
+                          "(fn-set ...) — bare `fn-set` is not supported. Beagle namespaces target-specific forms; use `(nix/fn-set FORMALS BODY)`."
+                          #:suggestion (replace-head-suggestion 'fn-set 'nix/fn-set))]
+      [_ (parse-list-form* d subs)])))
+
+;; `nix/module` — NixOS module / open-attrs lambda: { a, b, ... }: body
+(register-combiner! 'nix/module
+  (lambda (d subs)
+    (match d
+      [(list 'nix/module formals body-expr)
+       ;; NixOS module / open-attrs lambda: { a, b, ... }: body
+       (define-values (fl at-name)
+         (parse-nix-fn-set-formals (or (stx-ref subs 1) formals)))
+       (nix-fn-set fl #t at-name (parse-expr (or (stx-ref subs 2) body-expr)))]
+      [_ (parse-list-form* d subs)])))
+
+;; `nix/overlay` — final: prev: body (curried, NOT attrset-destructure).
+(register-combiner! 'nix/overlay
+  (lambda (d subs)
+    (match d
+      [(list 'nix/overlay formals body-expr)
+       ;; Nix overlay: final: prev: body (curried — NOT attrset-destructure)
+       ;; Emits as fn-form so the nix emitter produces `final: prev: body`.
+       (define-values (f-list _at-name)
+         (parse-nix-fn-set-formals (or (stx-ref subs 1) formals)))
+       (unless (= (length f-list) 2)
+         (error 'beagle "nix/overlay: expected exactly two formals [final prev], got ~a" (length f-list)))
+       (define ps
+         (for/list ([f (in-list f-list)])
+           (param (nix-fn-set-formal-name f) #f)))
+       (fn-form ps #f #f
+                (list (parse-expr (or (stx-ref subs 2) body-expr))))]
+      [_ (parse-list-form* d subs)])))
+
+;; `overlay` — bare form HARD-REJECTED; point at `nix/overlay`.
+(register-combiner! 'overlay
+  (lambda (d subs)
+    (match d
+      [(list 'overlay _ _)
+       (raise-parse-error 'bare-nix-form
+                          "(overlay ...) — bare `overlay` is not supported. Beagle namespaces target-specific forms; use `(nix/overlay [final prev] BODY)`."
+                          #:suggestion (replace-head-suggestion 'overlay 'nix/overlay))]
+      [_ (parse-list-form* d subs)])))
+
+;; `nix/derivation` — mkDerivation sugar.
+(register-combiner! 'nix/derivation
+  (lambda (d subs)
+    (match d
+      [(list 'nix/derivation attrs-expr)
+       ;; mkDerivation sugar: (nix/derivation {:pname ... :version ... :src ...})
+       ;; Emits as `(pkgs.stdenv.mkDerivation { ... })`. Use `:builder pkg` to
+       ;; override the default stdenv (e.g. :builder pkgs.runCommand).
+       (define attrs (parse-expr (or (stx-ref subs 1) attrs-expr)))
+       (nix-derivation attrs)]
+      [_ (parse-list-form* d subs)])))
+
+;; `derivation` — bare form HARD-REJECTED; point at `nix/derivation`.
+(register-combiner! 'derivation
+  (lambda (d subs)
+    (match d
+      [(list 'derivation _)
+       (raise-parse-error 'bare-nix-form
+                          "(derivation ...) — bare `derivation` is not supported. Beagle namespaces target-specific forms; use `(nix/derivation ATTRS)`."
+                          #:suggestion (replace-head-suggestion 'derivation 'nix/derivation))]
+      [_ (parse-list-form* d subs)])))
+
+;; `nix/flake` — flake.nix sugar.
+(register-combiner! 'nix/flake
+  (lambda (d subs)
+    (match d
+      [(list 'nix/flake attrs-expr)
+       ;; flake.nix sugar: (nix/flake {:description ... :inputs {...} :outputs (nix/fn-set [self nixpkgs] ...)})
+       (define attrs (parse-expr (or (stx-ref subs 1) attrs-expr)))
+       (nix-flake attrs)]
+      [_ (parse-list-form* d subs)])))
+
+;; `flake` — bare form HARD-REJECTED; point at `nix/flake`.
+(register-combiner! 'flake
+  (lambda (d subs)
+    (match d
+      [(list 'flake _)
+       (raise-parse-error 'bare-nix-form
+                          "(flake ...) — bare `flake` is not supported. Beagle namespaces target-specific forms; use `(nix/flake ATTRS)`."
+                          #:suggestion (replace-head-suggestion 'flake 'nix/flake))]
+      [_ (parse-list-form* d subs)])))
+
+;; `nix/with` — canonical Nix scope form.
+(register-combiner! 'nix/with
+  (lambda (d subs)
+    (match d
+      [(list 'nix/with ns-expr body-expr)
+       ;; Canonical Nix scope form. Unambiguous (no record-update shape collision).
+       ;; Bare `(with ns body)` Nix-scope shape is HARD-REJECTED — see the
+       ;; bare-`with` arm below.
+       (nix-with (parse-expr (or (stx-ref subs 1) ns-expr))
+                 (parse-expr (or (stx-ref subs 2) body-expr)))]
+      [_ (parse-list-form* d subs)])))
+
+;; `with` — record update (with-form) STAYS bare; Nix-scope shape HARD-REJECTED.
+(register-combiner! 'with
+  (lambda (d subs)
+    (match d
+      [(list 'with target-expr updates ...)
+       ;; (with target [:k v] [:k v] ...) — record update (with-form). STAYS bare;
+       ;;   not a Clojure collision.
+       ;; (with ns body) — Nix scope shape. HARD-REJECTED — point at `nix/with`.
+       ;; Disambiguate by shape: the record-update form has every update as a
+       ;; [:keyword value ...] bracket; anything else is the (removed) Nix-scope
+       ;; shape and gets the migration pointer.
+       (cond
+         [(and (= (length updates) 1)
+               (let ([d (->datum (car updates))])
+                 (not (and (bracketed? d)
+                           (>= (length (bracket-body d)) 2)
+                           (let ([first (car (bracket-body d))])
+                             (and (symbol? first) (keyword-sym? first)))))))
+          ;; Bare `(with ns body)` Nix-scope shape — hard reject.
+          (raise-parse-error 'bare-nix-form
+                             "(with NS BODY) — bare Nix-scope `with` is not supported. Beagle namespaces target-specific forms; use `(nix/with NS BODY)`.")]
+         [else
+          (parse-with-form (or (stx-ref subs 1) target-expr)
+                           (or (stx-tail subs 2) updates))])]
+      [_ (parse-list-form* d subs)])))
+
+;; `nix-ident` — removed form; pointed rejection at flake-input.
+(register-combiner! 'nix-ident
+  (lambda (d subs)
+    (match d
+      [(list 'nix-ident _ ...)
+       (raise-parse-error 'removed-form
+                          "nix-ident removed — use (flake-input :NAME :NAMESPACE :path ...) for flake-input access. nix-ident was an undocumented escape hatch that bypassed the type system.")]
+      [_ (parse-list-form* d subs)])))
+
 (define (parse-list-form d subs)
   ;; Invariant: macro heads are resolved in parse-expr (and the top-level loop)
   ;; BEFORE control reaches here, so a 'macro head must never arrive — if one
@@ -2696,28 +2901,7 @@
 
     ;; `extend-type` migrated to the compile-time combiner registry (see register-combiner!).
 
-    ;; flake-input: typed access to flake-input attribute paths.
-    ;; (flake-input :NAME :NAMESPACE :path ...) →
-    ;;   inputs.NAME.NAMESPACE.${pkgs.stdenv.hostPlatform.system}.path...
-    ;; System axis collapsed (every flake follows this convention).
-    ;; Result type opaque (NixType); schema-cache for compile-time
-    ;; attribute-path checking is a deferred follow-up.
-    [(list 'flake-input input-name namespace rest ...)
-     (unless (keyword-sym? input-name)
-       (error 'beagle
-              "flake-input: input-name must be a keyword (e.g. :quickshell), got ~v"
-              input-name))
-     (unless (keyword-sym? namespace)
-       (error 'beagle
-              "flake-input: namespace must be a keyword (e.g. :packages or :legacyPackages), got ~v"
-              namespace))
-     ;; Use rest (raw datum from match destructuring) rather than stx-tail —
-     ;; segments are bare symbols, no source-location preservation needed.
-     (for ([s (in-list rest)])
-       (unless (or (keyword-sym? s) (symbol? s))
-         (error 'beagle
-                "flake-input: path segment must be keyword or symbol, got ~v" s)))
-     (flake-input-form input-name namespace rest)]
+    ;; `flake-input` migrated to the compile-time combiner registry (see register-combiner!).
 
     ;; `fn` accepts either `:-` (canonical) or `:` (legacy) as the
     ;; return-type marker. Top-level def/defonce/defn reject bare `:` because
@@ -2744,23 +2928,11 @@
 
     ;; `rec-attrs` migrated to the compile-time combiner registry (see register-combiner!).
 
-    [(list 'nix/assert cond-expr body-expr)
-     ;; Canonical Nix assertion form. Bare `(assert ...)` is HARD-REJECTED —
-     ;; see the bare-`assert` arm below.
-     (nix-assert (parse-expr (or (stx-ref subs 1) cond-expr))
-                 (parse-expr (or (stx-ref subs 2) body-expr)))]
+    ;; `nix/assert` migrated to the compile-time combiner registry (see register-combiner!).
     ;; `assert` (bare) migrated to the compile-time combiner registry (see register-combiner!).
 
-    [(list 'nix/with-cfg path-expr body-expr)
-     ;; (nix/with-cfg config.myConfig.modules.X BODY) → introduces `cfg = config...;`
-     ;; let-binding and rewrites config.myConfig.modules.X.foo to cfg.foo in BODY.
-     ;; Bare `(with-cfg ...)` is HARD-REJECTED — see the bare-`with-cfg` arm below.
-     (nix-with-cfg (parse-expr (or (stx-ref subs 1) path-expr))
-                   (parse-expr (or (stx-ref subs 2) body-expr)))]
-    [(list 'with-cfg _ _)
-     (raise-parse-error 'bare-nix-form
-                        "(with-cfg ...) — bare `with-cfg` is not supported. Beagle namespaces target-specific forms; use `(nix/with-cfg PATH BODY)`."
-                        #:suggestion (replace-head-suggestion 'with-cfg 'nix/with-cfg))]
+    ;; `nix/with-cfg` migrated to the compile-time combiner registry (see register-combiner!).
+    ;; `with-cfg` (bare) migrated to the compile-time combiner registry (see register-combiner!).
 
     ;; `get-or` migrated to the compile-time combiner registry (see register-combiner!).
 
@@ -2789,58 +2961,20 @@
                  [(symbol? d) (symbol->string d)]
                  [else (error 'beagle "p: expected string or symbol, got ~v" d)]))]
 
-    [(list 'nix/fn-set formals body-expr)
-     (define-values (fl at-name)
-       (parse-nix-fn-set-formals (or (stx-ref subs 1) formals)))
-     (nix-fn-set fl #f at-name (parse-expr (or (stx-ref subs 2) body-expr)))]
-    [(list 'fn-set _ _)
-     (raise-parse-error 'bare-nix-form
-                        "(fn-set ...) — bare `fn-set` is not supported. Beagle namespaces target-specific forms; use `(nix/fn-set FORMALS BODY)`."
-                        #:suggestion (replace-head-suggestion 'fn-set 'nix/fn-set))]
+    ;; `nix/fn-set` migrated to the compile-time combiner registry (see register-combiner!).
+    ;; `fn-set` (bare) migrated to the compile-time combiner registry (see register-combiner!).
 
-    [(list 'nix/module formals body-expr)
-     ;; NixOS module / open-attrs lambda: { a, b, ... }: body
-     (define-values (fl at-name)
-       (parse-nix-fn-set-formals (or (stx-ref subs 1) formals)))
-     (nix-fn-set fl #t at-name (parse-expr (or (stx-ref subs 2) body-expr)))]
+    ;; `nix/module` migrated to the compile-time combiner registry (see register-combiner!).
     ;; `module` (bare) migrated to the compile-time combiner registry (see register-combiner!).
 
-    [(list 'nix/overlay formals body-expr)
-     ;; Nix overlay: final: prev: body (curried — NOT attrset-destructure)
-     ;; Emits as fn-form so the nix emitter produces `final: prev: body`.
-     (define-values (f-list _at-name)
-       (parse-nix-fn-set-formals (or (stx-ref subs 1) formals)))
-     (unless (= (length f-list) 2)
-       (error 'beagle "nix/overlay: expected exactly two formals [final prev], got ~a" (length f-list)))
-     (define ps
-       (for/list ([f (in-list f-list)])
-         (param (nix-fn-set-formal-name f) #f)))
-     (fn-form ps #f #f
-              (list (parse-expr (or (stx-ref subs 2) body-expr))))]
-    [(list 'overlay _ _)
-     (raise-parse-error 'bare-nix-form
-                        "(overlay ...) — bare `overlay` is not supported. Beagle namespaces target-specific forms; use `(nix/overlay [final prev] BODY)`."
-                        #:suggestion (replace-head-suggestion 'overlay 'nix/overlay))]
+    ;; `nix/overlay` migrated to the compile-time combiner registry (see register-combiner!).
+    ;; `overlay` (bare) migrated to the compile-time combiner registry (see register-combiner!).
 
-    [(list 'nix/derivation attrs-expr)
-     ;; mkDerivation sugar: (nix/derivation {:pname ... :version ... :src ...})
-     ;; Emits as `(pkgs.stdenv.mkDerivation { ... })`. Use `:builder pkg` to
-     ;; override the default stdenv (e.g. :builder pkgs.runCommand).
-     (define attrs (parse-expr (or (stx-ref subs 1) attrs-expr)))
-     (nix-derivation attrs)]
-    [(list 'derivation _)
-     (raise-parse-error 'bare-nix-form
-                        "(derivation ...) — bare `derivation` is not supported. Beagle namespaces target-specific forms; use `(nix/derivation ATTRS)`."
-                        #:suggestion (replace-head-suggestion 'derivation 'nix/derivation))]
+    ;; `nix/derivation` migrated to the compile-time combiner registry (see register-combiner!).
+    ;; `derivation` (bare) migrated to the compile-time combiner registry (see register-combiner!).
 
-    [(list 'nix/flake attrs-expr)
-     ;; flake.nix sugar: (nix/flake {:description ... :inputs {...} :outputs (nix/fn-set [self nixpkgs] ...)})
-     (define attrs (parse-expr (or (stx-ref subs 1) attrs-expr)))
-     (nix-flake attrs)]
-    [(list 'flake _)
-     (raise-parse-error 'bare-nix-form
-                        "(flake ...) — bare `flake` is not supported. Beagle namespaces target-specific forms; use `(nix/flake ATTRS)`."
-                        #:suggestion (replace-head-suggestion 'flake 'nix/flake))]
+    ;; `nix/flake` migrated to the compile-time combiner registry (see register-combiner!).
+    ;; `flake` (bare) migrated to the compile-time combiner registry (see register-combiner!).
 
     ;; The pipe family (`pipe-to`, `pipe-from`, `implies`, `|>`, `|>>`) was an
     ;; Elixir/F# import — removed per CLAUDE.md "Beagle is Clojure plus types,
@@ -3101,33 +3235,9 @@
     ;; dotimes removed — sugar for (doseq [i (range n)] body...).
     ;; No broader pattern reinforced; composition is transparent.
 
-    [(list 'nix/with ns-expr body-expr)
-     ;; Canonical Nix scope form. Unambiguous (no record-update shape collision).
-     ;; Bare `(with ns body)` Nix-scope shape is HARD-REJECTED — see the
-     ;; bare-`with` arm below.
-     (nix-with (parse-expr (or (stx-ref subs 1) ns-expr))
-               (parse-expr (or (stx-ref subs 2) body-expr)))]
+    ;; `nix/with` migrated to the compile-time combiner registry (see register-combiner!).
 
-    [(list 'with target-expr updates ...)
-     ;; (with target [:k v] [:k v] ...) — record update (with-form). STAYS bare;
-     ;;   not a Clojure collision.
-     ;; (with ns body) — Nix scope shape. HARD-REJECTED — point at `nix/with`.
-     ;; Disambiguate by shape: the record-update form has every update as a
-     ;; [:keyword value ...] bracket; anything else is the (removed) Nix-scope
-     ;; shape and gets the migration pointer.
-     (cond
-       [(and (= (length updates) 1)
-             (let ([d (->datum (car updates))])
-               (not (and (bracketed? d)
-                         (>= (length (bracket-body d)) 2)
-                         (let ([first (car (bracket-body d))])
-                           (and (symbol? first) (keyword-sym? first)))))))
-        ;; Bare `(with ns body)` Nix-scope shape — hard reject.
-        (raise-parse-error 'bare-nix-form
-                           "(with NS BODY) — bare Nix-scope `with` is not supported. Beagle namespaces target-specific forms; use `(nix/with NS BODY)`.")]
-       [else
-        (parse-with-form (or (stx-ref subs 1) target-expr)
-                         (or (stx-tail subs 2) updates))])]
+    ;; `with` migrated to the compile-time combiner registry (see register-combiner!).
 
     ;; `defenum` migrated to the compile-time combiner registry (see register-combiner!).
 
@@ -3252,9 +3362,7 @@
     ;; `defmulti` migrated to the compile-time combiner registry (see register-combiner!).
     ;; `defmethod` migrated to the compile-time combiner registry (see register-combiner!).
     ;; `deftype` migrated to the compile-time combiner registry (see register-combiner!).
-    [(list 'nix-ident _ ...)
-     (raise-parse-error 'removed-form
-                        "nix-ident removed — use (flake-input :NAME :NAMESPACE :path ...) for flake-input access. nix-ident was an undocumented escape hatch that bypassed the type system.")]
+    ;; `nix-ident` migrated to the compile-time combiner registry (see register-combiner!).
     ;; inc / dec / not= live in stdlib-portable.rkt — no parse-time
      ;; rejection. They flow through the ordinary call-form arm below.
     ;; `case` migrated to the compile-time combiner registry (see register-combiner!).
