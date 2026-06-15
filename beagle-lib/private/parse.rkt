@@ -1847,6 +1847,9 @@
        (defonce-form name #f (parse-expr (or (stx-ref subs 3) value)) doc)]
       [(list 'defonce (? symbol? name) value)
        (defonce-form name #f (parse-expr (or (stx-ref subs 2) value)) #f)]
+      [(cons 'defonce _)
+       (raise-parse-error 'bad-form
+                          "malformed defonce — expected (defonce NAME VALUE), (defonce NAME \"doc\" VALUE), or (defonce NAME :- TYPE VALUE); got: ~v" d)]
       [_ (parse-list-form* d subs)])))
 
 ;; `set!` — mutable assignment.
@@ -2014,61 +2017,43 @@
                                         (and subs (stx-tail subs 2)))))]
       [_ (parse-list-form* d subs)])))
 
-(define (parse-list-form d subs)
-  ;; Invariant: macro heads are resolved in parse-expr (and the top-level loop)
-  ;; BEFORE control reaches here, so a 'macro head must never arrive — if one
-  ;; does, the resolver and the call sites have drifted out of sync. Fail loudly
-  ;; rather than silently mis-dispatching to a built-in/legacy arm. On valid
-  ;; input this arm never fires, so goldens are unaffected.
-  (when (and (pair? d)
-             (eq? (head-meaning (current-registry) (car d)) 'macro))
-    (error 'beagle
-           "internal: macro head ~a reached parse-list-form (should be handled in parse-expr)"
-           (car d)))
-  (cond
-    [(and (pair? d) (symbol? (car d)) (lookup-combiner (car d)))
-     => (lambda (handler) (handler d subs))]
-    [else (parse-list-form* d subs)]))
+;; --- def family migrated to the compile-time combiner registry ---
 
-(define (parse-list-form* d subs)
+;; `def` — top-level binding; inline `:-` type, optional docstring; bare `:`
+;; rejected; any other def shape guarded (no silent call-form bypass).
+(register-combiner! 'def
+  (lambda (d subs)
+    (match d
+      [(list 'def (? symbol? name) ':- type-expr (? string? doc) value)
+       (def-form name (parse-type type-expr)
+                 (parse-expr (or (stx-ref subs 5) value))
+                 doc)]
+      [(list 'def (? symbol? name) ':- type-expr value)
+       (def-form name (parse-type type-expr)
+                 (parse-expr (or (stx-ref subs 4) value))
+                 #f)]
+      ;; Inline bare `:` on def is the legacy surface; reject and point at `:-`.
+      [(list 'def (? symbol? name) ': _ _)
+       (raise-parse-error 'inline-type-annotation
+                          "(def ~a : ...) — bare `:` is not the inline type marker. Use `:-` for inline type annotation:\n  (def ~a :- TYPE VALUE)"
+                          name name)]
+      [(list 'def (? symbol? name) (? string? doc) value)
+       (def-form name #f (parse-expr (or (stx-ref subs 3) value)) doc)]
+      [(list 'def (? symbol? name) value)
+       (def-form name #f (parse-expr (or (stx-ref subs 2) value)) #f)]
+      ;; Any other def shape would fall through to the call-form passthrough
+      ;; and silently bypass the type layer — guard it (bug class 2026-06-12).
+      [(cons 'def _)
+       (raise-parse-error 'bad-form
+                          "malformed def — expected (def NAME VALUE), (def NAME \"doc\" VALUE), (def NAME :- TYPE VALUE), or (def NAME :- TYPE \"doc\" VALUE); got: ~v" d)]
+      [_ (parse-list-form* d subs)])))
+
+;; `defn` / `defn-` — function definition (public/private). These share several
+;; (or 'defn 'defn-) arms, so both heads route to this ONE handler; the arms are
+;; kept in source order (semantically significant), with defn-only and
+;; defn--only arms interleaved exactly as in the legacy match.
+(define (parse-defn-form d subs)
   (match d
-    [(list (or 'unsafe 'unsafe-js 'unsafe-clj 'unsafe-py 'unsafe-rkt 'unsafe-nix 'unsafe-expr) _ ...)
-     (error 'beagle
-            "(~a ...) escape hatches are not available. Beagle has no per-target escape by design — add to stdlib-*.rkt or write a separate target-language file and import it."
-            (car d))]
-
-    ;; Inline `:-` annotations on def/defonce: accepted, populate the type slot.
-    ;; Docstrings (real Clojure def surface) are accepted in both typed and
-    ;; untyped positions and carried to clj/cljs emit.
-    [(list 'def (? symbol? name) ':- type-expr (? string? doc) value)
-     (def-form name (parse-type type-expr)
-               (parse-expr (or (stx-ref subs 5) value))
-               doc)]
-    [(list 'def (? symbol? name) ':- type-expr value)
-     (def-form name (parse-type type-expr)
-               (parse-expr (or (stx-ref subs 4) value))
-               #f)]
-    ;; Inline bare `:` on def is the legacy surface; reject and point at `:-`.
-    [(list 'def (? symbol? name) ': _ _)
-     (raise-parse-error 'inline-type-annotation
-                        "(def ~a : ...) — bare `:` is not the inline type marker. Use `:-` for inline type annotation:\n  (def ~a :- TYPE VALUE)"
-                        name name)]
-    [(list 'def (? symbol? name) (? string? doc) value)
-     (def-form name #f (parse-expr (or (stx-ref subs 3) value)) doc)]
-    [(list 'def (? symbol? name) value)
-     (def-form name #f (parse-expr (or (stx-ref subs 2) value)) #f)]
-    ;; Any other def shape would fall through to the call-form passthrough
-    ;; and silently bypass the type layer — guard it (bug class 2026-06-12).
-    [(cons 'def _)
-     (raise-parse-error 'bad-form
-                        "malformed def — expected (def NAME VALUE), (def NAME \"doc\" VALUE), (def NAME :- TYPE VALUE), or (def NAME :- TYPE \"doc\" VALUE); got: ~v" d)]
-
-    ;; `defonce` success arms migrated to the compile-time combiner registry
-    ;; (see register-combiner!). The guard arm below stays here.
-    [(cons 'defonce _)
-     (raise-parse-error 'bad-form
-                        "malformed defonce — expected (defonce NAME VALUE), (defonce NAME \"doc\" VALUE), or (defonce NAME :- TYPE VALUE); got: ~v" d)]
-
     ;; Docstring on defn/defn- (real Clojure surface): strip it, re-dispatch
     ;; the remaining form through the ordinary arms, then attach the doc to
     ;; the resulting node. Covers single-arity, multi-arity, and ^:private
@@ -2214,6 +2199,116 @@
      (raise-parse-error 'bad-form
                         "malformed ~a — expected (~a name \"doc\"? [params...] :- RET? body...) or multi-arity (~a name ([params] body...) ([params2] body...)); got: ~v"
                         head head head d)]
+    [_ (parse-list-form* d subs)]))
+(register-combiner! 'defn parse-defn-form)
+(register-combiner! 'defn- parse-defn-form)
+
+;; `defprotocol` — protocol declaration with method signatures.
+(register-combiner! 'defprotocol
+  (lambda (d subs)
+    (match d
+      [(list 'defprotocol (? symbol? name) sigs ...)
+       (protocol-form name (map parse-protocol-method (or (stx-tail subs 2) sigs)))]
+      [_ (parse-list-form* d subs)])))
+
+;; `defunion` — tagged union; `:throwable` variant routes to deferror-form,
+;; parametric form to parse-parametric-defunion.
+(register-combiner! 'defunion
+  (lambda (d subs)
+    (match d
+      ;; (defunion :throwable Name ...) — throwable variant union.
+      ;; Routes to deferror-form internally (same structural shape; throw/catch
+      ;; semantics live in the type checker's union-as-error logic). Inlined
+      ;; rather than calling parse-deferror because subs offset differs by 1.
+      [(list 'defunion ':throwable (? symbol? name) member-defs ...)
+       (define member-names '())
+       (define mf-hash (make-hasheq))
+       (for ([md (in-list (or (stx-tail subs 3) member-defs))])
+         (define d (->datum md))
+         (cond
+           [(symbol? d)
+            (set! member-names (cons d member-names))
+            (hash-set! mf-hash d '())]
+           [(and (list? d) (>= (length d) 2) (symbol? (car d)))
+            (define mname (car d))
+            (set! member-names (cons mname member-names))
+            (hash-set! mf-hash mname (parse-record-fields (cadr d)))]
+           [else
+            (error 'beagle
+                   "defunion :throwable member must be Symbol or (Name [fields...]): ~v" d)]))
+       (deferror-form name (reverse member-names) mf-hash)]
+
+      [(list 'defunion (? symbol? name) members ...)
+       (define raw (map ->datum (or (stx-tail subs 2) members)))
+       (define mnames (map (lambda (m) (if (pair? m) (car m) m)) raw))
+       (define mf-hash (make-hasheq))
+       (for ([m (in-list raw)])
+         (when (and (pair? m) (>= (length m) 2))
+           (define mname (car m))
+           (define fields-datum (cadr m))
+           (when (and (pair? fields-datum) (eq? (car fields-datum) BRACKET-TAG))
+             (hash-set! mf-hash mname (parse-record-fields fields-datum)))))
+       (defunion-form name mnames '() (if (hash-empty? mf-hash) #f mf-hash))]
+
+      [(list 'defunion (list (? symbol? name) type-vars ...) member-defs ...)
+       (parse-parametric-defunion name type-vars member-defs subs)]
+      [_ (parse-list-form* d subs)])))
+
+;; `deferror` — removed form; pointed rejection naming defunion :throwable.
+(register-combiner! 'deferror
+  (lambda (d subs)
+    (match d
+      [(list 'deferror _ ...)
+       (raise-parse-error 'removed-form
+                          "deferror removed — use (defunion :throwable Name ...) instead")]
+      [_ (parse-list-form* d subs)])))
+
+;; `defmulti` — removed form; pointed rejection naming defprotocol + extend-type.
+(register-combiner! 'defmulti
+  (lambda (d subs)
+    (match d
+      [(list 'defmulti _ ...)
+       (raise-parse-error 'removed-form
+                          "defmulti removed — use defprotocol + extend-type for type-based dispatch")]
+      [_ (parse-list-form* d subs)])))
+
+;; `defmethod` — removed form; pointed rejection naming defprotocol + extend-type.
+(register-combiner! 'defmethod
+  (lambda (d subs)
+    (match d
+      [(list 'defmethod _ ...)
+       (raise-parse-error 'removed-form
+                          "defmethod removed — use defprotocol + extend-type for type-based dispatch")]
+      [_ (parse-list-form* d subs)])))
+
+(define (parse-list-form d subs)
+  ;; Invariant: macro heads are resolved in parse-expr (and the top-level loop)
+  ;; BEFORE control reaches here, so a 'macro head must never arrive — if one
+  ;; does, the resolver and the call sites have drifted out of sync. Fail loudly
+  ;; rather than silently mis-dispatching to a built-in/legacy arm. On valid
+  ;; input this arm never fires, so goldens are unaffected.
+  (when (and (pair? d)
+             (eq? (head-meaning (current-registry) (car d)) 'macro))
+    (error 'beagle
+           "internal: macro head ~a reached parse-list-form (should be handled in parse-expr)"
+           (car d)))
+  (cond
+    [(and (pair? d) (symbol? (car d)) (lookup-combiner (car d)))
+     => (lambda (handler) (handler d subs))]
+    [else (parse-list-form* d subs)]))
+
+(define (parse-list-form* d subs)
+  (match d
+    [(list (or 'unsafe 'unsafe-js 'unsafe-clj 'unsafe-py 'unsafe-rkt 'unsafe-nix 'unsafe-expr) _ ...)
+     (error 'beagle
+            "(~a ...) escape hatches are not available. Beagle has no per-target escape by design — add to stdlib-*.rkt or write a separate target-language file and import it."
+            (car d))]
+
+    ;; `def` migrated to the compile-time combiner registry (see register-combiner!).
+
+    ;; `defonce` migrated to the compile-time combiner registry (see register-combiner!).
+
+    ;; `defn` / `defn-` migrated to the compile-time combiner registry (see register-combiner!).
 
     ;; (claim NAME TYPE) is HARD-REJECTED. Beagle's surface is typed Clojure
     ;; plus inference — type information rides on ordinary bindings via inline
@@ -2229,8 +2324,7 @@
 
     ;; `defrecord` migrated to the compile-time combiner registry (see register-combiner!).
 
-    [(list 'defprotocol (? symbol? name) sigs ...)
-     (protocol-form name (map parse-protocol-method (or (stx-tail subs 2) sigs)))]
+    ;; `defprotocol` migrated to the compile-time combiner registry (see register-combiner!).
 
     ;; defmulti / defmethod removed — multimethods had ~zero usage in the
     ;; corpus (one fixture file). Use defprotocol + extend-type for
@@ -2741,46 +2835,9 @@
 
     ;; `defenum` migrated to the compile-time combiner registry (see register-combiner!).
 
-    ;; (defunion :throwable Name ...) — throwable variant union.
-    ;; Routes to deferror-form internally (same structural shape; throw/catch
-    ;; semantics live in the type checker's union-as-error logic). Inlined
-    ;; rather than calling parse-deferror because subs offset differs by 1.
-    [(list 'defunion ':throwable (? symbol? name) member-defs ...)
-     (define member-names '())
-     (define mf-hash (make-hasheq))
-     (for ([md (in-list (or (stx-tail subs 3) member-defs))])
-       (define d (->datum md))
-       (cond
-         [(symbol? d)
-          (set! member-names (cons d member-names))
-          (hash-set! mf-hash d '())]
-         [(and (list? d) (>= (length d) 2) (symbol? (car d)))
-          (define mname (car d))
-          (set! member-names (cons mname member-names))
-          (hash-set! mf-hash mname (parse-record-fields (cadr d)))]
-         [else
-          (error 'beagle
-                 "defunion :throwable member must be Symbol or (Name [fields...]): ~v" d)]))
-     (deferror-form name (reverse member-names) mf-hash)]
+    ;; `defunion` migrated to the compile-time combiner registry (see register-combiner!).
 
-    [(list 'defunion (? symbol? name) members ...)
-     (define raw (map ->datum (or (stx-tail subs 2) members)))
-     (define mnames (map (lambda (m) (if (pair? m) (car m) m)) raw))
-     (define mf-hash (make-hasheq))
-     (for ([m (in-list raw)])
-       (when (and (pair? m) (>= (length m) 2))
-         (define mname (car m))
-         (define fields-datum (cadr m))
-         (when (and (pair? fields-datum) (eq? (car fields-datum) BRACKET-TAG))
-           (hash-set! mf-hash mname (parse-record-fields fields-datum)))))
-     (defunion-form name mnames '() (if (hash-empty? mf-hash) #f mf-hash))]
-
-    [(list 'defunion (list (? symbol? name) type-vars ...) member-defs ...)
-     (parse-parametric-defunion name type-vars member-defs subs)]
-
-    [(list 'deferror _ ...)
-     (raise-parse-error 'removed-form
-                        "deferror removed — use (defunion :throwable Name ...) instead")]
+    ;; `deferror` migrated to the compile-time combiner registry (see register-combiner!).
 
     ;; `defscalar` migrated to the compile-time combiner registry (see register-combiner!).
 
@@ -2952,12 +3009,8 @@
     [(list 'dotimes _ ...)
      (raise-parse-error 'removed-form
                         "dotimes removed — use (doseq [i (range n)] body...)")]
-    [(list 'defmulti _ ...)
-     (raise-parse-error 'removed-form
-                        "defmulti removed — use defprotocol + extend-type for type-based dispatch")]
-    [(list 'defmethod _ ...)
-     (raise-parse-error 'removed-form
-                        "defmethod removed — use defprotocol + extend-type for type-based dispatch")]
+    ;; `defmulti` migrated to the compile-time combiner registry (see register-combiner!).
+    ;; `defmethod` migrated to the compile-time combiner registry (see register-combiner!).
     ;; `deftype` migrated to the compile-time combiner registry (see register-combiner!).
     [(list 'nix-ident _ ...)
      (raise-parse-error 'removed-form
