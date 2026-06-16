@@ -658,30 +658,41 @@
 (define (emit-module-header prog)
   (define importer-ns (symbol->string (program-namespace prog)))
   (define rs (program-requires prog))
-  (if (null? rs)
+  ;; A `:refer`'d name that resolved to a macro is compile-time only — it's
+  ;; expanded away and never referenced at runtime, and the target module emits
+  ;; no runtime export for it. Emitting it in `import { … }` produces an ESM that
+  ;; throws "does not provide an export named X" in any consumer that ISN'T
+  ;; bundled (e.g. tests loaded via dynamic import). Drop macro refers; if a
+  ;; require's refers are ALL macros, emit no import line at all.
+  (define macros (program-macros prog))
+  (define lines
+    (filter
+     (lambda (s) (not (string=? s "")))
+     (for/list ([r (in-list rs)])
+       (define ns-str (symbol->string (require-entry-ns r)))
+       (define refer (require-entry-refer r))
+       (define module-path
+         (cond
+           [(string-prefix? ns-str "@") ns-str]
+           [(not (string-contains? ns-str ".")) ns-str]
+           [else (relative-js-module-path importer-ns ns-str)]))
+       (if refer
+         (let ([runtime-refer
+                (filter (lambda (n) (not (hash-ref macros n #f))) refer)])
+           (if (null? runtime-refer)
+             ""
+             (format "import { ~a } from '~a';"
+                     (string-join (map mangle-name runtime-refer) ", ")
+                     module-path)))
+         (let ([alias (or (require-entry-alias r)
+                          (let ([parts (string-split ns-str ".")])
+                            (string->symbol (last parts))))])
+           (format "import * as ~a from '~a';"
+                   (mangle-name alias)
+                   module-path))))))
+  (if (null? lines)
     ""
-    (string-append
-     (string-join
-      (for/list ([r (in-list rs)])
-        (define ns-str (symbol->string (require-entry-ns r)))
-        (define refer (require-entry-refer r))
-        (define module-path
-          (cond
-            [(string-prefix? ns-str "@") ns-str]
-            [(not (string-contains? ns-str ".")) ns-str]
-            [else (relative-js-module-path importer-ns ns-str)]))
-        (if refer
-          (format "import { ~a } from '~a';"
-                  (string-join (map mangle-name refer) ", ")
-                  module-path)
-          (let ([alias (or (require-entry-alias r)
-                           (let ([parts (string-split ns-str ".")])
-                             (string->symbol (last parts))))])
-            (format "import * as ~a from '~a';"
-                    (mangle-name alias)
-                    module-path))))
-      "\n")
-     "\n")))
+    (string-append (string-join lines "\n") "\n")))
 
 ;; --- top-level forms -------------------------------------------------------
 
