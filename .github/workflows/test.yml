@@ -89,6 +89,12 @@ jobs:
       - name: Cross-file rename-cascade gate
         run: CODE_AS_CLAIMS_CORPUS="$GITHUB_WORKSPACE/.fram/src" FRAM_OUT="$GITHUB_WORKSPACE/.fram/out" bin/test/code-as-claims/cascade.sh
 
+      # Move 4 authoring substrate: a structured edit (what an agent emits as data)
+      # is a RECOMPILE-GATED transaction — commit the new tree only if it builds
+      # clean, else fail closed. The deterministic surface an NL/LLM layer drives.
+      - name: Authoring substrate — recompile-gated edit transaction
+        run: FRAM_OUT="$GITHUB_WORKSPACE/.fram/out" bin/test/code-as-claims/author.sh
+
       - name: Show accumulated surface debt
         if: always()
         run: |
