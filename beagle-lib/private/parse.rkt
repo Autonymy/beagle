@@ -338,6 +338,7 @@
                               #:parametric-unions [imp-param-unions #f]
                               #:enums [imp-enums #f]
                               #:refer-syms [refer-syms #f]
+                              #:bare-all? [bare-all? #f]
                               #:datums [pre-datums #f])
   ;; pre-datums lets a caller that already read this file (e.g. the sibling
   ;; scan, to gate on the ns) hand the datums in, avoiding a second read.
@@ -359,8 +360,13 @@
       [_ d]))
   (define datums (map strip-doc raw-datums))
   (define refer-set (and refer-syms (list->set refer-syms)))
+  ;; A name is bare-referred iff this is an all-bare import (same-ns sibling)
+  ;; or it is explicitly named in a :refer list. A plain `:as`/no-refer require
+  ;; exposes names QUALIFIED only — registering them bare here would let an
+  ;; imported accessor (e.g. a record field accessor `sym-name`) shadow a
+  ;; consumer's own local def of the same name at its call sites.
   (define (referred? name)
-    (or (not refer-set) (set-member? refer-set name)))
+    (or bare-all? (and refer-set (set-member? refer-set name))))
   (define (reg! name type)
     (hash-set! externs (qualify-name prefix name) type)
     (when (and (referred? name) (not (hash-has-key? externs name)))
@@ -622,7 +628,8 @@
                                   #:union-members (program-imported-union-members prog)
                                   #:parametric-unions (program-imported-parametric-unions prog)
                                   #:enums (program-imported-enums prog)
-                                  #:datums sib-datums)))))))
+                                  #:datums sib-datums
+                                  #:bare-all? #t)))))))
 
 ;; --- reader-conditional resolution ----------------------------------------
 ;;

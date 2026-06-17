@@ -26,9 +26,25 @@
          [else (loop (cons next (cons #\\ acc)))])]
       [else (loop (cons c acc))])))
 
-;; Heredoc and raw-string reader helpers removed per audit row 5
-;; (`#<<TAG` and `#r"..."` hard-remove). The dispatch arms in
-;; `hash-dispatch` now error with a pointed migration message.
+;; Heredoc reader (`#<<TAG`) removed per audit row 5. Raw strings (`#r#"..."#`)
+;; were also removed there ("never used in any user-facing corpus") but are
+;; RESTORED below: eddy's JS/SQL emitters are a real user (49 blocks), and the
+;; only alternative on the js target is escaped-string churn. Rust-style:
+;; opener `#r` + N `#` + `"`, closer `"` + N `#`, body verbatim.
+(define (read-raw-string port hashes)
+  (define tail (make-string hashes #\#))
+  (let loop ([acc '()])
+    (define c (read-char port))
+    (cond
+      [(eof-object? c)
+       (error 'beagle "unterminated raw string (missing closing \"~a)" tail)]
+      [(char=? c #\")
+       (define peeked (peek-string hashes 0 port))
+       (if (and (string? peeked) (string=? peeked tail))
+         (begin (read-string hashes port)
+                (list->string (reverse acc)))
+         (loop (cons c acc)))]
+      [else (loop (cons c acc))])))
 
 ;; --- #(...) anonymous fn shorthand ------------------------------------------
 ;;
@@ -160,12 +176,24 @@
        (datum->syntax #f result (vector src line col pos
                                         (+ 3 (string-length pattern))))
        result)]
-    ;; #r"..." raw-string reader: HARD-REMOVED per audit row 5. Raw strings
-    ;; were never used in any user-facing corpus. Regular strings (with `\`
-    ;; escapes) or tilde-strings cover the use cases.
+    ;; #r#"..."# raw string (restored — see read-raw-string above).
     [(and (char? next) (char=? next #\r))
-     (error 'beagle
-            "#r\"...\" raw-string reader is not supported. Use a regular `\"...\"` string with escapes, or a tilde-string `~\"...\"`.")]
+     (read-char port) ; consume r
+     (define hashes
+       (let loop ([n 0])
+         (define p (peek-char port))
+         (if (and (char? p) (char=? p #\#))
+           (begin (read-char port) (loop (add1 n)))
+           n)))
+     (when (zero? hashes)
+       (error 'beagle "raw string: write #r#\"...\"# (at least one #)"))
+     (define oq (read-char port))
+     (unless (and (char? oq) (char=? oq #\"))
+       (error 'beagle "raw string: expected \" after #r~a" (make-string hashes #\#)))
+     (define s (read-raw-string port hashes))
+     (if src
+       (datum->syntax #f s (vector src line col pos #f))
+       s)]
     [else
      (define combined (input-port-append #f (open-input-string "#") port))
      (parameterize ([current-readtable (make-readtable #f)])
