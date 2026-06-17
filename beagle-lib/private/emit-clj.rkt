@@ -983,7 +983,16 @@
      (define test
        (if (= (length tests) 1) (car tests)
            (format "(and ~a)" (string-join tests " "))))
-     (format "~a ~a" test body-str)]))
+     ;; G4-emit: bind each VAR entry to (:k target) so the arm body can reference it.
+     ;; Previously the var was emitted FREE (undefined at runtime) — a latent bug.
+     (define binds
+       (for/list ([entry (in-list (pat-map-entries pat))]
+                  #:when (pat-var? (cdr entry)))
+         (format "~a (~a ~a)" (pat-var-name (cdr entry))
+                 (symbol->string (car entry)) target-sym)))
+     (if (null? binds)
+         (format "~a ~a" test body-str)
+         (format "~a (let [~a] ~a)" test (string-join binds " ") body-str))]))
 
 (define (emit-extend-type f)
   (define impl-strs (map emit-type-impl (extend-type-form-impls f)))
