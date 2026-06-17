@@ -135,9 +135,8 @@
         [(equal? k "bool")    (string=? v "true")]
         [else v]))
 
-;; emit the EDN triple lines for one datum (leaves' `v` encoded as a safe string)
-(define (datum->edn-lines d)
-  (define-values (root triples) (datum->claims d))
+;; emit the EDN triple lines for a precomputed triple list (leaves' `v` encoded)
+(define (triples->edn-lines triples)
   ;; kind per subject, so we know how to encode each `v`
   (define kind-of (make-hash))
   (for ([t (in-list triples)]) (when (equal? (cadr t) "kind") (hash-set! kind-of (car t) (caddr t))))
@@ -147,18 +146,34 @@
       [(equal? p "kind") (format "[~a \"kind\" ~a]" s (edn-string o))]
       [(equal? p "v")    (format "[~a \"v\" ~a]" s (edn-string (encode-leaf (hash-ref kind-of s) o)))]
       [else              (format "[~a ~a ~a]" s (edn-string p) o)])))   ; fN/child/tail -> int ref
+(define (datum->edn-lines d)
+  (define-values (root triples) (datum->claims d))
+  (triples->edn-lines triples))
+
+;; shared triple helpers (used by both emit and render paths) -----------------
+(define (triples->props triples)        ; subj -> (mutable hash pred -> obj)
+  (define props (make-hash))
+  (for ([t (in-list triples)])
+    (hash-update! props (car t) (lambda (h) (hash-set! h (cadr t) (caddr t)) h) (lambda () (make-hash))))
+  props)
+(define (ordered-fN props id)           ; node ids of fN children, in order
+  (define h (hash-ref props id (make-hash)))
+  (let loop ([i 0] [acc '()])
+    (define key (string-append "f" (number->string i)))
+    (if (hash-has-key? h key) (loop (add1 i) (cons (hash-ref h key) acc)) (reverse acc))))
+(define (max-id triples)                ; largest integer id used by structural claims
+  (for/fold ([m 0]) ([t (in-list triples)])
+    (max m (if (integer? (car t)) (car t) 0) (if (integer? (caddr t)) (caddr t) 0))))
 
 ;; reconstruct a datum from EDN triples (each a list (subj pred obj)) ---------
 ;; root = the one subject never referenced as a child — robust even after Fram
 ;; re-mints all ids on its way through the store.
-(define (edn-triples->datum triples)
-  (define props (make-hash))
-  (define refs (make-hash))                 ; ids referenced as a child (fN/child/tail)
-  (for ([t (in-list triples)])
-    (define s (first t)) (define p (second t)) (define o (third t))
-    (when (integer? o) (hash-set! refs o #t))
-    (hash-update! props s (lambda (h) (hash-set! h p o) h) (lambda () (make-hash))))
-  (define root (for/first ([s (in-list (hash-keys props))] #:unless (hash-ref refs s #f)) s))
+(define (edn-root props)                  ; the one subject never referenced as a child
+  (define refs (make-hash))
+  (for ([(s h) (in-hash props)])
+    (for ([(p o) (in-hash h)]) (when (integer? o) (hash-set! refs o #t))))
+  (for/first ([s (in-list (hash-keys props))] #:unless (hash-ref refs s #f)) s))
+(define (make-edn-build props)            ; id -> datum (follows fN/tail only; ignores comment*/seg*)
   (define (build id)
     (define h (hash-ref props id))
     (define k (hash-ref h "kind"))
@@ -174,7 +189,28 @@
        (define lst (foldr cons tail elems))
        (if (equal? k "vector") (list->vector lst) lst)]
       [else (error 'edn->datum "unknown kind ~a" k)]))
-  (build root))
+  build)
+(define (edn-triples->datum triples)
+  (define props (triples->props triples))
+  ((make-edn-build props) (edn-root props)))
+
+;; --- Turtle #6: read comment claims back off the triples (render side) ------
+(define (comment-text props cid)          ; concatenate seg0,seg1,... `v`s -> the comment lexeme
+  (define h (hash-ref props cid))
+  (apply string-append
+    (let loop ([j 0] [acc '()])
+      (define key (string-append "seg" (number->string j)))
+      (if (hash-has-key? h key)
+          (loop (add1 j) (cons (hash-ref (hash-ref props (hash-ref h key)) "v") acc))
+          (reverse acc)))))
+(define (comments-of props id)            ; (listof (cons placement text)) in comment order
+  (define h (hash-ref props id (make-hash)))
+  (let loop ([k 0] [acc '()])
+    (define key (string-append "comment" (number->string k)))
+    (if (hash-has-key? h key)
+        (let ([cid (hash-ref h key)])
+          (loop (add1 k) (cons (cons (hash-ref (hash-ref props cid) "placement") (comment-text props cid)) acc)))
+        (reverse acc))))
 
 ;; datum -> idiomatic beagle source text. Inverts the reader's desugaring
 ;; (`[...]` -> (#%brackets ...), `{...}` -> (#%map ...)) so the rendering
@@ -208,20 +244,174 @@
              #:when (and (> (string-length line) 0) (char=? (string-ref line 0) #\[)))
     (read (open-input-string line))))
 
+;; ============================================================================
+;; Turtle #6 — comments as resolved references (LINE comments, top level).
+;; The reader DROPS comments, so we recover them from the source TEXT by srcloc:
+;; a `;` outside every form's span is a top-level comment. Each is tokenized into
+;; text + symbol-candidate SEGMENTS and attached to the FOLLOWING form (leading)
+;; / the PRECEDING form on the same line (trailing) / the file wrapper. A symbol
+;; segment can carry refers_to and rename like code; text renders verbatim — so a
+;; doc comment's identifier mentions follow a rename, while substrings and quoted
+;; "strings" do not. SCOPE: line comments only (block #| |# is a follow-up);
+;; comments INSIDE a form are not yet captured; layout reflows (text+placement).
+;; ============================================================================
+(define (sym-char? c)                   ; a char that may constitute a beagle identifier
+  (and (or (char-alphabetic? c) (char-numeric? c)
+           (memv c '(#\- #\_ #\* #\+ #\! #\? #\< #\> #\= #\/ #\. #\& #\% #\$))) #t))
+(define (make-line-of src)              ; 0-based offset -> 1-based line number
+  (define starts
+    (let loop ([i 0] [acc '(0)])
+      (cond [(>= i (string-length src)) (list->vector (reverse acc))]
+            [(char=? (string-ref src i) #\newline) (loop (add1 i) (cons (add1 i) acc))]
+            [else (loop (add1 i) acc)])))
+  (lambda (off)
+    (let loop ([k (sub1 (vector-length starts))])
+      (if (and (> k 0) (> (vector-ref starts k) off)) (loop (sub1 k)) (add1 k)))))
+(define (src-lines src)                 ; (listof (cons line-start-offset line-text-without-newline))
+  (let loop ([i 0] [start 0] [acc '()])
+    (cond
+      [(>= i (string-length src)) (reverse (cons (cons start (substring src start i)) acc))]
+      [(char=? (string-ref src i) #\newline) (loop (add1 i) (add1 i) (cons (cons start (substring src start i)) acc))]
+      [else (loop (add1 i) start acc)])))
+;; syntax-position is file-relative when the file carries #lang (the usual case);
+;; when it does NOT (e.g. a rendered intermediate leading with (define-target ...)),
+;; the reader injects a synthetic #lang prefix and positions shift by its length.
+;; Recover that shift by aligning the first form's port position with the first
+;; form-starting char in the file (past leading whitespace / #lang / ; comments).
+(define (port->file-shift src stxs)
+  (define first-pos (for/or ([s (in-list stxs)] #:when (syntax-position s)) (syntax-position s)))
+  (cond
+    [(not first-pos) 0]
+    [else
+     (define n (string-length src))
+     (define first-form-off
+       (let loop ([i 0])
+         (cond
+           [(>= i n) i]
+           [(char-whitespace? (string-ref src i)) (loop (add1 i))]
+           [(or (char=? (string-ref src i) #\;)                              ; a ; comment ...
+                (and (char=? (string-ref src i) #\#)                         ; ... or a #lang line
+                     (regexp-match? #rx"^#lang" (substring src i (min n (+ i 5))))))
+            (let eol ([j i]) (if (and (< j n) (not (char=? (string-ref src j) #\newline))) (eol (add1 j)) (loop j)))]
+           [else i])))
+     (- (sub1 first-pos) first-form-off)]))
+(define (form-spans stxs shift)         ; (listof (list stx-index start end)) for forms WITH srcloc
+  (for/list ([s (in-list stxs)] [i (in-naturals)] #:when (syntax-position s))
+    (define start (- (sub1 (syntax-position s)) shift))
+    (list i start (+ start (syntax-span s)))))
+(define (in-any-span? off spans)
+  (for/or ([sp (in-list spans)]) (and (>= off (cadr sp)) (< off (caddr sp)))))
+(define (capture-comments src spans)    ; (listof (cons offset lexeme)) — first out-of-span `;`..EOL per line
+  (for*/list ([ln (in-list (src-lines src))]
+              [hit (in-value
+                    (let ([start (car ln)] [text (cdr ln)])
+                      (let scan ([j 0])
+                        (cond
+                          [(>= j (string-length text)) #f]
+                          [(and (char=? (string-ref text j) #\;) (not (in-any-span? (+ start j) spans)))
+                           (cons (+ start j) (string-trim (substring text j) #:left? #f))]
+                          [else (scan (add1 j))]))))]
+              #:when hit)
+    hit))
+(define (classify-comments comments spans src)  ; -> (listof (list placement anchor-spec lexeme))
+  (define line-of (make-line-of src))
+  (for/list ([c (in-list comments)])
+    (define o (car c)) (define lex (cdr c))
+    (define preceding (for/fold ([b #f]) ([sp (in-list spans)])
+                        (if (and (<= (caddr sp) o) (or (not b) (> (caddr sp) (caddr b)))) sp b)))
+    (define following (for/fold ([b #f]) ([sp (in-list spans)])
+                        (if (and (>= (cadr sp) o) (or (not b) (< (cadr sp) (cadr b)))) sp b)))
+    (cond
+      [(and preceding (= (line-of (sub1 (caddr preceding))) (line-of o))) (list "trailing" (car preceding) lex)]
+      [following (list "leading" (car following) lex)]
+      [else (list "trailing" 'file lex)])))            ; own-line comment after the last form -> file footer
+(define (tokenize-comment lex)          ; (listof (cons 'text|'symbol string)), text-runs merged
+  (define n (string-length lex))
+  (define raw
+    (let loop ([i 0] [out '()])
+      (cond
+        [(>= i n) (reverse out)]
+        [(sym-char? (string-ref lex i))
+         (let run ([j i])
+           (if (and (< j n) (sym-char? (string-ref lex j))) (run (add1 j))
+               (let ([quoted? (and (> i 0) (char=? (string-ref lex (sub1 i)) #\")
+                                   (< j n) (char=? (string-ref lex j) #\"))])
+                 (loop j (cons (cons (if quoted? 'text 'symbol) (substring lex i j)) out)))))]
+        [else
+         (let run ([j i])
+           (if (and (< j n) (not (sym-char? (string-ref lex j)))) (run (add1 j))
+               (loop j (cons (cons 'text (substring lex i j)) out))))])))
+  (let merge ([s raw] [out '()])        ; merge adjacent text chunks (incl. quote-demoted symbols)
+    (cond
+      [(null? s) (reverse out)]
+      [(and (pair? out) (eq? (caar out) 'text) (eq? (caar s) 'text))
+       (merge (cdr s) (cons (cons 'text (string-append (cdar out) (cdar s))) (cdr out)))]
+      [else (merge (cdr s) (cons (car s) out))])))
+(define (format-claim s p o)            ; one EDN triple; obj int=node-ref, string=literal
+  (if (integer? o) (format "[~a ~a ~a]" s (edn-string p) o)
+      (format "[~a ~a ~a]" s (edn-string p) (edn-string o))))
+(define (comment-edn-lines comments form-node root fresh!)
+  (define lines '())
+  (define (add! s p o) (set! lines (cons (format-claim s p o) lines)))
+  (define cidx (make-hash))             ; anchor node -> next comment index
+  (for ([c (in-list comments)])
+    (define placement (first c)) (define spec (second c)) (define lex (third c))
+    (define anchor (if (eq? spec 'file) root (form-node spec)))
+    (define k (hash-ref cidx anchor 0)) (hash-set! cidx anchor (add1 k))
+    (define cid (fresh!))
+    (add! cid "kind" "comment") (add! cid "style" "line") (add! cid "placement" placement)
+    (add! anchor (string-append "comment" (number->string k)) cid)
+    (for ([seg (in-list (tokenize-comment lex))] [j (in-naturals)])
+      (define sid (fresh!))
+      (add! sid "kind" (if (eq? (car seg) 'symbol) "symbol" "text"))
+      (add! sid "v" (cdr seg))
+      (add! cid (string-append "seg" (number->string j)) sid)))
+  (reverse lines))
+
 ;; --- modes ------------------------------------------------------------------
-;; emit one file's whole form-list as a single wrapped datum -> one id space.
+;; emit one file's whole form-list as a single wrapped datum -> one id space,
+;; then append comment claims (Turtle #6) attached to the form nodes by srcloc.
 (define (emit-edn-file path)
-  (define forms (map syntax->datum (read-beagle-syntax path)))
+  (define stxs (read-beagle-syntax path))
+  (define forms (map syntax->datum stxs))
+  (define src (file->string path))
+  (define-values (root triples) (datum->claims (cons 'beagle-file forms)))
+  (define props (triples->props triples))
+  (define root-kids (ordered-fN props root))      ; [beagle-file-sym, form0-node, form1-node, ...]
+  (define (form-node i) (list-ref root-kids (add1 i)))
+  (define spans (form-spans stxs (port->file-shift src stxs)))
+  (define comments (classify-comments (capture-comments src spans) spans src))
+  (define next (box (add1 (max-id triples))))
+  (define (fresh!) (define v (unbox next)) (set-box! next (add1 v)) v)
+  (define clines (comment-edn-lines comments form-node root fresh!))
   (printf "@file ~a\n" path)
-  (for ([l (in-list (datum->edn-lines (cons 'beagle-file forms)))]) (displayln l)))
+  (for ([l (in-list (triples->edn-lines triples))]) (displayln l))
+  (for ([l (in-list clines)]) (displayln l)))
 
 ;; render: reconstruct from EDN reader-claims and print idiomatic source. The EDN
 ;; may have come straight out of a (mutated) Fram store — this is the "project
 ;; source from the graph" half of graph-native authoring.
 (define (render-edn edn-path)
-  (define wrapped (edn-triples->datum (read-edn-triples edn-path)))
-  (define forms (if (and (pair? wrapped) (eq? (car wrapped) 'beagle-file)) (cdr wrapped) (list wrapped)))
-  (display (string-join (map datum->src forms) "\n\n"))
+  (define props (triples->props (read-edn-triples edn-path)))
+  (define root (edn-root props))
+  (define build (make-edn-build props))
+  (define wrapped?                                  ; root is the (beagle-file ...) wrapper?
+    (and root (let ([h (hash-ref props root)])
+                (and (hash-has-key? h "f0")
+                     (equal? (hash-ref (hash-ref props (hash-ref h "f0")) "v" #f) "beagle-file")))))
+  (define form-ids (if wrapped? (cdr (ordered-fN props root)) (list root)))
+  (define (lead cs)  (filter (lambda (c) (equal? (car c) "leading"))  cs))
+  (define (trail cs) (filter (lambda (c) (equal? (car c) "trailing")) cs))
+  (define (block fid)                               ; leading comments (own lines) + form + trailing (same line)
+    (define cs (comments-of props fid))
+    (string-append
+      (apply string-append (map (lambda (c) (string-append (cdr c) "\n")) (lead cs)))
+      (datum->src (build fid))
+      (apply string-append (map (lambda (c) (string-append " " (cdr c))) (trail cs)))))
+  (define file-cs (if wrapped? (comments-of props root) '()))   ; file header/footer comments
+  (display (string-join
+             (append (map cdr (lead file-cs)) (map block form-ids) (map cdr (trail file-cs)))
+             "\n\n"))
   (newline))
 
 ;; verify: reconstruct from (post-Fram) EDN, compare to the original source.
