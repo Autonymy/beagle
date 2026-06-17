@@ -36,6 +36,24 @@ jobs:
           CI: 'true'
         run: bin/beagle-test
 
+      # Graph-native repair: beagle-cascade derives its call graph from the Fram
+      # claim graph (scope-correct), not regex over text. That runs on the Fram
+      # engine, so we install babashka + check out fram's committed classpath and
+      # gate the scope-correctness proof (a change to mod_a/helper must NOT blast
+      # mod_b's same-named helper). This is the load-bearing test for the thesis
+      # that graph-backed repair beats text-backed repair.
+      - name: Install babashka (graph-native repair tooling)
+        run: curl -sL https://raw.githubusercontent.com/babashka/babashka/master/install | sudo bash
+
+      - name: Checkout fram (the claim engine cascade runs on)
+        uses: actions/checkout@v5
+        with:
+          repository: tompassarelli/fram
+          path: .fram
+
+      - name: Graph-native cascade — scope-correctness gate
+        run: FRAM_OUT="$GITHUB_WORKSPACE/.fram/out" bin/test/cascade-graph/run.sh
+
       - name: Show accumulated surface debt
         if: always()
         run: |

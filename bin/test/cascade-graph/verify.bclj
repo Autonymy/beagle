@@ -1,0 +1,7 @@
+;; verify script for the cascade-graph fixture. cascade maps each assertion label
+;; to the function it exercises (the head of the asserted expression).
+;;   a-result exercises topA (mod_a chain → mod_a/helper)
+;;   b-result exercises topB (mod_b chain → mod_b/helper)
+;; So changing mod_a/helper must put ONLY a-result at risk, never b-result.
+(assert-eq "a-result" 6 (topA 5))
+(assert-eq "b-result" 10 (topB 5))

@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# beagle-callgraph: emit the SCOPE-CORRECT call graph of a beagle source tree as
+# JSON, derived from the Fram claim graph (calls/child/defn claims) with the
+# transitive blast radius computed by Fram Datalog.
+#
+# This is the graph-native replacement for regex call-graph scraping: a call
+# binds the defn in its OWN module, so same-named functions across modules never
+# collide (the failure mode of bare-symbol text matching). The program is read as
+# a graph, not as text.
+#
+# Usage:   beagle-callgraph <source-dir>
+# Output:  {"defns":[{key,file,module,name}], "edges":[[caller,callee]],
+#           "blast":{callee:[transitive-callers]}}   on stdout (JSON)
+#          a one-line summary on stderr.
+#
+# Requires the Fram classpath (the claim store + Datalog engine). Set FRAM_OUT to
+# override; defaults to ~/code/fram/out.
+set -euo pipefail
+
+if [[ $# -lt 1 ]]; then
+    echo "usage: beagle-callgraph <source-dir>" >&2
+    exit 2
+fi
+
+DIR="$(cd "$1" && pwd)"
+BIN="$(cd "$(dirname "$0")" && pwd)"
+FRAM_OUT="${FRAM_OUT:-$HOME/code/fram/out}"
+
+if [[ ! -d "$FRAM_OUT" ]]; then
+    echo "beagle-callgraph: Fram classpath not found at $FRAM_OUT" >&2
+    echo "  (graph-native repair runs on the Fram engine — build fram/out or set FRAM_OUT)" >&2
+    exit 3
+fi
+
+CLAIMS="$(mktemp /tmp/beagle-callgraph.XXXXXX)"
+trap 'rm -f "$CLAIMS"' EXIT
+
+"$BIN/beagle-claims" "$DIR" > "$CLAIMS"
+exec bb -cp "$FRAM_OUT" "$BIN/_beagle-callgraph.clj" "$CLAIMS"
