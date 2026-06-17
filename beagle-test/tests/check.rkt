@@ -699,6 +699,31 @@
 (check-ok "defenum type-checks without error"
   '(defenum Color :red :green :blue))
 
+;; G5 — enum MEMBERSHIP is enforced (was: any keyword accepted for any enum).
+(check-ok "enum member used in record field + defn arg + comparison passes"
+  '(defenum Op :one :many :show)
+  '(defrecord T [op :- Op])
+  '(def good :- T (->T :one))
+  '(defn use-op [op :- Op] :- Bool (= op :many))
+  '(def ok2 :- Bool (use-op :show)))
+
+(check-err/rx "non-member keyword in ->Ctor record field is rejected"
+  #rx"not a member of enum Op"
+  '(defenum Op :one :many :show)
+  '(defrecord T [op :- Op])
+  '(def bad :- T (->T :bogus)))
+
+(check-err/rx "non-member keyword as a defn enum arg is rejected"
+  #rx"not a member of enum Op"
+  '(defenum Op :one :many :show)
+  '(defn use-op [op :- Op] :- Bool (= op :one))
+  '(def bad :- Bool (use-op :nope)))
+
+(check-err/rx "non-member keyword in (= enumvar :kw) is rejected"
+  #rx"not a member of enum Op"
+  '(defenum Op :one :many :show)
+  '(defn classify [op :- Op] :- Bool (= op :bogus)))
+
 ;; =============================================================================
 ;; Tests — exhaustive match (fixtures with warnings)
 ;; =============================================================================

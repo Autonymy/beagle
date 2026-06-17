@@ -626,7 +626,9 @@
       [(defmethod-form name _ params body)
        (void)]
       [(defenum-form name values)
-       (hash-set! ENUM-TYPES name #t)]
+       ;; G5: retain the MEMBER SET (a list of :kw symbols), not just presence,
+       ;; so the checker can reject a non-member keyword against this enum.
+       (hash-set! ENUM-TYPES name values)]
       [(defunion-form name members type-params member-fields)
        (when (>= (current-check-profile) 2)
          (hash-set! UNION-MEMBERS name members))
@@ -2524,6 +2526,30 @@
        [(memq 'number classes) (type-prim 'Number)]
        [else (type-prim 'Int)])]))
 
+;; G5 — enum-aware equality. `=`/`not=` are typed (Any Any -> Bool), so the
+;; per-arg enum check can't see an enum operand. Catch the common idiom
+;; (= enumvar :kw): when one operand is an enum-typed VARIABLE and the other a
+;; keyword literal, the literal must be a declared member. Restricted to a var
+;; operand so we never re-infer (and re-diagnose) a complex expression.
+(define (check-enum-comparison args env call-src)
+  (define (kw-lit? a)
+    (and (symbol? a)
+         (let ([s (symbol->string a)]) (and (> (string-length s) 0) (char=? (string-ref s 0) #\:)))))
+  (define (chk val-expr kw)
+    (when (and (symbol? val-expr) (not (kw-lit? val-expr)) (kw-lit? kw))
+      (define vt (infer-expr val-expr env))
+      (when (type-prim? vt)
+        (define members (hash-ref ENUM-TYPES (type-prim-name vt) #f))
+        (when (and (list? members) (not (memq kw members)))
+          (raise-diag 'type-mismatch
+                      (format "~a is not a member of enum ~a (valid: ~a)"
+                              kw (type-prim-name vt) (enum-members->str members))
+                      (hasheq 'enum   (symbol->string (type-prim-name vt))
+                              'actual (symbol->string kw))
+                      #:src call-src)))))
+  (chk (car args) (cadr args))
+  (chk (cadr args) (car args)))
+
 (define (check-args fn-name fn-type args env call-node)
   (define fixed   (type-fn-params fn-type))
   (define rest-t  (type-fn-rest-type fn-type))
@@ -2531,6 +2557,8 @@
   (define n-args  (length args))
   (define sig-str (format "~a : ~a" fn-name (type->string fn-type)))
   (define call-src (src-for call-node))
+  (when (and (memq fn-name '(= not=)) (= n-args 2))
+    (check-enum-comparison args env call-src))
   (cond
     [rest-t
      (when (< n-args n-fixed)
@@ -2602,12 +2630,43 @@
      (for/list ([p (in-list fixed)] [a (in-list args)] [i (in-naturals 1)])
        (check-one-arg fn-name fn-type i p a env call-src))]))
 
+;; G5 — enum membership. type-compatible? deliberately treats ANY Keyword as
+;; compatible with ANY enum (types.rkt), and a keyword literal's value is erased
+;; to the generic Keyword type before it gets there — so a NON-MEMBER keyword
+;; against an enum-typed slot would pass silently. Here we still have the literal
+;; (a colon-prefixed symbol, e.g. :one) and the expected type, so we test
+;; membership directly. Returns (cons enum-name members) on violation, else #f.
+;; Imported enums are registered as #t (not a list) and so are not enforced yet
+;; (a documented follow-up); local enums — the live-corpus case — are.
+(define (enum-member-violation expected-type arg)
+  (and (type-prim? expected-type)
+       (symbol? arg)
+       (let ([s (symbol->string arg)])
+         (and (> (string-length s) 0) (char=? (string-ref s 0) #\:)))
+       (let ([members (hash-ref ENUM-TYPES (type-prim-name expected-type) #f)])
+         (and (list? members)
+              (not (memq arg members))
+              (cons (type-prim-name expected-type) members)))))
+
+(define (enum-members->str members)
+  (apply string-append (add-between (map symbol->string members) " ")))
+
 ;; Checks one argument and returns its inferred type (check-args
 ;; collects these so callers can refine return types — numeric
 ;; preservation — without re-inferring, which would duplicate
 ;; diagnostics from nested calls).
 (define (check-one-arg fn-name fn-type i expected-type arg env call-src)
   (define a-type (infer-expr arg env))
+  (let ([ev (enum-member-violation expected-type arg)])
+    (when ev
+      (raise-diag 'type-mismatch
+                  (format "~a is not a member of enum ~a (valid: ~a)"
+                          arg (car ev) (enum-members->str (cdr ev)))
+                  (hasheq 'expected (symbol->string (car ev))
+                          'actual    (symbol->string arg)
+                          'enum      (symbol->string (car ev))
+                          'members   (map symbol->string (cdr ev)))
+                  #:src call-src)))
   (unless (type-compatible? a-type expected-type)
     (define sig-str (format "~a : ~a" fn-name (type->string fn-type)))
     (define suggestions (find-accessor-suggestions arg expected-type a-type env))
