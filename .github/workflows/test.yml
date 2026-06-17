@@ -58,7 +58,7 @@ jobs:
           repository: tompassarelli/fram
           path: .fram
 
-      - name: Checkout chartroom (Layer-2 code-intelligence: the refers_to resolver)
+      - name: Checkout chartroom (Layer-2 code-intelligence — refers_to resolver)
         uses: actions/checkout@v5
         with:
           repository: tompassarelli/chartroom
