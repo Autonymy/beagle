@@ -82,6 +82,13 @@ jobs:
       - name: Repair-as-graph-operation — scope-correct rename gate
         run: FRAM_OUT="$GITHUB_WORKSPACE/.fram/out" bin/test/code-as-claims/rename.sh
 
+      # Cross-file rename CASCADE: rename a def + ALL its qualified cross-module
+      # readers in one claim edit (resolved through the require graph), scope-correct
+      # (same-prefix symbols untouched), recompiles. Proven on the real fram engine
+      # (fram.cnf/value! -> intern! across fram/src).
+      - name: Cross-file rename-cascade gate
+        run: CODE_AS_CLAIMS_CORPUS="$GITHUB_WORKSPACE/.fram/src" FRAM_OUT="$GITHUB_WORKSPACE/.fram/out" bin/test/code-as-claims/cascade.sh
+
       - name: Show accumulated surface debt
         if: always()
         run: |
