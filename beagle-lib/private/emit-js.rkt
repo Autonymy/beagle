@@ -1419,7 +1419,18 @@
      (define test
        (if (= (length tests) 1) (car tests)
            (format "(~a)" (string-join tests " && "))))
-     (format "if (~a) { ~a } else" test (make-body-str))]))
+     ;; G4-emit: bind each VAR entry (const x = tmp.k) + scope it in the body.
+     ;; Previously the var was emitted FREE (ReferenceError at runtime) — a latent bug.
+     (define var-entries (filter (lambda (en) (pat-var? (cdr en))) (pat-map-entries pat)))
+     (define vnames (map (lambda (en) (pat-var-name (cdr en))) var-entries))
+     (define let-strs
+       (for/list ([en (in-list var-entries)])
+         (format "const ~a = ~a.~a;" (mangle-name (pat-var-name (cdr en)))
+                 tmp (kw->prop (car en)))))
+     (if (null? let-strs)
+         (format "if (~a) { ~a } else" test (make-body-str))
+         (format "if (~a) { ~a ~a } else" test (string-join let-strs " ")
+                 (make-body-str vnames)))]))
 
 ;; --- for comprehension → .map / .filter ------------------------------------
 

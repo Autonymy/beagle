@@ -1383,6 +1383,17 @@
        [(= (length bindings) 1)
         (hash-set! arm-env (car bindings) (type-prim rec-name))])
      arm-env]
+    ;; G4-emit — map pattern {:k x}: narrow each VAR entry to its field type. Sound
+    ;; now that emit binds the var (emit-clj/emit-js), and the arm is gated on
+    ;; (some? (:k target)). lookup-kw-field-type discriminates a record-union by key
+    ;; (nil-correct) and degrades to Any for an unknown key — never a fabricated type.
+    [(pat-map? pat)
+     (define arm-env (mut-copy env))
+     (for ([entry (in-list (pat-map-entries pat))])
+       (when (pat-var? (cdr entry))
+         (hash-set! arm-env (pat-var-name (cdr entry))
+                    (lookup-kw-field-type (car entry) target-type env))))
+     arm-env]
     [(pat-var? pat)
      (define arm-env (mut-copy env))
      (hash-set! arm-env (pat-var-name pat) target-type)

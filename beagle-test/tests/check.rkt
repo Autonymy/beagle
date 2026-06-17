@@ -847,6 +847,22 @@
   '(defn bad [v :- (Vec Int)] :- Int (want v)))
 
 ;; =============================================================================
+;; Tests — G4-emit: a map pattern {:k x} in match binds the var (emit now emits
+;; the binding — it was a free var) and the checker narrows it to the field type.
+;; =============================================================================
+
+(check-ok "map-pattern in match narrows the bound var to its field type"
+  '(defrecord Box [val :- Int])
+  '(defn need-int [n :- Int] :- Int n)
+  `(defn unbox [b :- Box] :- Int (match b ,(br (mt ':val 'x) '(need-int x)) ,(br '_ 0))))
+
+(check-err/rx "map-pattern var carries the field type (misuse errors)"
+  #rx"expected String, got Int"
+  '(defrecord Box [val :- Int])
+  '(defn need-str [s :- String] :- String s)
+  `(defn bad [b :- Box] :- String (match b ,(br (mt ':val 'x) '(need-str x)) ,(br '_ ""))))
+
+;; =============================================================================
 ;; Tests — exhaustive match (fixtures with warnings)
 ;; =============================================================================
 
