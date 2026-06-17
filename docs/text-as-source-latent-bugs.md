@@ -134,3 +134,21 @@ hiding wrong answers. That is evidence for the thesis, not incidental cleanup.
 >    `:refer`'d bare reference lives in a consumer module. Both gated by
 >    `bin/test/code-as-claims/rename.sh §5`. The lesson mirrors the thesis: scope-correctness
 >    is a *property to be verified adversarially*, not assumed because the graph "knows scope."
+>
+> **The lesson, quantified — adversarial sweep #2 found SEVENTEEN more.** A second,
+> deeper sweep (8 skeptics, one per scope hazard) over the same engine surfaced **17
+> real silent-miscompiles** (recompiled-but-wrong), 0 false-positives, in two clusters:
+> (A) `:or` destructuring defaults were never walked (a default referencing a def left
+> dangling) and `let`/`loop`/`for` bindings were resolved in the OUTER scope although
+> they are SEQUENTIAL, so an earlier sibling never shadowed a later value — both a
+> missed rename and a *missed capture* the no-capture invariant should have caught; and
+> (B) a bare symbol naming a type was never a reference, so constructor calls
+> `(Point ..)`, `defunion` variants, cross-module types, and single-colon `:`
+> annotations all failed to track a type rename (and made `delete` false-report "safe"
+> on code that then dangled). Fixing the cross-module case exposed an *eighteenth*: bare
+> `(require m :refer […])` was never parsed (only bare `:as` was), so refer-imported
+> references silently neither resolved nor renamed. All fixed + gated
+> (`rename.sh §6-§8`, `delete.sh`). The headline: a graph engine is not scope-correct
+> *because* it is a graph — it is scope-correct only where it has been adversarially
+> proven so. Two sweeps, 2 + 17 concealed wrong-answers in an engine whose whole pitch
+> is "correct unlike sed." Verify, don't assume.
