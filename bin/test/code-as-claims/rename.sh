@@ -64,6 +64,32 @@ if bb -cp "$FRAM_OUT" "$RES" rename helper other mod "$W/s2.edn" >/dev/null 2>&1
   echo "  FAIL  collision NOT refused"; fail=1
 else echo "  PASS  rename onto existing binding refused"; fi
 
+# --- 5. adversarial findings (scope hazards that recompiled-but-wrong) -----------
+# All three were found by the unified-engine adversarial sweep; each is a SILENT
+# meaning change that compiled clean, the most dangerous failure mode.
+echo "--- 5. adversarial scope hazards (paren-param shadowing + capture refusal) ---"
+# 5a. typed PAREN param `(red :- Int)` must shadow the def — renaming the def must
+#     NOT touch the param or its body use (the param-binding wasn't being collected).
+printf '#lang beagle/clj\n(ns demo.p)\n(def red :- Int 1)\n(defn ps [(red :- Int)] :- Int (+ red 100))\n' > "$W/p.bclj"
+racket "$RT" --emit-edn "$W/p.bclj" 2>/dev/null > "$W/p.edn"
+bb -cp "$FRAM_OUT" "$RES" rename red crimson p "$W/p.edn" 2>/dev/null
+pp="$(racket "$RT" --render /tmp/resolved-p.bclj.edn 2>/dev/null)"
+chk "paren-param def renamed (crimson)"        "grep -q '(def crimson' <<<\"\$pp\""
+chk "paren-param + body use UNTOUCHED"         "grep -qF '[(red :- Int)]' <<<\"\$pp\" && grep -qF '(+ red 100)' <<<\"\$pp\""
+# 5b. CAPTURE via param: rename src->dst where dst is a param must be REFUSED
+#     (else (+ dst src) -> (+ dst dst), a silent name-capture that recompiles).
+printf '#lang beagle/clj\n(ns demo.c)\n(def src :- Int 1)\n(defn f [dst :- Int] :- Int (+ dst src))\n' > "$W/c.bclj"
+racket "$RT" --emit-edn "$W/c.bclj" 2>/dev/null > "$W/c.edn"
+if bb -cp "$FRAM_OUT" "$RES" rename src dst c "$W/c.edn" >/dev/null 2>&1; then
+  echo "  FAIL  param capture NOT refused"; fail=1
+else echo "  PASS  param capture refused (no-capture invariant)"; fi
+# 5c. CAPTURE via let-local: rename total->sum where sum is a let-local must be REFUSED.
+printf '#lang beagle/clj\n(ns demo.l)\n(def total :- Int 100)\n(defn g [x :- Int] :- Int (let [sum (+ x 1)] (* sum total)))\n' > "$W/l.bclj"
+racket "$RT" --emit-edn "$W/l.bclj" 2>/dev/null > "$W/l.edn"
+if bb -cp "$FRAM_OUT" "$RES" rename total sum l "$W/l.edn" >/dev/null 2>&1; then
+  echo "  FAIL  let-local capture NOT refused"; fail=1
+else echo "  PASS  let-local capture refused (no-capture invariant)"; fi
+
 echo
 if [ "$fail" = 0 ]; then
   echo "RESULT: PASS — one engine, scope-correct across collision + shadowing + cross-module, recompiles."

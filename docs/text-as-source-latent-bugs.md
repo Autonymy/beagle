@@ -102,3 +102,35 @@ hiding wrong answers. That is evidence for the thesis, not incidental cleanup.
 > byte-identically every build. Gated by `bin/test/build-reproducible`. Not a
 > claims-loop loss (the loop was always datum-faithful), but it makes the committed
 > `out/` and the recompile gate robust without relying on the build-nondeterminism guard.
+>
+> **Same class in the JS backend — FIXED (found by adversarial verification):** the
+> determinism skeptic auditing the clj fix found `emit-js.rkt` carried a *module-level*
+> `(define match-counter (box 0))` that was **never reset per program**. Within one
+> build the file set is sorted and the counter is process-deterministic, so a single
+> invocation was byte-stable — but the box LEAKED across programs: the second
+> match-using module in one process started at `_match_1`, not `_match_0`, so a
+> module's `.js` depended on what was built *before* it. Fixed identically: `match-counter`
+> is now a `make-parameter` box, reset fresh in `js-emit-program`. Gated by the js leg of
+> `bin/test/build-reproducible` (two match modules in one invocation; each must reset to
+> `_match_0`). Same bug in two backends; the adversarial "find ANY other source of
+> nondeterminism" prompt is what surfaced the second.
+
+> **Scope-correctness holes in graph-native RENAME — FIXED (adversarial verification).**
+> Distinct from the migration findings above (those were *text* hiding bugs); these were
+> bugs in the *graph engine itself*, found by adversarially stress-testing the headline
+> claim "graph-native rename is scope-correct, unlike sed." Both **recompiled clean** —
+> the most dangerous failure mode (a silent meaning change a green build endorses):
+> 1. **Typed paren-param `(x :- T)` not collected as a binding.** `collect-bind-syms`
+>    handled bare/`[..]`/`{..}` params but not the legal paren form, so a param `(red :- Int)`
+>    was invisible to the resolver; a body use of `red` then resolved to a same-named
+>    top-level def and was wrongly renamed with it. Fix: collect the symbols before `:-`
+>    in a paren list (and resolve its inner type too, so type-renames still cascade).
+> 2. **No no-capture invariant.** The collision guard only checked def-vs-def, so
+>    `rename src→dst` where `dst` is a param/let-local was *accepted*, rewriting a
+>    reference into a name captured by the local: `(+ dst src)` → `(+ dst dst)`,
+>    `(* sum total)` → `(* sum sum)`. Fix: a scope-precise `capture-refs` walk (reuses
+>    the resolver's exact frame construction) refuses the rename if any reference to the
+>    renamed def has `new` bound by an enclosing local — checked across all files, since a
+>    `:refer`'d bare reference lives in a consumer module. Both gated by
+>    `bin/test/code-as-claims/rename.sh §5`. The lesson mirrors the thesis: scope-correctness
+>    is a *property to be verified adversarially*, not assumed because the graph "knows scope."

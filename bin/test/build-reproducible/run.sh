@@ -26,5 +26,24 @@ else
   echo "  FAIL  build is non-deterministic:"; diff "$W/o1/$rel" "$W/o2/$rel" | head; fail=1
 fi
 
+# --- js path: the match temp counter must RESET per program (parameterized box,
+#     not a module-level box that leaks across programs in one invocation) --------
+echo "================ build reproducibility — js match temps reset per program ================"
+"$ROOT/bin/beagle-build-all" "$HERE/match-js-a.bjs" "$HERE/match-js-b.bjs" --out "$W/j1" >/dev/null 2>&1
+"$ROOT/bin/beagle-build-all" "$HERE/match-js-a.bjs" "$HERE/match-js-b.bjs" --out "$W/j2" >/dev/null 2>&1
+ja="$(find "$W/j1" -name 'match_js_a.js')"; jb="$(find "$W/j1" -name 'match_js_b.js')"
+if [ -z "$ja" ] || [ -z "$jb" ]; then echo "  FAIL  js fixtures did not build"; fail=1; else
+  ta="$(grep -oE '_match_[0-9]+' "$ja" | sort -u | tr '\n' ' ')"
+  tb="$(grep -oE '_match_[0-9]+' "$jb" | sort -u | tr '\n' ' ')"
+  echo "  module a temps: ${ta}/ module b temps: ${tb}"
+  if [ "$(echo "$ta" | tr -d ' ')" = "_match_0" ] && [ "$(echo "$tb" | tr -d ' ')" = "_match_0" ]; then
+    echo "  PASS  each program resets to _match_0 (counter is per-program, not a leaked process box)"
+  else echo "  FAIL  js match counter leaked across programs (b should also start at _match_0)"; fail=1; fi
+  rb="${jb#"$W/j1/"}"
+  if diff -q "$W/j1/$rb" "$W/j2/$rb" >/dev/null 2>&1; then
+    echo "  PASS  same js source -> byte-identical .js across two builds"
+  else echo "  FAIL  js build is non-deterministic"; fail=1; fi
+fi
+
 echo
-[ "$fail" = 0 ] && echo "RESULT: PASS — emit is byte-reproducible (match temps deterministic)." || { echo "RESULT: FAIL"; exit 1; }
+[ "$fail" = 0 ] && echo "RESULT: PASS — emit is byte-reproducible (clj + js match temps deterministic, per-program)." || { echo "RESULT: FAIL"; exit 1; }

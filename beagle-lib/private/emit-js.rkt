@@ -14,10 +14,14 @@
          "emit-jst.rkt"
          "emit-js-quote.rkt")
 
-(define match-counter (box 0))
+;; match temp counter — a PARAMETER holding a box, reset fresh per program (see
+;; js-emit-program) so the same source emits byte-identical .js every build, exactly
+;; as emit-clj does. A module-level box would leak across programs in one process.
+(define match-counter (make-parameter (box 0)))
 (define (next-match-id!)
-  (define n (unbox match-counter))
-  (set-box! match-counter (add1 n))
+  (define b (match-counter))
+  (define n (unbox b))
+  (set-box! b (add1 n))
   n)
 
 ;; --- special float values ---------------------------------------------------
@@ -617,6 +621,7 @@
 (define (js-emit-program prog)
   (validate-js-target! prog)
   (parameterize ([current-js-context 'stmt]
+                 [match-counter (box 0)]
                  [current-js-record-fields (build-record-field-table prog)]
                  [current-js-record-ns (program-imported-record-ns prog)]
                  [current-js-scalar-fns (build-scalar-fns prog)]
