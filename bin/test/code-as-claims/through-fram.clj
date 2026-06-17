@@ -29,7 +29,10 @@
   (let [[s p o] (edn/read-string line)
         L (ent s)
         P (c/value! ctx p)
-        R (if (integer? o) (ent o) (c/value! ctx o))]
+        ;; In the EDN, leaf VALUES are quoted strings; only node ids are bare
+        ;; numbers — so ANY number object is a node-ref (incl. float ids, which the
+        ;; old `integer?` test mis-stored as values, orphaning the comment subtree).
+        R (if (number? o) (ent o) (c/value! ctx o))]
     (c/claim! ctx L P R tx)))
 
 (binding [*out* *err*]

@@ -22,7 +22,11 @@ nothing. The loop:
 2. **Recompile-identity (modulo srcloc)** — `beagle build` of the regenerated tree
    is **byte-identical** to `beagle build` of the original, after stripping
    `^{:line N :file "..."}` srcloc metadata. So the emitted *program* is identical;
-   claims-canonical loses nothing for the compiler.
+   claims-canonical loses nothing for the compiler. The gate **guards against beagle
+   build nondeterminism**: it builds the original twice and only byte-compares
+   modules whose build is deterministic, relying on datum-identity for the rest — so
+   a `match` form (whose gensym counter differs per build process — a separate
+   beagle reproducibility bug) can't false-fail the loop.
 
 ### Why "modulo srcloc"
 

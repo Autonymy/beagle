@@ -66,10 +66,37 @@ outside bars), with the empty symbol rendered `||`. Gated: `bin/test/byte-stable
 + the `--pretty-gate` skip detector (an unparseable file now fails the gate instead
 of silently not-counting — a second blind spot the same probe found).
 
+## 5. Comment subtree orphaned through the Fram store (float node ids)
+**Surfaced by:** the move-3 canonical loop's *through-a-real-Fram-store* leg
+(move-2 was in-memory and could not see it).
+**The bug:** `max-id` (which allocates comment/segment node ids beyond the
+structural ids) considered leaf VALUES via `(integer? (caddr t))`, and Racket's
+`integer?` is **#t for integer-valued floats** (`2.0`, `16.0`). A float literal in
+the source therefore poisoned the allocation, emitting comment node ids as FLOATS
+(`192.0`). The Fram-store loader's node-ref test was `(integer? o)` — false for
+`192.0` — so it interned each comment ref as a VALUE, orphaning the whole comment
+subtree; after the store re-minted ids, root-finding picked a wrong node and
+reconstruction crashed (`cljs-interop.bcljs`, `gatepolicy.bclj`).
+**Why it hid:** files whose comment ids happened to be plain integers round-tripped
+fine; only a source with a float literal + comments through a *real store* exposed it.
+**Fix:** `max-id` considers only subjects (real node ids) via `exact-integer?`;
+the loader treats any bare number as a node-ref (leaf values are quoted strings in
+the EDN); `edn-root` prefers the structural wrapper over hash order. (Same probe also
+found `emit-edn` crashing on `.bnix` top-level brace-maps where `syntax-span`=#f —
+fixed with a guard.) Gated: `bin/test/code-as-claims`.
+
 ---
 
-**Pattern:** four independent migrations, four concealed correctness bugs — and in
-case 3 one bug was *masking* another, in case 4 the corruption hid behind "no real
-input triggers it." The text/`Any` representation was not a neutral serialization —
-it was actively hiding wrong answers. That is evidence for the thesis, not
-incidental cleanup.
+**Pattern:** five independent migrations, five concealed correctness bugs — bugs
+masking bugs (case 3), corruption hiding behind "no real input triggers it" (cases
+4, 5), and a whole class invisible until exercised *through the engine* (case 5).
+The text/`Any` representation was not a neutral serialization — it was actively
+hiding wrong answers. That is evidence for the thesis, not incidental cleanup.
+
+> **Adjacent finding (not text-concealment — a build-reproducibility bug):** the
+> move-3 recompile-identity gate revealed that `beagle build` is **not byte-
+> reproducible** for `match` (its gensym `match__NNNNN` counter differs between
+> build processes — building the *same* source twice yields different `.clj`). Not a
+> claims-loop loss (the loop is datum-faithful); the gate guards around it by only
+> byte-comparing modules whose build is deterministic. Worth a deterministic-gensym
+> fix in beagle for reproducible builds (e.g. the committed `out/`).

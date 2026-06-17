@@ -161,18 +161,30 @@
   (let loop ([i 0] [acc '()])
     (define key (string-append "f" (number->string i)))
     (if (hash-has-key? h key) (loop (add1 i) (cons (hash-ref h key) acc)) (reverse acc))))
-(define (max-id triples)                ; largest integer id used by structural claims
+;; Largest NODE id, so comment/segment ids can be allocated beyond it. Consider
+;; ONLY subjects (car): every minted node is the subject of its own kind claim, so
+;; subjects cover all node ids — while objects (caddr) may be LEAF VALUES, and an
+;; integer-valued float value (e.g. 2.0, 16.0; Racket's `integer?` is #t for those)
+;; would otherwise make the allocated ids FLOATS, which downstream node-ref tests
+;; mis-store as values. `exact-integer?` admits only real node ids.
+(define (max-id triples)
   (for/fold ([m 0]) ([t (in-list triples)])
-    (max m (if (integer? (car t)) (car t) 0) (if (integer? (caddr t)) (caddr t) 0))))
+    (max m (if (exact-integer? (car t)) (car t) 0))))
 
 ;; reconstruct a datum from EDN triples (each a list (subj pred obj)) ---------
 ;; root = the one subject never referenced as a child — robust even after Fram
 ;; re-mints all ids on its way through the store.
-(define (edn-root props)                  ; the one subject never referenced as a child
+(define (edn-root props)                  ; the structural wrapper (subject never referenced)
   (define refs (make-hash))
   (for ([(s h) (in-hash props)])
-    (for ([(p o) (in-hash h)]) (when (integer? o) (hash-set! refs o #t))))
-  (for/first ([s (in-list (hash-keys props))] #:unless (hash-ref refs s #f)) s))
+    (for ([(p o) (in-hash h)]) (when (number? o) (hash-set! refs o #t))))
+  (define cands (for/list ([s (in-list (hash-keys props))] #:unless (hash-ref refs s #f)) s))
+  ;; prefer the list/vector wrapper over any stray orphan, so reconstruction is
+  ;; robust even if an edge was mis-stored (don't depend on hash-key order).
+  (or (for/first ([s (in-list cands)]
+                  #:when (member (hash-ref (hash-ref props s (make-hash)) "kind" #f) '("list" "vector")))
+        s)
+      (and (pair? cands) (car cands))))
 (define (make-edn-build props)            ; id -> datum (follows fN/tail only; ignores comment*/seg*)
   (define (build id)
     (define h (hash-ref props id))
@@ -408,7 +420,10 @@
            [else i])))
      (- (sub1 first-pos) first-form-off)]))
 (define (form-spans stxs shift)         ; (listof (list stx-index start end)) for forms WITH srcloc
-  (for/list ([s (in-list stxs)] [i (in-naturals)] #:when (syntax-position s))
+  ;; a form can carry a position but a #f span (e.g. a top-level beagle/nix
+  ;; brace-map) — guard both, else (+ start #f) crashes emit. A spanless form just
+  ;; gets no comment attachment (graceful).
+  (for/list ([s (in-list stxs)] [i (in-naturals)] #:when (and (syntax-position s) (syntax-span s)))
     (define start (- (sub1 (syntax-position s)) shift))
     (list i start (+ start (syntax-span s)))))
 (define (in-any-span? off spans)
