@@ -1,74 +1,70 @@
 #!/usr/bin/env bash
-# Capstone — repair as a GRAPH OPERATION.
+# Scope-correct rename — repair as a graph operation, the COMPLETE engine.
 #
-# A scope-correct rename performed as a CLAIM EDIT on the canonical Fram store
-# (supersede the symbol's `v` claims in one module), then exported byte-stable and
-# recompiled. The fixture defines `helper` in BOTH mod_a and mod_b; we rename only
-# mod_a's. The proof:
-#   - mod_a's helper is renamed everywhere it binds (def + callers)
-#   - mod_b's identically-named helper is UNTOUCHED (scope-correct by construction;
-#     a text `sed s/helper/.../` would corrupt both)
-#   - the renamed tree RECOMPILES clean
-#   - renaming onto an existing binding is REFUSED (the collision invariant)
-# This ties move 1 (scope-correct graph) + move 2 (byte-stable emit) + move 3
-# (canonical store) into the concrete crown jewel. Needs racket + bb + fram out/.
-#
-# HONEST SCOPE: the rename is MODULE-LOCAL — it renames every occurrence of the
-# symbol in the target module (def + callers), and the cross-MODULE collision case
-# (mod_a vs mod_b) is correct by construction. It does NOT yet distinguish a
-# local-shadowing binding inside the module (a `let [helper ...]` would also be
-# renamed) — exact intra-module scoping awaits id-reference resolution (chartroom's
-# noted follow-up). The cross-file rename-CASCADE (update qualified refs in OTHER
-# modules) is the next extension. It does NOT touch `helper` inside strings/keywords
-# (only symbol leaves) — proven, and the key difference from a text sed.
+# One engine (chartroom's resolve.clj, Turtle #5: a lexical resolver that adds
+# refers_to edges, then renames a def by editing ONE node — references follow
+# refers_to). It is correct across all three scope hazards, which a text sed cannot
+# be, and O(1) (edits the def, not each reference):
+#   1. MODULE COLLISION   — rename mod_a's `helper`; mod_b's same-named one untouched
+#   2. SHADOWING          — rename a def; a local of the same name (param/let) untouched
+#   3. CROSS-MODULE        — rename a def; every `<alias>/name` reader across files renamed
+#   + the collision invariant: a rename onto an existing binding is refused.
+# Each renamed tree recompiles. Needs racket + bb + fram out/ + chartroom resolve.clj.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
 RT="$ROOT/beagle-lib/private/claims-roundtrip.rkt"
-RIS="$HERE/rename-in-store.clj"
 FRAM_OUT="${FRAM_OUT:-$HOME/code/fram/out}"
-C="$HERE/rename-corpus"
+CHARTROOM="${CHARTROOM:-$HOME/code/chartroom}"
+RES="$CHARTROOM/src/resolve.clj"
+FRAM_SRC="${CODE_AS_CLAIMS_CORPUS:-$HOME/code/fram/src}"
 fail=0
 
-echo "================ capstone — repair as a graph operation (scope-correct rename) ================"
+echo "================ scope-correct rename — the complete engine (resolve.clj) ================"
 [ -d "$FRAM_OUT" ] || { echo "  (need FRAM_OUT)"; exit 3; }
-W="$(mktemp -d)"; trap 'rm -rf "$W"' EXIT
-mkdir -p "$W/regen"
-
-racket "$RT" --emit-edn "$C/mod_a.bclj" 2>/dev/null > "$W/a.edn"
-racket "$RT" --emit-edn "$C/mod_b.bclj" 2>/dev/null > "$W/b.edn"
-
-# the edit: rename helper -> safe-add in modules matching "mod_a"
-bb -cp "$FRAM_OUT" "$RIS" helper safe-add mod_a "$W/out" "$W/a.edn" "$W/b.edn" 2>/dev/null
-racket "$RT" --render "$W/out/mod_a.bclj.edn" 2>/dev/null > "$W/regen/mod_a.bclj"
-racket "$RT" --render "$W/out/mod_b.bclj.edn" 2>/dev/null > "$W/regen/mod_b.bclj"
-
+[ -f "$RES" ]     || { echo "  (need CHARTROOM resolve.clj)"; exit 3; }
 chk() { if eval "$2"; then echo "  PASS  $1"; else echo "  FAIL  $1"; fail=1; fi; }
-echo "--- the graph edit ---"
-chk "mod_a: helper renamed to safe-add"          "grep -q 'safe-add' '$W/regen/mod_a.bclj'"
-chk "mod_a: no 'helper' left (def + caller both)" "! grep -q 'helper' '$W/regen/mod_a.bclj'"
-chk "mod_b: helper UNTOUCHED (scope-correct)"     "grep -q 'helper' '$W/regen/mod_b.bclj'"
-chk "mod_b: NOT renamed (no safe-add leaked)"     "! grep -q 'safe-add' '$W/regen/mod_b.bclj'"
+W="$(mktemp -d)"; trap 'rm -rf "$W" /tmp/resolved-*.edn' EXIT
 
-echo "--- the renamed program recompiles ---"
-if bin/beagle-build-all "$W/regen" --out "$W/o" 2>&1 | grep -q '0 error'; then
-  echo "  PASS  renamed tree builds clean"
-else
-  echo "  FAIL  renamed tree does not build"; fail=1
-fi
+# --- 1. module collision: rename mod_a/helper; mod_b/helper untouched -----------
+echo "--- 1. module collision (mod_a/helper renamed; mod_b/helper untouched) ---"
+racket "$RT" --emit-edn "$HERE/rename-corpus/mod_a.bclj" 2>/dev/null > "$W/a.edn"
+racket "$RT" --emit-edn "$HERE/rename-corpus/mod_b.bclj" 2>/dev/null > "$W/b.edn"
+bb -cp "$FRAM_OUT" "$RES" rename helper safe-add mod_a "$W/a.edn" "$W/b.edn" 2>/dev/null
+ma="$(racket "$RT" --render /tmp/resolved-mod_a.bclj.edn 2>/dev/null)"
+mb="$(racket "$RT" --render /tmp/resolved-mod_b.bclj.edn 2>/dev/null)"
+chk "mod_a renamed (def + caller -> safe-add)" "grep -q 'defn safe-add' <<<\"\$ma\" && grep -q '(safe-add x)' <<<\"\$ma\""
+chk "mod_b helper UNTOUCHED"                   "grep -q 'defn helper' <<<\"\$mb\" && ! grep -q 'safe-add' <<<\"\$mb\""
 
-echo "--- collision invariant (rename onto an existing binding is refused) ---"
-# use-a already binds in mod_a; renaming helper -> use-a must be refused (exit 3).
-if bb -cp "$FRAM_OUT" "$RIS" helper use-a mod_a "$W/out2" "$W/a.edn" "$W/b.edn" >/dev/null 2>&1; then
+# --- 2. shadowing: rename def; shadowing param untouched ------------------------
+echo "--- 2. shadowing (def renamed; shadowing local + its use untouched) ---"
+racket "$RT" --emit-edn "$HERE/shadow-corpus/mod.bclj" 2>/dev/null > "$W/s.edn"
+bb -cp "$FRAM_OUT" "$RES" rename helper add-one mod "$W/s.edn" 2>/dev/null
+sm="$(racket "$RT" --render /tmp/resolved-mod.bclj.edn 2>/dev/null)"
+chk "def + ref renamed to add-one"   "grep -q 'defn add-one' <<<\"\$sm\" && grep -q '(add-one y)' <<<\"\$sm\""
+chk "shadowing param + use UNTOUCHED" "grep -qE 'other \[helper' <<<\"\$sm\" && grep -qF '(* helper 2)' <<<\"\$sm\""
+
+# --- 3. cross-module: rename a def + all its qualified readers across files ------
+echo "--- 3. cross-module (fram.cnf/value! -> intern! across fram/src, recompiles) ---"
+E="$W/e"; mkdir -p "$E" "$W/r/fram"; edns=()
+while IFS= read -r f; do b="$(basename "$f")"; racket "$RT" --emit-edn "$f" 2>/dev/null > "$E/$b.edn"; edns+=("$E/$b.edn"); done < <(find "$FRAM_SRC" -name '*.bclj' | sort)
+bb -cp "$FRAM_OUT" "$RES" rename value! intern! cnf "${edns[@]}" 2>/dev/null
+while IFS= read -r f; do b="$(basename "$f")"; racket "$RT" --render "/tmp/resolved-$b.edn" 2>/dev/null > "$W/r/fram/$b"; done < <(find "$FRAM_SRC" -name '*.bclj' | sort)
+chk "cnf def renamed (intern!)"               "grep -q 'defn intern!' '$W/r/fram/cnf.bclj'"
+chk "NO '/value!' cross-module ref left"      "! grep -rqh '/value!' '$W/r/fram/'"
+chk "'/intern!' cross-module refs present"    "grep -rqh '/intern!' '$W/r/fram/'"
+chk "value-id UNTOUCHED (diff symbol)"        "grep -rqh 'value-id' '$W/r/fram/'"
+chk "cross-module tree recompiles"            "\"$ROOT/bin/beagle-build-all\" '$W/r' --out '$W/o' 2>&1 | grep -q '0 error'"
+
+# --- 4. collision invariant: rename onto an existing binding refused ------------
+echo "--- 4. collision invariant (rename helper -> other refused) ---"
+racket "$RT" --emit-edn "$HERE/shadow-corpus/mod.bclj" 2>/dev/null > "$W/s2.edn"
+if bb -cp "$FRAM_OUT" "$RES" rename helper other mod "$W/s2.edn" >/dev/null 2>&1; then
   echo "  FAIL  collision NOT refused"; fail=1
-else
-  echo "  PASS  rename onto existing binding refused (no claims mutated)"
-fi
+else echo "  PASS  rename onto existing binding refused"; fi
 
 echo
 if [ "$fail" = 0 ]; then
-  echo "RESULT: PASS — scope-correct rename as a graph operation: propagated, byte-stable, recompiles, collision-safe."
-else
-  echo "RESULT: FAIL"; exit 1
-fi
+  echo "RESULT: PASS — one engine, scope-correct across collision + shadowing + cross-module, recompiles."
+else echo "RESULT: FAIL"; exit 1; fi

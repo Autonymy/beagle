@@ -7,9 +7,9 @@
 # canonical engine, regenerate byte-stable, and COMMIT only if it recompiles, else
 # REJECT (fail closed). The NL→spec step is the agent's; everything after is gated.
 #
-#   structured edit specs an agent emits (EDN-ish, shown as op + args here):
-#     {op rename,  old O, new N, scope S}            -> scope-correct (shadowing) rename (resolve.clj)
-#     {op cascade, old O, new N, home H, ns NS}      -> cross-module qualified rename (rename-cascade)
+#   structured edit spec an agent emits (EDN-ish, shown as op + args here):
+#     {op rename, old O, new N, scope S}  -> the one engine (resolve.clj): scope-correct
+#                                            across collision + shadowing + cross-module
 #
 # Needs racket + bb + fram out/ + chartroom (resolve.clj). Self-gates with a worked
 # NL→edit example (valid commits + recompiles; invalid fails closed).
@@ -31,14 +31,10 @@ apply_edit() {
   local edns=() f b
   for f in "$corpus"/*.bclj; do b="$(basename "$f")"; racket "$RT" --emit-edn "$f" 2>/dev/null > "$E/$b.edn"; edns+=("$E/$b.edn"); done
   case "$op" in
-    rename)  # scope-correct (shadowing) — chartroom's refers_to resolver
+    rename)  # the one engine: scope-correct across collision + shadowing + cross-module
       bb -cp "$FRAM_OUT" "$CHARTROOM/src/resolve.clj" rename "$1" "$2" "$3" "${edns[@]}" >/dev/null 2>&1 \
         || { echo REJECTED; rm -rf "$W"; return; }
       for f in "$corpus"/*.bclj; do b="$(basename "$f")"; racket "$RT" --render "/tmp/resolved-$b.edn" 2>/dev/null > "$W/regen/$b"; done ;;
-    cascade) # cross-module qualified rename
-      bb -cp "$FRAM_OUT" "$HERE/rename-cascade.clj" "$1" "$2" "$3" "$4" "$W/out" "${edns[@]}" >/dev/null 2>&1 \
-        || { echo REJECTED; rm -rf "$W"; return; }
-      for f in "$corpus"/*.bclj; do b="$(basename "$f")"; racket "$RT" --render "$W/out/$b.edn" 2>/dev/null > "$W/regen/$b"; done ;;
     *) echo REJECTED; rm -rf "$W"; return ;;
   esac
   if "$ROOT/bin/beagle-build-all" "$W/regen" --out "$W/o" 2>&1 | grep -q '0 error'; then

@@ -81,35 +81,17 @@ jobs:
       - name: Code as canonical claims — recompile-identity gate
         run: CODE_AS_CLAIMS_CORPUS="$GITHUB_WORKSPACE/.fram/src" FRAM_OUT="$GITHUB_WORKSPACE/.fram/out" bin/test/code-as-claims/run.sh
 
-      # Capstone: repair as a GRAPH OPERATION. A scope-correct rename as a claim edit
-      # on the canonical store — mod_a's `helper` renamed, mod_b's identically-named
-      # one untouched (a text sed would corrupt both), string literals untouched,
-      # renamed tree recompiles, collision refused. Ties moves 1-3.
-      - name: Repair-as-graph-operation — scope-correct rename gate
-        run: FRAM_OUT="$GITHUB_WORKSPACE/.fram/out" bin/test/code-as-claims/rename.sh
+      # Scope-correct rename — the COMPLETE engine (chartroom's resolve.clj, refers_to),
+      # ONE gate across every scope hazard: mod_a/helper renamed but mod_b's untouched
+      # (collision); a shadowing local untouched (shadowing); every cross-module reader
+      # renamed (cross-file, fram.cnf/value! -> intern! over fram/src); a collision onto
+      # an existing binding refused; each renamed tree recompiles. Repair as a graph
+      # operation, O(1) (edits the def; references follow refers_to).
+      - name: Scope-correct rename (collision + shadowing + cross-module) gate
+        run: FRAM_OUT="$GITHUB_WORKSPACE/.fram/out" CHARTROOM="$GITHUB_WORKSPACE/.chartroom" CODE_AS_CLAIMS_CORPUS="$GITHUB_WORKSPACE/.fram/src" bin/test/code-as-claims/rename.sh
 
-      # Cross-file rename CASCADE: rename a def + ALL its qualified cross-module
-      # readers in one claim edit (resolved through the require graph), scope-correct
-      # (same-prefix symbols untouched), recompiles. Proven on the real fram engine
-      # (fram.cnf/value! -> intern! across fram/src).
-      - name: Cross-file rename-cascade gate
-        run: CODE_AS_CLAIMS_CORPUS="$GITHUB_WORKSPACE/.fram/src" FRAM_OUT="$GITHUB_WORKSPACE/.fram/out" bin/test/code-as-claims/cascade.sh
-
-      # Move 4 authoring substrate: a structured edit (what an agent emits as data)
-      # is a RECOMPILE-GATED transaction — commit the new tree only if it builds
-      # clean, else fail closed. The deterministic surface an NL/LLM layer drives.
-      - name: Authoring substrate — recompile-gated edit transaction
-        run: FRAM_OUT="$GITHUB_WORKSPACE/.fram/out" bin/test/code-as-claims/author.sh
-
-      # Scope-correct rename: renaming a def leaves a SHADOWING local of the same name
-      # untouched, via chartroom's refers_to resolver (binding identity, not spelling).
-      # The Layer-2 code-intelligence engine driven by a beagle gate.
-      - name: Scope-correct rename (shadowing) — refers_to resolver gate
-        run: FRAM_OUT="$GITHUB_WORKSPACE/.fram/out" CHARTROOM="$GITHUB_WORKSPACE/.chartroom" bin/test/code-as-claims/rename-scope.sh
-
-      # NL -> edit authoring layer: prose intent -> a structured edit (what an agent
-      # emits as data) -> dispatched to the canonical engine -> recompile-gated commit,
-      # else fail closed. The deterministic surface an NL/LLM layer drives.
+      # NL -> edit authoring layer: prose intent -> a structured edit (data an agent
+      # emits) -> the rename engine -> recompile-gated commit, else fail closed.
       - name: NL-to-edit authoring layer — recompile-gated transaction
         run: FRAM_OUT="$GITHUB_WORKSPACE/.fram/out" CHARTROOM="$GITHUB_WORKSPACE/.chartroom" bin/test/code-as-claims/authoring.sh
 
