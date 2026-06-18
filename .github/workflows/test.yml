@@ -115,6 +115,12 @@ jobs:
       - name: NL-to-edit authoring layer — recompile-gated transaction
         run: FRAM_OUT="$GITHUB_WORKSPACE/.fram/out" CHARTROOM="$GITHUB_WORKSPACE/.chartroom" bin/test/code-as-claims/authoring.sh
 
+      # One engine, both pillars, on REAL code: the blast radius (REASON) of fram.cnf/value!
+      # predicts the cross-module reach of renaming it (REPAIR), and the repaired tree
+      # recompiles — both derived from the same converged refers_to resolver.
+      - name: Engine demo — reason + repair consistent on real fram/src
+        run: FRAM_OUT="$GITHUB_WORKSPACE/.fram/out" CHARTROOM="$GITHUB_WORKSPACE/.chartroom" CODE_AS_CLAIMS_CORPUS="$GITHUB_WORKSPACE/.fram/src" bin/test/engine-demo/run.sh
+
       - name: Show accumulated surface debt
         if: always()
         run: |
