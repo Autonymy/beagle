@@ -83,6 +83,34 @@ chk "self-doc def 'dead' removed (not blocked by its own comment)" "! grep -q 'd
 chk "its doc comment removed too"                                  "! grep -q 'doc mentioning dead' <<<\"\$dd\""
 chk "'keep-me' survives"                                           "grep -q 'defn keep-me' <<<\"\$dd\""
 
+# --- 6. deleting a defunion that still has live VARIANT-constructor refs -> refuse ----
+# (the orphan scan must flag refs to the union's variants, not just the union name)
+echo "--- 6. delete defunion with a live variant-ctor ref -> refuse ---"
+cat > "$W/var.bclj" <<'EOF'
+#lang beagle/clj
+(ns delcorp.var)
+(defunion Maybe (Some [v :- Int]) None)
+(def thing :- Maybe (Some 7))
+EOF
+racket "$RT" --emit-edn "$W/var.bclj" 2>/dev/null > "$W/var.edn"
+if bb -cp "$FRAM_OUT" "$RES" delete Maybe var "$W/var.edn" >/dev/null 2>&1; then
+  echo "  FAIL  union delete left a variant-ctor ref orphaned"; fail=1
+else echo "  PASS  union delete refused (a variant-ctor ref would orphan)"; fi
+
+# --- 7. a parameterized type head is deletable when unused ----------------------------
+echo "--- 7. delete unused parameterized union (Opt A) -> projects ---"
+cat > "$W/par.bclj" <<'EOF'
+#lang beagle/clj
+(ns delcorp.par)
+(defunion (Opt A) (Sm [v :- A]) Non)
+(defn keep-me [x :- Int] :- Int x)
+EOF
+racket "$RT" --emit-edn "$W/par.bclj" 2>/dev/null > "$W/par.edn"
+bb -cp "$FRAM_OUT" "$RES" delete Opt par "$W/par.edn" 2>/dev/null
+pr="$(racket "$RT" --render /tmp/resolved-par.bclj.edn 2>/dev/null)"
+chk "parameterized union (Opt A) removed"  "! grep -q 'defunion' <<<\"\$pr\""
+chk "'keep-me' survives"                   "grep -q 'defn keep-me' <<<\"\$pr\""
+
 echo
 if [ "$fail" = 0 ]; then
   echo "RESULT: PASS — delete projects when safe (no truncation), refuses orphans/variants, prunes own comment."

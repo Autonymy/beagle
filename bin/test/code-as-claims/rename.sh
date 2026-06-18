@@ -197,6 +197,19 @@ bb -cp "$FRAM_OUT" "$RES" rename red crimson qd "$W/qd.edn" 2>/dev/null
 qd="$(racket "$RT" --render /tmp/resolved-qd.bclj.edn 2>/dev/null)"
 chk "quasiquote (quote (red)) data untouched; def->crimson" "grep -qF '(quote (red))' <<<\"\$qd\" && grep -qF '(def crimson' <<<\"\$qd\""
 
+# --- 10. quasiquote quote/unquote nesting + nullary variants (adversarial sweep #4) --
+echo "--- 10. unquote-inside-quote + nullary defunion variant ---"
+# 10a. an (unquote ..) nested inside a (quote ..) within a template STILL escapes -> renames
+printf '#lang beagle/clj\n(ns qn)\n(defn red [x :- Int] :- Int x)\n(defmacro mk [] (quasiquote (quote (unquote (red 1)))))\n' > "$W/qn.bclj"
+racket "$RT" --emit-edn "$W/qn.bclj" 2>/dev/null > "$W/qn.edn"
+bb -cp "$FRAM_OUT" "$RES" rename red crimson qn "$W/qn.edn" 2>/dev/null
+chk "unquote inside quote escapes + renames" "grep -qF '(unquote (crimson 1))' <<<\"\$(racket \"$RT\" --render /tmp/resolved-qn.bclj.edn 2>/dev/null)\""
+# 10b. a nullary (bare-symbol) defunion variant is renameable
+printf '#lang beagle/clj\n(ns nv)\n(defunion Maybe (Some [v :- Int]) None)\n(defn f [x :- Int] :- Int x)\n' > "$W/nv.bclj"
+racket "$RT" --emit-edn "$W/nv.bclj" 2>/dev/null > "$W/nv.edn"
+bb -cp "$FRAM_OUT" "$RES" rename None Nothing nv "$W/nv.edn" 2>/dev/null
+chk "nullary variant None -> Nothing" "grep -qF '(Some [v :- Int]) Nothing)' <<<\"\$(racket \"$RT\" --render /tmp/resolved-nv.bclj.edn 2>/dev/null)\""
+
 echo
 if [ "$fail" = 0 ]; then
   echo "RESULT: PASS — one engine: collision/shadowing/cross-module/types/sequential/quasiquote, recompiles."
