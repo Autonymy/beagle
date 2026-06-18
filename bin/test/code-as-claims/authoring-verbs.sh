@@ -25,6 +25,7 @@
 # Needs racket + bb + fram out/ + chartroom (resolve.clj). Fail-closed: an edit the
 # engine refuses, or that does not recompile, is REJECTED with no tree written.
 set -uo pipefail
+export RESOLVE_OUT="$(mktemp -d)"   # hermetic: per-run render output (no global /tmp collision)
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
@@ -47,17 +48,17 @@ author() {
     upsert-form)  # add a new top-level def, or replace an existing one by name
       bb -cp "$FRAM_OUT" "$RESOLVE" upsert-form "$1" "$2" "${edns[@]}" >/dev/null 2>&1 \
         || { echo REJECTED; rm -rf "$W"; return; }
-      for f in "$corpus"/*.bclj; do b="$(basename "$f")"; racket "$RT" --render "/tmp/resolved-$b.edn" 2>/dev/null > "$W/regen/$b"; done ;;
+      for f in "$corpus"/*.bclj; do b="$(basename "$f")"; racket "$RT" --render "$RESOLVE_OUT/resolved-$b.edn" 2>/dev/null > "$W/regen/$b"; done ;;
     set-body)     # replace a defn's body
       bb -cp "$FRAM_OUT" "$RESOLVE" set-body "$1" "$2" "$3" "${edns[@]}" >/dev/null 2>&1 \
         || { echo REJECTED; rm -rf "$W"; return; }
-      for f in "$corpus"/*.bclj; do b="$(basename "$f")"; racket "$RT" --render "/tmp/resolved-$b.edn" 2>/dev/null > "$W/regen/$b"; done ;;
+      for f in "$corpus"/*.bclj; do b="$(basename "$f")"; racket "$RT" --render "$RESOLVE_OUT/resolved-$b.edn" 2>/dev/null > "$W/regen/$b"; done ;;
     *) echo REJECTED; rm -rf "$W"; return ;;
   esac
   if "$ROOT/bin/beagle-build-all" "$W/regen" --out "$W/o" 2>&1 | grep -q '0 error'; then
     rm -rf "$outdir"; cp -r "$W/regen" "$outdir"; echo COMMITTED
   else echo REJECTED; fi
-  rm -rf "$W" /tmp/resolved-*.edn 2>/dev/null || true
+  rm -rf "$W" $RESOLVE_OUT/resolved-*.edn 2>/dev/null || true
 }
 
 # claim_node_growth <corpus> <op> <args...> -> prints "<orig_nodes> <proj_nodes>".
@@ -75,11 +76,11 @@ claim_node_growth() {
     upsert-form) bb -cp "$FRAM_OUT" "$RESOLVE" upsert-form "$1" "$2" "${edns[@]}" >/dev/null 2>&1 ;;
     set-body)    bb -cp "$FRAM_OUT" "$RESOLVE" set-body "$1" "$2" "$3" "${edns[@]}" >/dev/null 2>&1 ;;
   esac
-  local proj="/tmp/resolved-$(basename "$first_edn" .edn).edn"   # /tmp/resolved-<file>.edn
+  local proj="$RESOLVE_OUT/resolved-$(basename "$first_edn" .edn).edn"   # $RESOLVE_OUT/resolved-<file>.edn
   local o p
   o="$(grep -c '"kind"' "$first_edn")"; p="$(grep -c '"kind"' "$proj")"
   echo "$o $p"
-  rm -rf "$W" /tmp/resolved-*.edn 2>/dev/null || true
+  rm -rf "$W" $RESOLVE_OUT/resolved-*.edn 2>/dev/null || true
 }
 
 echo "================ AUTHORING-as-claims gate (upsert-form + set-body) ================"
@@ -112,8 +113,8 @@ BODY1="$T/body_base.edn"; printf '(* x 10)' > "$BODY1"
 PROJSAVE="$T/setb.proj.edn"
 racket "$RT" --emit-edn "$CORPUS/authmod.bclj" 2>/dev/null > "$T/setb.orig.edn"
 bb -cp "$FRAM_OUT" "$RESOLVE" set-body base authmod "$BODY1" "$T/setb.orig.edn" >/dev/null 2>&1
-cp "/tmp/resolved-authmod.bclj.edn" "$PROJSAVE" 2>/dev/null || true
-rm -f /tmp/resolved-*.edn 2>/dev/null || true
+cp "$RESOLVE_OUT/resolved-authmod.bclj.edn" "$PROJSAVE" 2>/dev/null || true
+rm -f $RESOLVE_OUT/resolved-*.edn 2>/dev/null || true
 r="$(author "$T/setb" "$CORPUS" set-body base authmod "$BODY1")"
 if [ "$r" = COMMITTED ] \
    && grep -q '(defn base \[x :- Int\] :- Int (\* x 10))' "$T/setb/authmod.bclj" \
@@ -142,16 +143,16 @@ echo '    (proves add-two`s `base` call carries a real refers_to identity edge i
 racket "$RT" --emit-edn "$CORPUS/authmod.bclj" 2>/dev/null > "$T/sc.edn"
 SPEC3="$T/spec_sc.edn"; printf '(defn add-two [x :- Int] :- Int (base (+ x 2)))' > "$SPEC3"
 bb -cp "$FRAM_OUT" "$RESOLVE" upsert-form authmod "$SPEC3" "$T/sc.edn" >/dev/null 2>&1
-racket "$RT" --render /tmp/resolved-authmod.bclj.edn 2>/dev/null > "$T/sc_authored.bclj"; rm -f /tmp/resolved-*.edn
+racket "$RT" --render $RESOLVE_OUT/resolved-authmod.bclj.edn 2>/dev/null > "$T/sc_authored.bclj"; rm -f $RESOLVE_OUT/resolved-*.edn
 racket "$RT" --emit-edn "$T/sc_authored.bclj" 2>/dev/null > "$T/sc_authored.edn"
 bb -cp "$FRAM_OUT" "$RESOLVE" rename base renamed-base sc_authored "$T/sc_authored.edn" >/dev/null 2>&1 \
-  && racket "$RT" --render /tmp/resolved-sc_authored.bclj.edn 2>/dev/null > "$T/sc_renamed.bclj"
+  && racket "$RT" --render $RESOLVE_OUT/resolved-sc_authored.bclj.edn 2>/dev/null > "$T/sc_renamed.bclj"
 if grep -q '(defn add-two \[x :- Int\] :- Int (renamed-base (+ x 2)))' "$T/sc_renamed.bclj" 2>/dev/null \
    && grep -q '(defn renamed-base ' "$T/sc_renamed.bclj"; then
   echo "  PASS  rename of base (O(1), one binding) propagated to the authored add-two call site"
   echo "        -> the authored reference is wired into the graph by IDENTITY (refers_to), fully scope-correct"
 else echo "  FAIL  authored reference did not follow rename (not scope-correct)"; fail=1; fi
-rm -f /tmp/resolved-*.edn 2>/dev/null || true
+rm -f $RESOLVE_OUT/resolved-*.edn 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 echo '--- NL: "set the body of nonexistent-fn" -> agent emits set-body on a missing target ---'

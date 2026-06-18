@@ -10,6 +10,7 @@
 # blast radius — reasoning predicts repair, because they are the same engine. And the
 # repaired tree recompiles. Needs racket + bb + fram out/ + chartroom + fram/src.
 set -uo pipefail
+export RESOLVE_OUT="$(mktemp -d)"   # hermetic: per-run render output (no global /tmp collision)
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
@@ -26,7 +27,7 @@ echo "================ engine demo — one engine: REASON + REPAIR on real code 
 [ -f "$RES" ]     || { echo "  (need CHARTROOM resolve.clj)"; exit 3; }
 [ -d "$SRC" ]     || { echo "  (need fram/src)"; exit 3; }
 chk() { if eval "$2"; then echo "  PASS  $1"; else echo "  FAIL  $1"; fail=1; fi; }
-W="$(mktemp -d)"; trap 'rm -rf "$W" /tmp/resolved-*.edn' EXIT
+W="$(mktemp -d)"; trap 'rm -rf "$W" $RESOLVE_OUT/resolved-*.edn' EXIT
 
 # ---- REASON: blast radius of fram.cnf/value! (the call graph, cross-module) -----------
 echo '--- NL: "what breaks if I change fram.cnf/value! ?"  -> REASON (blast radius) ---'
@@ -52,7 +53,7 @@ echo '--- NL: "rename fram.cnf/value! to intern!"  -> REPAIR (scope-correct cros
 E="$W/e"; mkdir -p "$E" "$W/regen"; edns=()
 while IFS= read -r f; do b="$(basename "$f")"; racket "$RT" --emit-edn "$f" 2>/dev/null > "$E/$b.edn"; edns+=("$E/$b.edn"); done < <(find "$SRC" -name '*.bclj' | sort)
 bb -cp "$FRAM_OUT" "$RES" rename value! intern! cnf "${edns[@]}" 2>/dev/null
-while IFS= read -r f; do b="$(basename "$f")"; racket "$RT" --render "/tmp/resolved-$b.edn" 2>/dev/null > "$W/regen/$b"; done < <(find "$SRC" -name '*.bclj' | sort)
+while IFS= read -r f; do b="$(basename "$f")"; racket "$RT" --render "$RESOLVE_OUT/resolved-$b.edn" 2>/dev/null > "$W/regen/$b"; done < <(find "$SRC" -name '*.bclj' | sort)
 chk "repair recompiles (the renamed tree builds clean)" \
     "\"$ROOT/bin/beagle-build-all\" '$W/regen' --out '$W/o' 2>&1 | grep -q '0 error'"
 chk "cross-module readers rewritten c/value! -> c/intern!" \

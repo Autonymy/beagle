@@ -12,6 +12,7 @@
 #     refuse, mutate nothing (fail closed).
 # Needs racket + bb + fram out/ + chartroom resolve.clj.
 set -uo pipefail
+export RESOLVE_OUT="$(mktemp -d)"   # hermetic: per-run render output (no global /tmp collision)
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
@@ -26,13 +27,13 @@ echo "================ delete as a graph op — no-orphaned-references invariant
 [ -d "$FRAM_OUT" ] || { echo "  (need FRAM_OUT)"; exit 3; }
 [ -f "$RES" ]     || { echo "  (need CHARTROOM resolve.clj)"; exit 3; }
 chk() { if eval "$2"; then echo "  PASS  $1"; else echo "  FAIL  $1"; fail=1; fi; }
-W="$(mktemp -d)"; trap 'rm -rf "$W" /tmp/resolved-*.edn' EXIT
+W="$(mktemp -d)"; trap 'rm -rf "$W" $RESOLVE_OUT/resolved-*.edn' EXIT
 
 # --- 1. SAFE delete: remove an unreferenced def; before/after forms survive --------
 echo "--- 1. safe delete (unreferenced 'dead'; 'before'/'after' survive, recompiles) ---"
 racket "$RT" --emit-edn "$CORP/del_unused.bclj" 2>/dev/null > "$W/u.edn"
 bb -cp "$FRAM_OUT" "$RES" delete dead unused "$W/u.edn" 2>/dev/null
-du="$(racket "$RT" --render /tmp/resolved-del_unused.bclj.edn 2>/dev/null)"
+du="$(racket "$RT" --render $RESOLVE_OUT/resolved-del_unused.bclj.edn 2>/dev/null)"
 chk "'dead' def removed"                "! grep -q 'defn dead' <<<\"\$du\""
 chk "'before' SURVIVES (no truncation)" "grep -q 'defn before' <<<\"\$du\""
 chk "'after' SURVIVES (no truncation)"  "grep -q 'defn after' <<<\"\$du\""
@@ -78,7 +79,7 @@ cat > "$W/doc.bclj" <<'EOF'
 EOF
 racket "$RT" --emit-edn "$W/doc.bclj" 2>/dev/null > "$W/doc.edn"
 bb -cp "$FRAM_OUT" "$RES" delete dead doc "$W/doc.edn" 2>/dev/null
-dd="$(racket "$RT" --render /tmp/resolved-doc.bclj.edn 2>/dev/null)"
+dd="$(racket "$RT" --render $RESOLVE_OUT/resolved-doc.bclj.edn 2>/dev/null)"
 chk "self-doc def 'dead' removed (not blocked by its own comment)" "! grep -q 'defn dead' <<<\"\$dd\""
 chk "its doc comment removed too"                                  "! grep -q 'doc mentioning dead' <<<\"\$dd\""
 chk "'keep-me' survives"                                           "grep -q 'defn keep-me' <<<\"\$dd\""
@@ -107,7 +108,7 @@ cat > "$W/par.bclj" <<'EOF'
 EOF
 racket "$RT" --emit-edn "$W/par.bclj" 2>/dev/null > "$W/par.edn"
 bb -cp "$FRAM_OUT" "$RES" delete Opt par "$W/par.edn" 2>/dev/null
-pr="$(racket "$RT" --render /tmp/resolved-par.bclj.edn 2>/dev/null)"
+pr="$(racket "$RT" --render $RESOLVE_OUT/resolved-par.bclj.edn 2>/dev/null)"
 chk "parameterized union (Opt A) removed"  "! grep -q 'defunion' <<<\"\$pr\""
 chk "'keep-me' survives"                   "grep -q 'defn keep-me' <<<\"\$pr\""
 

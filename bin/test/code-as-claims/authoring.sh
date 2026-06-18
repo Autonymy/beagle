@@ -14,6 +14,7 @@
 # Needs racket + bb + fram out/ + chartroom (resolve.clj). Self-gates with a worked
 # NL→edit example (valid commits + recompiles; invalid fails closed).
 set -uo pipefail
+export RESOLVE_OUT="$(mktemp -d)"   # hermetic: per-run render output (no global /tmp collision)
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
@@ -34,17 +35,17 @@ apply_edit() {
     rename)  # the one engine: scope-correct across collision + shadowing + cross-module
       bb -cp "$FRAM_OUT" "$CHARTROOM/src/resolve.clj" rename "$1" "$2" "$3" "${edns[@]}" >/dev/null 2>&1 \
         || { echo REJECTED; rm -rf "$W"; return; }
-      for f in "$corpus"/*.bclj; do b="$(basename "$f")"; racket "$RT" --render "/tmp/resolved-$b.edn" 2>/dev/null > "$W/regen/$b"; done ;;
+      for f in "$corpus"/*.bclj; do b="$(basename "$f")"; racket "$RT" --render "$RESOLVE_OUT/resolved-$b.edn" 2>/dev/null > "$W/regen/$b"; done ;;
     delete)  # the second verb: remove a def IFF no reference would orphan, else refuse (fail closed)
       bb -cp "$FRAM_OUT" "$CHARTROOM/src/resolve.clj" delete "$1" "$2" "${edns[@]}" >/dev/null 2>&1 \
         || { echo REJECTED; rm -rf "$W"; return; }
-      for f in "$corpus"/*.bclj; do b="$(basename "$f")"; racket "$RT" --render "/tmp/resolved-$b.edn" 2>/dev/null > "$W/regen/$b"; done ;;
+      for f in "$corpus"/*.bclj; do b="$(basename "$f")"; racket "$RT" --render "$RESOLVE_OUT/resolved-$b.edn" 2>/dev/null > "$W/regen/$b"; done ;;
     *) echo REJECTED; rm -rf "$W"; return ;;
   esac
   if "$ROOT/bin/beagle-build-all" "$W/regen" --out "$W/o" 2>&1 | grep -q '0 error'; then
     rm -rf "$outdir"; cp -r "$W/regen" "$outdir"; echo COMMITTED
   else echo REJECTED; fi
-  rm -rf "$W" /tmp/resolved-*.edn 2>/dev/null || true
+  rm -rf "$W" $RESOLVE_OUT/resolved-*.edn 2>/dev/null || true
 }
 
 echo "================ NL → edit authoring layer (recompile-gated, agent-driven) ================"
