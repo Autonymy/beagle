@@ -352,7 +352,24 @@ else echo "  PASS  extend-type impl-param capture refused"; fi
 bb -cp "$FRAM_OUT" "$RES" rename scale factor et "$W/et.edn" 2>/dev/null
 chk "extend-type: module def ref in impl body cascades; impl param self untouched" "grep -qF '(* (box-w self) factor)' <<<\"\$(racket \"$RT\" --render /tmp/resolved-et.bclj.edn 2>/dev/null)\""
 
+# --- 17. as-> threading accumulator binding (adversarial sweep #11) -------------------
+echo "--- 17. as-> accumulator scope (capture + shadow) ---"
+cat > "$W/at.bclj" <<'EOF'
+#lang beagle/clj
+(ns at)
+(def base :- Int 1000)
+(defn run [input :- Int] :- Int (as-> input acc (+ acc 1) (+ acc base)))
+EOF
+racket "$RT" --emit-edn "$W/at.bclj" 2>/dev/null > "$W/at.edn"
+# 17a. renaming a module def to the accumulator name is refused (capture)
+if bb -cp "$FRAM_OUT" "$RES" rename base acc at "$W/at.edn" >/dev/null 2>&1; then
+  echo "  FAIL  as-> accumulator capture not refused"; fail=1
+else echo "  PASS  as-> accumulator capture refused"; fi
+# 17b. a legit rename cascades the module-def ref in the steps; accumulator untouched
+bb -cp "$FRAM_OUT" "$RES" rename base total at "$W/at.edn" 2>/dev/null
+chk "as->: module ref in step cascades; accumulator acc untouched" "grep -qF '(+ acc total)' <<<\"\$(racket \"$RT\" --render /tmp/resolved-at.bclj.edn 2>/dev/null)\""
+
 echo
 if [ "$fail" = 0 ]; then
-  echo "RESULT: PASS — one engine: full common beagle surface incl FQ/protocol-methods/letfn/extend-type, recompiles."
+  echo "RESULT: PASS — one engine: full common beagle surface (incl FQ/protocol-methods/letfn/extend-type/as->), recompiles."
 else echo "RESULT: FAIL"; exit 1; fi

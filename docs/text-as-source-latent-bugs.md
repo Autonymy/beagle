@@ -152,3 +152,24 @@ hiding wrong answers. That is evidence for the thesis, not incidental cleanup.
 > *because* it is a graph — it is scope-correct only where it has been adversarially
 > proven so. Two sweeps, 2 + 17 concealed wrong-answers in an engine whose whole pitch
 > is "correct unlike sed." Verify, don't assume.
+>
+> **Loop-until-dry — the full run (sweeps 1-11).** The sweeps continued until the
+> finder rate fell to genuinely-rare forms. Real silent-miscompiles found per sweep:
+> **3, 17, 7, 7, 6, 5, 3, 3, 1, 5, …** (~57 total), 0 surviving false-positives. Each
+> round probed beagle surface the resolver had never modeled, so this was *completing*
+> the resolver for beagle's real surface, not chasing exotica. The categories closed:
+> sequential/`:or` bindings; the type fleet (constructors, `defunion` variants,
+> cross-module types, single-colon `:`); the full quasiquote family (reader-`~`,
+> explicit `(unquote)`, quoted data) — sweep #4 even caught a *regression sweep #3's own
+> fix introduced*, the loop catching itself; the shipped `defrecord`+`defunion` idiom
+> (rename was splitting the type); multi-arity `defn`; `->`/`map->` auto-constructors;
+> synthesized field accessors `<lower(Record)>-<field>` (local **and** cross-module);
+> `match` as a real pattern-binding form; typed `let`/`for` bindings; fully-qualified
+> `module-name/Name` refs; `defprotocol` method names; and `letfn` + `extend-type`
+> binding scopes. Every fix is CI-gated (`rename.sh §1-§16`, `delete.sh §1-§10`,
+> `authoring.sh`) and move-3 identity (datum + recompile) held throughout. The deepest
+> lesson, now quantified at ~57: "the graph knows scope" is a *claim to be earned per
+> form*, not a property of being a graph — an adversarial loop, run until dry, is how
+> you earn it. (Acceptable known-limitations, not bugs: comment prose-word over-rename;
+> `:rename` map, which beagle rejects; fused reader `~x` in macro templates, which the
+> clj target has no functional consumer for.)
