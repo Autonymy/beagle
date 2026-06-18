@@ -161,6 +161,25 @@ if bb -cp "$FRAM_OUT" "$RES" delete Point fa "$W/fa.edn" >/dev/null 2>&1; then
   echo "  FAIL  field-accessor ref not seen (delete wrongly succeeded)"; fail=1
 else echo "  PASS  field-accessor reference blocks delete"; fi
 
+# --- 10. fully-qualified (module-name/Name) consumer refs block delete (adversarial sweep #8) -
+echo "--- 10. fully-qualified consumer references block delete ---"
+cat > "$W/fqp.bclj" <<'EOF'
+#lang beagle/clj
+(ns delcorp.fqp)
+(defrecord Box [(w :- Int)])
+EOF
+cat > "$W/fqc.bclj" <<'EOF'
+#lang beagle/clj
+(ns delcorp.fqc)
+(require delcorp.fqp)
+(defn u [b :- delcorp.fqp/Box] :- Int (delcorp.fqp/box-w b))
+EOF
+racket "$RT" --emit-edn "$W/fqp.bclj" 2>/dev/null > "$W/fqp.edn"
+racket "$RT" --emit-edn "$W/fqc.bclj" 2>/dev/null > "$W/fqc.edn"
+if bb -cp "$FRAM_OUT" "$RES" delete Box fqp "$W/fqp.edn" "$W/fqc.edn" >/dev/null 2>&1; then
+  echo "  FAIL  fully-qualified consumer ref not seen (delete wrongly succeeded)"; fail=1
+else echo "  PASS  fully-qualified consumer reference blocks delete"; fi
+
 echo
 if [ "$fail" = 0 ]; then
   echo "RESULT: PASS — delete projects when safe (no truncation), refuses orphans/variants, prunes own comment."

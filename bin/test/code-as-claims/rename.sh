@@ -294,7 +294,22 @@ bb -cp "$FRAM_OUT" "$RES" rename Point Coord rcore "$W/rcore.edn" "$W/ruse.edn" 
 ru="$(racket "$RT" --render /tmp/resolved-ruse.bclj.edn 2>/dev/null)"
 chk ":refer'd accessor point-x -> coord-x (import + call)" "grep -qF ':refer [Coord coord-x]' <<<\"\$ru\" && grep -qF '(coord-x p)' <<<\"\$ru\""
 
+# --- 14. fully-qualified module-name refs + type-name-shape guard (adversarial sweep #8) -
+echo "--- 14. fully-qualified (module-name/Name) refs + Capitalized-type guard ---"
+# 14a. (require acc.prod) with FQ refs acc.prod/Box, acc.prod/box-w, acc.prod/->Box all cascade
+printf '#lang beagle/clj\n(ns acc.prod)\n(defrecord Box [(w :- Int)])\n' > "$W/fqp.bclj"
+printf '#lang beagle/clj\n(ns acc.cons)\n(require acc.prod)\n(defn u [b :- acc.prod/Box] :- Int (acc.prod/box-w b))\n(defn mk [] :- acc.prod/Box (acc.prod/->Box 1))\n' > "$W/fqc.bclj"
+racket "$RT" --emit-edn "$W/fqp.bclj" 2>/dev/null > "$W/fqp.edn"
+racket "$RT" --emit-edn "$W/fqc.bclj" 2>/dev/null > "$W/fqc.edn"
+bb -cp "$FRAM_OUT" "$RES" rename Box Crate fqp "$W/fqp.edn" "$W/fqc.edn" 2>/dev/null
+fq="$(racket "$RT" --render /tmp/resolved-fqc.bclj.edn 2>/dev/null)"
+chk "FQ type+accessor+ctor cascade (acc.prod/Crate, crate-w, ->Crate)" "grep -qF 'acc.prod/Crate' <<<\"\$fq\" && grep -qF '(acc.prod/crate-w b)' <<<\"\$fq\" && grep -qF '(acc.prod/->Crate 1)' <<<\"\$fq\""
+# 14b. renaming a TYPE to a lowercase name is refused (beagle type names are Capitalized)
+if bb -cp "$FRAM_OUT" "$RES" rename Box crate fqp "$W/fqp.edn" "$W/fqc.edn" >/dev/null 2>&1; then
+  echo "  FAIL  lowercase type rename not refused"; fail=1
+else echo "  PASS  lowercase type rename refused (type-name shape)"; fi
+
 echo
 if [ "$fail" = 0 ]; then
-  echo "RESULT: PASS — one engine: scope/types/sequential/quasiquote/idioms/match/factories/accessors (incl cross-module), recompiles."
+  echo "RESULT: PASS — one engine: full common beagle surface (local + cross-module, incl FQ), scope-correct, recompiles."
 else echo "RESULT: FAIL"; exit 1; fi
