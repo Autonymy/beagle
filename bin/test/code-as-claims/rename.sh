@@ -210,7 +210,32 @@ racket "$RT" --emit-edn "$W/nv.bclj" 2>/dev/null > "$W/nv.edn"
 bb -cp "$FRAM_OUT" "$RES" rename None Nothing nv "$W/nv.edn" 2>/dev/null
 chk "nullary variant None -> Nothing" "grep -qF '(Some [v :- Int]) Nothing)' <<<\"\$(racket \"$RT\" --render /tmp/resolved-nv.bclj.edn 2>/dev/null)\""
 
+# --- 11. shipped idioms: defrecord+defunion, multi-arity defn, ->ctor (sweep #5) -----
+echo "--- 11. defrecord+defunion idiom + multi-arity defn + ->Name constructor ---"
+# 11a. the shipped match-fixture idiom: a defrecord that is also a defunion member renames as ONE type
+printf '#lang beagle/clj\n(ns ri)\n(defrecord Ok [(value :- Any)])\n(defrecord Err [(error :- String)])\n(defunion Result Ok Err)\n(defn h [r :- Result] :- Any (match r [(Ok v) v] [(Err e) e]))\n' > "$W/ri.bclj"
+racket "$RT" --emit-edn "$W/ri.bclj" 2>/dev/null > "$W/ri.edn"
+bb -cp "$FRAM_OUT" "$RES" rename Ok Yes ri "$W/ri.edn" 2>/dev/null
+ri="$(racket "$RT" --render /tmp/resolved-ri.bclj.edn 2>/dev/null)"
+chk "defrecord+union+match all rename together (no type split)" "grep -qF '(defrecord Yes' <<<\"\$ri\" && grep -qF '(defunion Result Yes Err)' <<<\"\$ri\" && grep -qF '[(Yes v)' <<<\"\$ri\" && grep -qF '(defrecord Err' <<<\"\$ri\""
+# 11b. multi-arity defn: a def used in EVERY arity body renames
+printf '#lang beagle/clj\n(ns rm)\n(def base :- Int 5)\n(defn f\n  ([x :- Int] :- Int (+ x base))\n  ([x :- Int y :- Int] :- Int (+ x y base)))\n' > "$W/rm.bclj"
+racket "$RT" --emit-edn "$W/rm.bclj" 2>/dev/null > "$W/rm.edn"
+bb -cp "$FRAM_OUT" "$RES" rename base unit rm "$W/rm.edn" 2>/dev/null
+rmr="$(racket "$RT" --render /tmp/resolved-rm.bclj.edn 2>/dev/null)"
+chk "multi-arity defn: both arity bodies renamed" "grep -qF '(+ x unit)' <<<\"\$rmr\" && grep -qF '(+ x y unit)' <<<\"\$rmr\""
+# 11c. ->Name auto-constructor renames with the type (same-module)
+printf '#lang beagle/clj\n(ns rc)\n(defrecord Point [(x :- Int) (y :- Int)])\n(defn mk [] :- Point (->Point 0 0))\n' > "$W/rc.bclj"
+racket "$RT" --emit-edn "$W/rc.bclj" 2>/dev/null > "$W/rc.edn"
+bb -cp "$FRAM_OUT" "$RES" rename Point Pt rc "$W/rc.edn" 2>/dev/null
+chk "->Name constructor renamed (->Point -> ->Pt)" "grep -qF '(->Pt 0 0)' <<<\"\$(racket \"$RT\" --render /tmp/resolved-rc.bclj.edn 2>/dev/null)\""
+# 11d. quasiquote reader ~ escapes (live) inside a quote; quoted data preserved
+printf '#lang beagle/clj\n(ns rq)\n(def base :- Int 1)\n(defmacro mk [y] `(quote ~(base y)))\n' > "$W/rq.bclj"
+racket "$RT" --emit-edn "$W/rq.bclj" 2>/dev/null > "$W/rq.edn"
+bb -cp "$FRAM_OUT" "$RES" rename base root rq "$W/rq.edn" 2>/dev/null
+chk "reader ~ unquote inside quote escapes + renames" "grep -qF '(root y)' <<<\"\$(racket \"$RT\" --render /tmp/resolved-rq.bclj.edn 2>/dev/null)\""
+
 echo
 if [ "$fail" = 0 ]; then
-  echo "RESULT: PASS — one engine: collision/shadowing/cross-module/types/sequential/quasiquote, recompiles."
+  echo "RESULT: PASS — one engine: collision/shadowing/cross-module/types/sequential/quasiquote/idioms, recompiles."
 else echo "RESULT: FAIL"; exit 1; fi

@@ -111,6 +111,31 @@ pr="$(racket "$RT" --render /tmp/resolved-par.bclj.edn 2>/dev/null)"
 chk "parameterized union (Opt A) removed"  "! grep -q 'defunion' <<<\"\$pr\""
 chk "'keep-me' survives"                   "grep -q 'defn keep-me' <<<\"\$pr\""
 
+# --- 8. multi-arity body refs + ->ctor refs are seen by the orphan scan (sweep #5) ---
+echo "--- 8. multi-arity body + ->constructor references block delete ---"
+cat > "$W/ma.bclj" <<'EOF'
+#lang beagle/clj
+(ns delcorp.ma)
+(def base :- Int 5)
+(defn f
+  ([x :- Int] :- Int (+ x base))
+  ([x :- Int y :- Int] :- Int (+ x y base)))
+EOF
+racket "$RT" --emit-edn "$W/ma.bclj" 2>/dev/null > "$W/ma.edn"
+if bb -cp "$FRAM_OUT" "$RES" delete base ma "$W/ma.edn" >/dev/null 2>&1; then
+  echo "  FAIL  multi-arity body ref not seen (delete wrongly succeeded)"; fail=1
+else echo "  PASS  multi-arity body reference blocks delete"; fi
+cat > "$W/ct.bclj" <<'EOF'
+#lang beagle/clj
+(ns delcorp.ct)
+(defrecord Point [(x :- Int)])
+(defn mk [] :- Point (->Point 1))
+EOF
+racket "$RT" --emit-edn "$W/ct.bclj" 2>/dev/null > "$W/ct.edn"
+if bb -cp "$FRAM_OUT" "$RES" delete Point ct "$W/ct.edn" >/dev/null 2>&1; then
+  echo "  FAIL  ->ctor ref not seen (delete wrongly succeeded)"; fail=1
+else echo "  PASS  ->constructor reference blocks delete"; fi
+
 echo
 if [ "$fail" = 0 ]; then
   echo "RESULT: PASS — delete projects when safe (no truncation), refuses orphans/variants, prunes own comment."
