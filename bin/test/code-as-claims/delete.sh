@@ -136,6 +136,31 @@ if bb -cp "$FRAM_OUT" "$RES" delete Point ct "$W/ct.edn" >/dev/null 2>&1; then
   echo "  FAIL  ->ctor ref not seen (delete wrongly succeeded)"; fail=1
 else echo "  PASS  ->constructor reference blocks delete"; fi
 
+# --- 9. match-pattern + field-accessor references block delete (adversarial sweep #6) -
+echo "--- 9. match-pattern ctor + field-accessor references block delete ---"
+cat > "$W/mt.bclj" <<'EOF'
+#lang beagle/clj
+(ns delcorp.mt)
+(defrecord Ok [(value :- Int)])
+(defrecord Err [(error :- Int)])
+(defunion Result Ok Err)
+(defn f [r :- Result] :- Int (match r [(Ok v) v] [(Err e) e]))
+EOF
+racket "$RT" --emit-edn "$W/mt.bclj" 2>/dev/null > "$W/mt.edn"
+if bb -cp "$FRAM_OUT" "$RES" delete Ok mt "$W/mt.edn" >/dev/null 2>&1; then
+  echo "  FAIL  match-pattern ctor ref not seen (delete wrongly succeeded)"; fail=1
+else echo "  PASS  match-pattern ctor reference blocks delete"; fi
+cat > "$W/fa.bclj" <<'EOF'
+#lang beagle/clj
+(ns delcorp.fa)
+(defrecord Point [(x :- Int)])
+(defn a [p :- Point] :- Int (point-x p))
+EOF
+racket "$RT" --emit-edn "$W/fa.bclj" 2>/dev/null > "$W/fa.edn"
+if bb -cp "$FRAM_OUT" "$RES" delete Point fa "$W/fa.edn" >/dev/null 2>&1; then
+  echo "  FAIL  field-accessor ref not seen (delete wrongly succeeded)"; fail=1
+else echo "  PASS  field-accessor reference blocks delete"; fi
+
 echo
 if [ "$fail" = 0 ]; then
   echo "RESULT: PASS — delete projects when safe (no truncation), refuses orphans/variants, prunes own comment."

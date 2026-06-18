@@ -235,7 +235,48 @@ racket "$RT" --emit-edn "$W/rq.bclj" 2>/dev/null > "$W/rq.edn"
 bb -cp "$FRAM_OUT" "$RES" rename base root rq "$W/rq.edn" 2>/dev/null
 chk "reader ~ unquote inside quote escapes + renames" "grep -qF '(root y)' <<<\"\$(racket \"$RT\" --render /tmp/resolved-rq.bclj.edn 2>/dev/null)\""
 
+# --- 12. match patterns + typed let + map->/accessor factories (adversarial sweep #6) -
+echo "--- 12. match-pattern scope + typed let + map->/accessor cascade ---"
+# 12a. match constructor pattern renames with the type; match-local not over-renamed
+cat > "$W/mt.bclj" <<'EOF'
+#lang beagle/clj
+(ns mt)
+(defrecord Ok [(value :- Int)])
+(defrecord Err [(error :- Int)])
+(defunion Result Ok Err)
+(def src :- Int 100)
+(defn f [r :- Result] :- Int (match r [(Ok v) (+ v src)] [(Err e) e]))
+EOF
+racket "$RT" --emit-edn "$W/mt.bclj" 2>/dev/null > "$W/mt.edn"
+bb -cp "$FRAM_OUT" "$RES" rename Ok Good mt "$W/mt.edn" 2>/dev/null
+chk "match pattern (Ok v) renames with the type" "grep -qF '[(Good v)' <<<\"\$(racket \"$RT\" --render /tmp/resolved-mt.bclj.edn 2>/dev/null)\""
+# 12b. renaming a def to a match-bound var name is REFUSED (capture)
+if bb -cp "$FRAM_OUT" "$RES" rename src v mt "$W/mt.edn" >/dev/null 2>&1; then
+  echo "  FAIL  match-pattern capture not refused"; fail=1
+else echo "  PASS  match-pattern capture refused"; fi
+# 12c. renaming the def does NOT touch the match-bound local of a different name
+bb -cp "$FRAM_OUT" "$RES" rename src total mt "$W/mt.edn" 2>/dev/null
+chk "match-local 'v' untouched when def renamed" "grep -qF '(+ v total)' <<<\"\$(racket \"$RT\" --render /tmp/resolved-mt.bclj.edn 2>/dev/null)\""
+# 12d. typed let binding annotation cascades on a type rename
+printf '#lang beagle/clj\n(ns tl)\n(defrecord Foo [(v :- Int)])\n(defn g [p :- Foo] :- Foo (let [q :- Foo p] q))\n' > "$W/tl.bclj"
+racket "$RT" --emit-edn "$W/tl.bclj" 2>/dev/null > "$W/tl.edn"
+bb -cp "$FRAM_OUT" "$RES" rename Foo Bar tl "$W/tl.edn" 2>/dev/null
+chk "typed let binding (q :- Foo) cascades" "grep -qF '(let [q :- Bar p]' <<<\"\$(racket \"$RT\" --render /tmp/resolved-tl.bclj.edn 2>/dev/null)\""
+# 12e. map-> factory AND synthesized field accessor carry the rename
+cat > "$W/fa.bclj" <<'EOF'
+#lang beagle/clj
+(ns fa)
+(defrecord Point [(x :- Int) (y :- Int)])
+(defn a [p :- Point] :- Int (point-x p))
+(defn c [] :- Point (map->Point {:x 1 :y 2}))
+EOF
+racket "$RT" --emit-edn "$W/fa.bclj" 2>/dev/null > "$W/fa.edn"
+bb -cp "$FRAM_OUT" "$RES" rename Point Vertex fa "$W/fa.edn" 2>/dev/null
+fa="$(racket "$RT" --render /tmp/resolved-fa.bclj.edn 2>/dev/null)"
+chk "field accessor point-x -> vertex-x" "grep -qF '(vertex-x p)' <<<\"\$fa\""
+chk "map->Point -> map->Vertex"          "grep -qF '(map->Vertex' <<<\"\$fa\""
+
 echo
 if [ "$fail" = 0 ]; then
-  echo "RESULT: PASS — one engine: collision/shadowing/cross-module/types/sequential/quasiquote/idioms, recompiles."
+  echo "RESULT: PASS — one engine: scope/types/sequential/quasiquote/idioms/match/factories/accessors, recompiles."
 else echo "RESULT: FAIL"; exit 1; fi
