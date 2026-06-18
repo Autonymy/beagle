@@ -44,5 +44,40 @@ chk "fully-qualified cross-module edge (use-it -> relay)" "grep -q \"('use-it', 
 chk "transitive blast(target) includes relay AND use-it (cross-module, 2 hops)" \
     "grep -qE \"BLAST_TARGET \\['relay', 'use-it'\\]\" <<<\"\$got\""
 
+# --- call ATTRIBUTION completeness: a blast edge is ANY reference to a defn, not just a
+#     list-HEAD call — value-passes (mapv f), threading (-> x f), and extend-type impl
+#     bodies are real dependencies that head-only counting silently dropped.
+echo "--- call attribution: value-pass / threading / extend-type bodies ---"
+ATT="$(mktemp -d)"; mkdir -p "$ATT/c"
+cat > "$ATT/c/m.bclj" <<'EOF'
+#lang beagle/clj
+(ns att.m)
+(defn dbl [x :- Int] :- Int (* x 2))
+(defn inc1 [x :- Int] :- Int (+ x 1))
+(defn thread-it [x :- Int] :- Int (-> x dbl inc1))
+(defn hof-it [xs :- (Vec Int)] :- (Vec Int) (mapv dbl xs))
+EOF
+cat > "$ATT/c/e.bclj" <<'EOF'
+#lang beagle/clj
+(ns att.e)
+(defrecord Box [(w :- Int)])
+(defn wrap [n :- Int] :- Int (+ n 1))
+(defprotocol Show (render [self] : Int))
+(extend-type Box Show (render [self] (wrap (box-w self))))
+EOF
+AJ="$("$CG" "$ATT/c" 2>/dev/null)"
+agot="$(python3 - "$AJ" <<'PY'
+import json,sys
+d=json.loads(sys.argv[1]); nm={x['key']:x['name'] for x in d['edges'] and [] or []}
+nm={x['key']:x['name'] for x in d['defns']}
+print("EDGES", sorted((nm[a],nm[b]) for a,b in d['edges']))
+PY
+)"
+echo "  $agot"
+chk "threading (-> x dbl inc1) edges to both steps" "grep -q \"('thread-it', 'dbl')\" <<<\"\$agot\" && grep -q \"('thread-it', 'inc1')\" <<<\"\$agot\""
+chk "value-pass (mapv dbl) is an edge"              "grep -q \"('hof-it', 'dbl')\" <<<\"\$agot\""
+chk "extend-type impl body call (render -> wrap)"   "grep -q \"('render', 'wrap')\" <<<\"\$agot\""
+rm -rf "$ATT"
+
 echo
-[ "$fail" = 0 ] && echo "RESULT: PASS — cross-module + transitive blast radius complete (not silently dropped)." || { echo "RESULT: FAIL"; exit 1; }
+[ "$fail" = 0 ] && echo "RESULT: PASS — cross-module + transitive blast radius complete (edges = all refs, not just head calls)." || { echo "RESULT: FAIL"; exit 1; }
