@@ -8,5 +8,5 @@
 (defrecord Store [cells :- (Map Int Int)])
 (defn put! [s :- (Ptr Store) cx :- Int cz :- Int v :- Int] :- Nil
   (set! (get (:cells (deref s)) (chunk-key cx cz)) v))
-(defn has [s :- (Ptr Store) cx :- Int cz :- Int] :- Bool
+(defn has? [s :- (Ptr Store) cx :- Int cz :- Int] :- Bool
   (contains? (:cells (deref s)) (chunk-key cx cz)))

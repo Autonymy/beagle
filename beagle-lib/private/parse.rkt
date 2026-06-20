@@ -1872,6 +1872,19 @@
 (register-combiner! 'fn
   (lambda (d subs)
     (match d
+      ;; Multi-arity anonymous fn — `(fn ([] x) ([a] y))` (list-wrapped) or the
+      ;; bare-vector form. Detect it FIRST (before the single-arity arms misparse
+      ;; each clause's param-vector as a call head → a `symbol->string` contract
+      ;; crash three layers deep in the emitter). Until `fn-multi` lands across
+      ;; parse/check/emit, reject cleanly with a pointed, actionable error.
+      [(list 'fn first-clause rest-clauses ...)
+       #:when (multi-arity-form? first-clause)
+       (raise-parse-error 'bad-form
+         "multi-arity anonymous `fn` is not yet supported — give it a name with `defn` (which supports multi-arity), or use a single arity.")]
+      [(list 'fn args ...)
+       #:when (bare-multi-arity-clauses args)
+       (raise-parse-error 'bad-form
+         "multi-arity anonymous `fn` is not yet supported — give it a name with `defn` (which supports multi-arity), or use a single arity.")]
       [(list 'fn params-form marker return-type body ...)
        #:when (annotation-marker? marker)
        (let-values ([(parsed rest-p) (parse-params (or (stx-ref subs 1) params-form))])
@@ -2110,6 +2123,20 @@
 ;; kept in source order (semantically significant), with defn-only and
 ;; defn--only arms interleaved exactly as in the legacy match.
 (define (parse-defn-form d subs)
+  ;; Reserved-name guard: a function named after a built-in combiner head would be
+  ;; defined as dead code while every (name ...) call site silently resolves to the
+  ;; combiner instead — a clean-typing RUNTIME miscompile (the reported `check` bug).
+  ;; Reject it loudly. Names arrive bare `(defn name ...)` or meta `(defn ^:private
+  ;; name ...)` => (#%meta _ name); the docstring/attr arms re-dispatch through here,
+  ;; so the guard still fires for those shapes.
+  (let ([nm (match d
+              [(list* (or 'defn 'defn-) (? symbol? n) _) n]
+              [(list* (or 'defn 'defn-) (list '#%meta _ (? symbol? n)) _) n]
+              [_ #f])])
+    (when (and nm (lookup-combiner nm))
+      (raise-parse-error 'bad-form
+        "(defn ~a ...) — `~a` is a reserved built-in form name and cannot be redefined; calls to it would resolve to the built-in, not your function. Rename the function."
+        nm nm)))
   (match d
     ;; Docstring on defn/defn- (real Clojure surface): strip it, re-dispatch
     ;; the remaining form through the ordinary arms, then attach the doc to
