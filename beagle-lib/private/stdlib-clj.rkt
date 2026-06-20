@@ -87,9 +87,10 @@
    'clojure.string/re-quote-replacement (fn-of '(String) 'String)
    ;; Nullable-honest returns: no match → nil. Ergonomic now that
    ;; nil-narrowing flows through if/when/if-let/and/or/cond guards.
-   'clojure.string/index-of (type-fn (list (p 'String) (p 'Any)) #f
+   ;; 3rd arg = optional from-index (Int); Clojure supports (index-of s v from-index).
+   'clojure.string/index-of (type-fn (list (p 'String) (p 'Any)) (p 'Int)
                                      (type-union (list (p 'Int) (p 'Nil))))
-   'clojure.string/last-index-of (type-fn (list (p 'String) (p 'Any)) #f
+   'clojure.string/last-index-of (type-fn (list (p 'String) (p 'Any)) (p 'Int)
                                           (type-union (list (p 'Int) (p 'Nil))))
    'clojure.string/split-lines (type-fn (list (p 'String)) #f
                                         (type-app 'Vec (list (p 'String))))
