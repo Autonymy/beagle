@@ -95,6 +95,7 @@
          (case (classify-rep coll)
            [(hmap) (hamt-call "hamtMapCount" (emit-expr coll))]
            [(hset) (hamt-call "hamtSetCount" (emit-expr coll))]
+           [(poly) (begin (use-runtime!) (format "$$bc.count(~a)" (emit-expr coll)))]
            [else
             (define ty (node-type coll))
             (cond
@@ -107,8 +108,7 @@
               [(or (map-form? coll)
                    (and (type-app? ty) (eq? (type-app-ctor ty) 'Map)))
                (format "Object.keys(~a).length" (emit-expr coll))]
-              ;; array/string/unknown -> .length (today's default; var-of-set/map
-              ;; and cross-fn HAMT counts are the $$bc.count follow-up)
+              ;; array/string -> .length
               [else (format "~a.length" (emit-expr coll))])]))
        #f)]
     [(empty?) (if (= n 1) (format "(~a.length === 0)" (emit-expr (car args))) #f)]
@@ -173,21 +173,24 @@
     [(contains?)
      (if (= n 2)
        (case (classify-rep (car args))
-         ;; $$bc.contains is NOT HAMT-aware -> dispatch HAMT colls statically
+         ;; known-HAMT -> monomorphic O(log n) op; native/poly -> $$bc.contains
+         ;; (now polymorphic over native + HAMT).
          [(hmap) (hamt-call "hamtMapHas" (emit-expr (car args)) (emit-expr (cadr args)))]
          [(hset) (hamt-call "hamtSetHas" (emit-expr (car args)) (emit-expr (cadr args)))]
          [else (begin (use-runtime!)
                       (format "$$bc.contains(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args))))])
        #f)]
     [(keys) (if (= n 1)
-                (if (eq? (classify-rep (car args)) 'hmap)
-                    (hamt-call "hamtMapKeys" (emit-expr (car args)))
-                    (format "Object.keys(~a)" (emit-expr (car args))))
+                (case (classify-rep (car args))
+                  [(hmap) (hamt-call "hamtMapKeys" (emit-expr (car args)))]
+                  [(poly) (begin (use-runtime!) (format "$$bc.keys(~a)" (emit-expr (car args))))]
+                  [else (format "Object.keys(~a)" (emit-expr (car args)))])
                 #f)]
     [(vals) (if (= n 1)
-                (if (eq? (classify-rep (car args)) 'hmap)
-                    (hamt-call "hamtMapVals" (emit-expr (car args)))
-                    (format "Object.values(~a)" (emit-expr (car args))))
+                (case (classify-rep (car args))
+                  [(hmap) (hamt-call "hamtMapVals" (emit-expr (car args)))]
+                  [(poly) (begin (use-runtime!) (format "$$bc.vals(~a)" (emit-expr (car args))))]
+                  [else (format "Object.values(~a)" (emit-expr (car args)))])
                 #f)]
     [(map) (if (= n 2)
             (format "~a.map(~a)" (emit-expr (cadr args)) (emit-expr (car args)))
@@ -258,16 +261,23 @@
     ;; --- collection / sequence -------------------------------------------------
     [(mapv) (if (= n 2) (format "~a.map(~a)" (emit-expr (cadr args)) (emit-expr (car args))) #f)]
     [(filterv) (if (= n 2) (format "~a.filter(~a)" (emit-expr (cadr args)) (emit-expr (car args))) #f)]
-    [(get) (cond
-             [(and (= n 2) (eq? (classify-rep (car args)) 'hmap))
-              (hamt-call "hamtMapGet" (emit-expr (car args)) (emit-expr (cadr args)))]
-             [(and (= n 3) (eq? (classify-rep (car args)) 'hmap))
-              (hamt-call "hamtMapGet" (emit-expr (car args)) (emit-expr (cadr args)) (emit-expr (caddr args)))]
-             [(= n 2) (format "~a[~a]" (emit-expr (car args)) (emit-expr (cadr args)))]
-             [(= n 3) (format "(() => { const _x = ~a, _k = ~a; return _x[_k] != null ? _x[_k] : ~a; })()"
-                              (emit-expr (car args)) (emit-expr (cadr args))
-                              (emit-expr (caddr args)))]
-             [else #f])]
+    [(get) (let ([crep (and (>= n 2) (classify-rep (car args)))])
+             (cond
+               [(and (= n 2) (eq? crep 'hmap))
+                (hamt-call "hamtMapGet" (emit-expr (car args)) (emit-expr (cadr args)))]
+               [(and (= n 3) (eq? crep 'hmap))
+                (hamt-call "hamtMapGet" (emit-expr (car args)) (emit-expr (cadr args)) (emit-expr (caddr args)))]
+               ;; poly (Any/union-typed) coll -> polymorphic $$bc.get (native + HAMT)
+               [(and (= n 2) (eq? crep 'poly))
+                (begin (use-runtime!) (format "$$bc.get(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args))))]
+               [(and (= n 3) (eq? crep 'poly))
+                (begin (use-runtime!) (format "$$bc.get(~a, ~a, ~a)"
+                                              (emit-expr (car args)) (emit-expr (cadr args)) (emit-expr (caddr args))))]
+               [(= n 2) (format "~a[~a]" (emit-expr (car args)) (emit-expr (cadr args)))]
+               [(= n 3) (format "(() => { const _x = ~a, _k = ~a; return _x[_k] != null ? _x[_k] : ~a; })()"
+                                (emit-expr (car args)) (emit-expr (cadr args))
+                                (emit-expr (caddr args)))]
+               [else #f]))]
     [(update) (if (= n 3)
                   (format "(() => { const _m = ~a, _k = ~a; return { ..._m, [_k]: ~a(_m[_k]) }; })()"
                           (emit-expr (car args)) (emit-expr (cadr args)) (emit-expr (caddr args)))
@@ -669,73 +679,110 @@
 (define current-type-env (make-parameter (hasheq)))
 (define (type-of-binding sym) (hash-ref (current-type-env) sym #f))
 
-;; Type of an argument NODE: a var-ref resolves through the type-env; any other
-;; node through the per-node table.
+;; Type of an argument NODE. Scalar LITERALS are interned leaves excluded from the
+;; per-node type table, so resolve them by datum form (a keyword literal `:b` is a
+;; keyword-SYMBOL — it must NOT be mistaken for a var-ref); a var-ref resolves
+;; through the type-env; anything else through the per-node table.
 (define (arg-type node)
-  (if (symbol? node) (type-of-binding node) (node-type node)))
-
-;; Rep a binding of declared TYPE should carry (param seeding / type-directed).
-(define (rep-from-type ty)
   (cond
-    [(and (map-type? ty) (provably-compound-type? (map-key-type ty))) 'hmap]
-    [(and (set-type? ty) (provably-compound-type? (seq-elem-type ty))) 'hset]
-    [else 'native]))
+    [(keyword-symbol? node) (type-prim 'Keyword)]
+    [(exact-integer? node)  (type-prim 'Int)]
+    [(string? node)         (type-prim 'String)]
+    [(boolean? node)        (type-prim 'Bool)]
+    [(quoted? node)         (arg-type (quoted-datum node))] ; '(quote :b) keys by the datum
+    [(symbol? node)         (type-of-binding node)]
+    [else                   (node-type node)]))
 
-;; Classify a NODE's collection representation: 'hmap | 'hset | 'native.
-;; Three layers: (1) var-ref -> rep-env (propagated from the binding's value /
-;; param type); (2) TYPE-DIRECTED — any expr whose node-type is a concrete
-;; compound-keyed Map / compound-elem Set (annotated fn returns, typed exprs);
-;; (3) STRUCTURAL — producers (assoc/set/conj) whose RESULT type is erased to Any.
+;; A record TYPE (defrecord / defunion-member / deferror-member with fields)
+;; emits as a JS object, so as a map key / set element it collides on
+;; "[object Object]" — it needs the HAMT, exactly like a compound ctor.
+(define (record-type? t)
+  (and (type-prim? t)
+       (let ([rf (current-js-record-fields)])
+         (and rf (hash-has-key? rf (unqualify-type-name (type-prim-name t))) #t))))
+
+;; REP CLASS of a key/element TYPE — the heart of rep-selection:
+;;   'native : scalar-eq-safe (Int/widths/String/Bool/Keyword) -> sound native JS key.
+;;   'hamt   : PROVABLY object-emitting compound (Map/Set/Vec/List ctor OR a record),
+;;             with no scalar subtype -> a value of this type is ALWAYS a HAMT.
+;;   'poly   : Any / type-var / union / Float / Nil / unknown -> the runtime value
+;;             could be EITHER rep (Any is a BIDIRECTIONAL wildcard in the type
+;;             system — a native scalar map <: (Map Any V)), so reads must go through
+;;             the polymorphic $$bc.* primitives; production stores by value (HAMT).
+(define (key-class t)
+  (cond
+    [(scalar-eq-safe-type? t) 'native]
+    [(or (provably-compound-type? t) (record-type? t)) 'hamt]
+    [else 'poly]))   ; Any, type-var, union, Float, Nil, #f
+
+;; READ rep to assume for a value of collection TYPE t: 'native | 'hmap | 'hset | 'poly.
+(define (type-read-rep t)
+  (cond
+    [(map-type? t) (case (key-class (map-key-type t)) [(native) 'native] [(hamt) 'hmap] [else 'poly])]
+    [(set-type? t) (case (key-class (seq-elem-type t)) [(native) 'native] [(hamt) 'hset] [else 'poly])]
+    [(and (type-app? t) (memq (type-app-ctor t) '(Vec Vector List))) 'native] ; vectors are native arrays
+    [(or (any-type? t) (type-var? t) (type-union? t) (not t)) 'poly] ; unknown collection kind
+    [else 'native]))                                                  ; scalar/string/non-collection
+
+;; Classify a NODE's collection representation: 'hmap | 'hset | 'native | 'poly.
+;; PRODUCTION sites (literals / set / assoc / conj) only ever see hmap/hset/native
+;; (a producer has a concrete structure). READ sites (get/contains/count/...) may
+;; also see 'poly (an Any/union-typed var or call) -> route to the polymorphic
+;; $$bc.* read. Layers: (1) var-ref -> rep-env, else its declared type's read-rep;
+;; (2) a producer's structural rep (scalar key -> native, else -> HAMT); (3) any
+;; other typed expr -> its type's read-rep.
 (define (classify-rep e)
   (cond
-    [(symbol? e) (rep-of-binding e)]
+    [(symbol? e)
+     (define re (rep-of-binding e))
+     (if (eq? re 'native) (type-read-rep (type-of-binding e)) re)]
     [(and (map-form? e) (null? (map-form-pairs e))) 'native] ; empty map: assoc coerces if upgraded
     [(set-form? e) 'native]             ; set LITERAL: distinct by construction; $$bc handles it
-    [else
-     (define t (node-type e))
-     (cond
-       ;; (2) type-directed: the expr's own type proves a compound collection.
-       [(eq? (rep-from-type t) 'hmap) 'hmap]
-       [(eq? (rep-from-type t) 'hset) 'hset]
-       ;; (3) structural: result type erased (assoc/set/conj) — read args.
-       [(map-form? e)
-        (if (provably-compound-type? (map-key-type t)) 'hmap 'native)]
-       [(call-form? e)
-        (define fn (call-form-fn e))
-        (define args (call-form-args e))
-        (case fn
-          [(assoc assoc!) (if (assoc-hmap? args) 'hmap 'native)]
-          [(dissoc update merge into-map) (classify-rep (and (pair? args) (car args)))]
-          [(set) (if (set-hset? args) 'hset 'native)]
-          [(conj) (if (eq? (classify-rep (and (pair? args) (car args))) 'hset) 'hset 'native)]
-          [(disj) (if (eq? (classify-rep (and (pair? args) (car args))) 'hset) 'hset 'native)]
-          [else 'native])]
-       [else 'native])]))
+    [(map-form? e)
+     ;; Classify a LITERAL by its actual KEY DATA (per pair), NOT the node-type —
+     ;; a nested literal (e.g. a map built inside a `.map` arrow) may have no
+     ;; captured node-type; its keys are still right there. All keys scalar ->
+     ;; native; any non-scalar key -> hmap (store by value).
+     (if (for/and ([p (in-list (map-form-pairs e))])
+           (eq? (key-class (arg-type (car p))) 'native))
+         'native 'hmap)]
+    [(call-form? e)
+     (define fn (call-form-fn e))
+     (define args (call-form-args e))
+     (case fn
+       [(assoc assoc!) (if (assoc-hmap? args) 'hmap 'native)]
+       [(set) (if (set-hset? args) 'hset 'native)]
+       [(conj) (if (eq? (classify-rep (and (pair? args) (car args))) 'hset) 'hset 'native)]
+       [(disj dissoc update merge into-map) (classify-rep (and (pair? args) (car args)))]
+       [else (type-read-rep (node-type e))])]  ; non-producer call -> its return type's read-rep
+    [else (type-read-rep (node-type e))]))
 
-;; An assoc call yields a HAMT map iff its coll input is already one OR any of
-;; its key arguments is provably compound. (Result type is erased to Any, so we
-;; classify from the key args + coll rep, never the node's own type.)
+;; An assoc yields a HAMT map iff its coll is already one OR any key arg is NOT
+;; provably-scalar (compound / record / Any / union -> store by value). The coll
+;; being 'poly does NOT force HAMT here (assoc on an Any-typed coll is the deeper
+;; poly-PRODUCTION boundary — needs a $$bc COW producer; documented, rarer).
 (define (assoc-hmap? args)
   (and (pair? args)
        (or (eq? (classify-rep (car args)) 'hmap)
-           (any-key-arg-compound? args))))
+           (any-key-arg-nonscalar? args))))
 
-;; (set X) builds a value-deduped HAMT set iff X's element type is provably
-;; compound (native `new Set` dedups by reference, keeping value-equal elements).
-;; arg-type resolves a var X (e.g. a param :- (Vec (Vec Int))) through the type-env.
+;; (set X) builds a value-deduped HAMT set iff X's element type is NOT provably-
+;; scalar (compound / record / Any / union). Native `new Set` ref-dedups, so any
+;; non-scalar element needs value-dedup; Any is included (safe — dedups by value
+;; regardless of the runtime element). arg-type resolves a var X via the type-env.
 (define (set-hset? args)
   (and (pair? args)
        (let ([et (seq-elem-type (arg-type (car args)))])
-         (and et (provably-compound-type? et) #t))))
+         (and et (not (eq? (key-class et) 'native)) #t))))
 
-;; assoc key args sit at odd indices (coll k0 v0 k1 v1 ...): any provably compound?
+;; assoc key args sit at odd indices (coll k0 v0 k1 v1 ...): any NOT provably-scalar?
 ;; arg-type resolves a var key through the type-env (params/let).
-(define (any-key-arg-compound? args)
+(define (any-key-arg-nonscalar? args)
   (and (pair? args)
        (let loop ([rest (cdr args)])
          (cond
            [(null? rest) #f]
-           [(provably-compound-type? (arg-type (car rest))) #t]
+           [(not (eq? (key-class (arg-type (car rest))) 'native)) #t]
            [(or (null? (cdr rest)) (null? (cddr rest))) #f]
            [else (loop (cddr rest))]))))
 
@@ -806,7 +853,7 @@
     (for/fold ([te (current-type-env)] [re (current-rep-env)])
               ([p (in-list params)])
       (if (and (param? p) (param-type p))
-          (let* ([nm (param-name p)] [ty (param-type p)] [rep (rep-from-type ty)])
+          (let* ([nm (param-name p)] [ty (param-type p)] [rep (type-read-rep ty)])
             (values (hash-set te nm ty)
                     (if (eq? rep 'native) re (hash-set re nm rep))))
           (values te re))))

@@ -135,6 +135,30 @@
    (assert-hamt "count of value-set -> hamtSetCount" "hamtSetCount("
      `(defn f () :- Int (count (set ,(br (br 1 2))))))
 
+   ;; ---- (b') the FLIP: not-provably-scalar key/elem -> HAMT (records / Any /
+   ;;      union / heterogeneous), with polymorphic $$bc reads for Any-typed colls ----
+   (test-case "record-key map literal -> hamtMap (record emits as object -> collides native)"
+     (define-values (js tbl prog)
+       (emit+types (list `(defrecord K ((x :- Int)))
+                         `(def m :- Any ,(mt `(->K 1) ':a)))))
+     (check-true (string-contains? js "hamtMap(")
+                 (format "record-key map must route to HAMT, got:\n~a" js)))
+   (test-case "Any-typed key assoc -> hamtMapAssoc (Any not provably scalar)"
+     (define-values (js tbl prog)
+       (emit+types (list `(defn f ((k :- Any) (v :- Any)) :- Any (assoc ,(mt) k v)))))
+     (check-true (string-contains? js "hamtMapAssoc(")
+                 (format "Any-typed key assoc must route to HAMT, got:\n~a" js)))
+   (test-case "heterogeneous-key literal (scalar + compound) -> hamtMap"
+     (define-values (js tbl prog)
+       (emit+types (list `(def m :- Any ,(mt ':a 1 (mt ':b 2) 5)))))
+     (check-true (string-contains? js "hamtMap(")
+                 (format "heterogeneous-key literal must route to HAMT, got:\n~a" js)))
+   (test-case "read through an Any-typed param routes to polymorphic $$bc.get"
+     (define-values (js tbl prog)
+       (emit+types (list `(defn f ((m :- Any)) :- Any (get m ,(mt ':k 1))))))
+     (check-true (string-contains? js "$$bc.get(")
+                 (format "Any-typed coll read must be polymorphic $$bc.get (a native scalar map can flow into an Any read), got:\n~a" js)))
+
    ;; ---- (c) read-through-var consistency (the corruption crux) ----
    (test-case "read through let-bound compound map routes to hamtMapGet (not native index)"
      (define-values (js tbl prog)
