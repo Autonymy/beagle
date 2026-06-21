@@ -266,6 +266,15 @@
      "(println (mapv (fn [x] (* x x)) [1 2 3 4]))"
      "[1 4 9 16]")
 
+   ;; #28: a defn whose `:- [A -> B]` return is a bracket fn-type must parse as a
+   ;; single-arity defn (was mis-parsed as 2-arity defn-multi: the `[params]` + the
+   ;; `[A -> B]` return looked like two arity clauses, the `:-` swallowed as a body).
+   (check-clj-output "defn returning a fn via :- [Int -> Int] (bracket fn-type return)"
+     (list `(defn make-adder [(n : Int)] :- ,(br 'Int '-> 'Int)
+              (fn [(m : Int)] :- Int (+ n m))))
+     "(println ((make-adder 3) 4))"
+     "7")
+
    (check-clj-output "map + filter pipeline"
      '()
      "(println (->> [1 2 3 4 5 6] (filter odd?) (mapv (fn [x] (* x x)))))"

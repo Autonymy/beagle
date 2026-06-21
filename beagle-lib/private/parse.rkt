@@ -1475,6 +1475,12 @@
   ;; success, or #f if `args` is not bare-vector multi-arity.
   (cond
     [(or (null? args) (not (bracketed? (car args)))) #f]
+    ;; A top-level `:-` is a single-arity RETURN annotation
+    ;; (`[params] :- ret body…`), never a multi-arity boundary — so a bracket
+    ;; fn-type return `:- [A -> B]` is NOT a second arity clause (#28). Bail to
+    ;; the single-arity `:-`-return arm. (Multi-arity clause params carry their
+    ;; `:-` INSIDE the bracket, so it never appears as a top-level arg.)
+    [(memq ':- args) #f]
     [else
      ;; Walk args, splitting at each top-level bracket. Each segment
      ;; is (bracket body-form ...). Reject if any segment has no body.
