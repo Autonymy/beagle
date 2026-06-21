@@ -22,13 +22,24 @@
 ;; add a target descriptor (header / extension / runner / printer) and the
 ;; whole corpus runs against it.
 ;;
-;; BASELINE (2026-06-21): emit-js currently routes `=` to JS `===`, which is
-;; REFERENCE equality on objects/arrays. So compound-`=` cases produce `false`
-;; on JS while the CLJ oracle says `true`. Those cases are RED *by design* —
-;; they are the falsifier that proves the value-semantics gap is real. The
-;; SCALAR cases (`(= 1 1)`, `(= "a" "a")`) MUST be GREEN; they prove the
-;; harness machinery itself is sound (compile, run, capture, normalize, compare
-;; all work), so a RED compound case is a genuine semantic gap, not plumbing.
+;; STATUS (2026-06-21): emit-js now routes value ops through the $$bc core —
+;; `=` → equiv, `contains?` → contains, `distinct` → distinct_equiv, `hash` →
+;; hash, and assoc/conj/dissoc/into/merge/disj emit non-mutating spreads. So
+;; compound value semantics AGREE with the CLJ oracle. The SCALAR cases
+;; (`(= 1 1)`, `(= "a" "a")`) still prove the machinery is sound; a RED compound
+;; case is now a genuine REGRESSION, not a pending fix.
+;;
+;; CORPUS is organized into categories:
+;;   A. nested/mixed equality   B. hash consistency
+;;   C. set/map membership      D. immutability (no input mutation)
+;;   E. dedup by value          F. compound-value map keys  ('known-gap — HAMT)
+;; F is soft-reported (no hard assert) until the value-keyed HAMT lands; native
+;; JS object keys coerce compound keys to "[object Object]" and collide.
+;;
+;; DIVERGENCES (below CORPUS): a parallel list of DELIBERATE Beagle-JS ≠ Clojure
+;; differences, pinned in BOTH directions — clj must return its value AND js its
+;; (different) value. If js UNEXPECTEDLY matches clj, the test FAILS: the
+;; divergence was resolved and the entry should graduate into CORPUS.
 ;;
 ;; Run: raco test beagle-test/tests/conformance.rkt
 ;;  or: bin/beagle-test --active-only
@@ -229,7 +240,104 @@
    ;; normalization collapses keyword/string so a genuine value match is GREEN.
    ;; (JS object-key coercion happens to find it; representation differs — see
    ;; KNOWN GAPS in the harness report.)
-   (list "map-by-vec-key" "(get {[1 2] :x} [1 2])" "Keyword" 'compound)))
+   (list "map-by-vec-key" "(get {[1 2] :x} [1 2])" "Keyword" 'compound)
+
+   ;; ========================================================================
+   ;; A. NESTED / MIXED EQUALITY — recursive value-= through maps-in-vecs,
+   ;;    vecs-in-maps, sets-in-maps, sets-of-vecs, deep nesting, and nil.
+   ;;    GREEN on current .bjs: emit-js routes `=` to $$bc.equiv, which recurses.
+   ;; ========================================================================
+   (list "nest-vec-of-map-eq"   "(= [{:a 1}] [{:a 1}])"            "Bool" 'compound)
+   (list "nest-map-of-vec-eq"   "(= {:a [1 2]} {:a [1 2]})"        "Bool" 'compound)
+   (list "nest-map-of-set-eq"   "(= {:s #{1 2}} {:s #{2 1}})"      "Bool" 'compound)
+   (list "nest-set-of-vec-eq"   "(= #{[1 2] [3 4]} #{[3 4] [1 2]})" "Bool" 'compound)
+   (list "nest-deep-map-eq"     "(= {:a {:b {:c 3}}} {:a {:b {:c 3}}})" "Bool" 'compound)
+   (list "nest-vec-of-map-neq"  "(= [{:a 1}] [{:a 2}])"            "Bool" 'compound)
+   (list "nest-vec-len-neq"     "(= [1 2] [1 2 3])"                "Bool" 'compound)
+   (list "nest-map-nil-val-eq"  "(= {:a nil} {:a nil})"            "Bool" 'compound)
+   (list "nest-vec-with-nil-eq" "(= [nil 1] [nil 1])"              "Bool" 'compound)
+
+   ;; ========================================================================
+   ;; B. HASH CONSISTENCY — each expr is itself a Bool of (= (hash x) (hash y)),
+   ;;    so each target self-checks its OWN hash law (equiv ⇒ same hash; and
+   ;;    distinct values may collide but here are pinned to NOT). The oracle
+   ;;    states the truth; JS must agree on the boolean.
+   ;; ========================================================================
+   (list "hash-int-eq"    "(= (hash 42) (hash 42))"                       "Bool" 'compound)
+   (list "hash-str-eq"    "(= (hash \"hello\") (hash \"hello\"))"          "Bool" 'compound)
+   (list "hash-map-order" "(= (hash {:a 1 :b 2}) (hash {:b 2 :a 1}))"      "Bool" 'compound)
+   (list "hash-vec-eq"    "(= (hash [1 2 3]) (hash [1 2 3]))"             "Bool" 'compound)
+   (list "hash-set-order" "(= (hash #{1 2 3}) (hash #{3 2 1}))"           "Bool" 'compound)
+   (list "hash-nest-eq"   "(= (hash {:a [1 2]}) (hash {:a [1 2]}))"       "Bool" 'compound)
+   (list "hash-int-neq"   "(= (hash 1) (hash 2))"                         "Bool" 'compound)
+   (list "hash-map-neq"   "(= (hash {:a 1}) (hash {:a 2}))"              "Bool" 'compound)
+
+   ;; ========================================================================
+   ;; C. SET / MAP MEMBERSHIP BY VALUE — contains?/count over sets & maps.
+   ;;    Set membership is by EQUIV (incl. compound elements); vector contains?
+   ;;    is INDEX-membership (Clojure semantics); set dedup is by value.
+   ;; ========================================================================
+   (list "contains-set-scalar"  "(contains? #{1 2 3} 2)"             "Bool" 'compound)
+   (list "contains-set-vec"     "(contains? #{[1 2] [3 4]} [1 2])"   "Bool" 'compound)
+   (list "contains-set-map"     "(contains? #{{:a 1} {:b 2}} {:a 1})" "Bool" 'compound)
+   (list "contains-set-vec-no"  "(contains? #{[1 2]} [1 3])"         "Bool" 'compound)
+   (list "contains-map-key"     "(contains? {:a 1 :b 2} :a)"         "Bool" 'compound)
+   (list "contains-vec-index"   "(contains? [10 20 30] 2)"           "Bool" 'compound)
+   (list "contains-vec-noindex" "(contains? [10 20] 5)"              "Bool" 'compound)
+   ;; Set value-dedup via count. NB: a LITERAL `#{[1 2] [1 2]}` is a Clojure
+   ;; READER error (duplicate set key) — uninstantiable as an oracle — so we
+   ;; build the set at runtime with `(set [...])`, which is what actually
+   ;; exercises value-dedup. FINDING (emit-js, not owned here): `(count <set>)`
+   ;; emits `<set>.length`, but JS `Set` has `.size` not `.length`, so it yields
+   ;; `undefined` — and `set` uses native `new Set([...])` (reference dedup), so
+   ;; there is no value-dedup either. RED on JS. Marked 'known-gap (soft-report)
+   ;; because the fix lives in emit-js/check.rkt (count-of-set + value-Set),
+   ;; owned by another seam; the oracle still computes the truthful 1.
+   (list "count-set-vec-dedup"  "(count (set [[1 2] [1 2]]))"        "Int"  'known-gap)
+   (list "count-set-map-dedup"  "(count (set [{:a 1} {:a 1}]))"      "Int"  'known-gap)
+
+   ;; ========================================================================
+   ;; D. IMMUTABILITY — ops must NOT mutate their input. The sharpest Squint
+   ;;    divergence: assoc/conj/dissoc/into/merge/disj emit non-mutating
+   ;;    spreads, so the original binding is unchanged after the op.
+   ;; ========================================================================
+   (list "immut-assoc"  "(let [m {:a 1}] (let [_ (assoc m :b 2)] (get m :a)))" "Int"  'compound)
+   (list "immut-conj"   "(let [v [1 2]] (let [_ (conj v 3)] (count v)))"       "Int"  'compound)
+   (list "immut-dissoc" "(let [m {:a 1 :b 2}] (let [_ (dissoc m :a)] (contains? m :a)))" "Bool" 'compound)
+   (list "immut-into"   "(let [v [1]] (let [_ (into v [2 3])] (count v)))"     "Int"  'compound)
+   (list "immut-merge"  "(let [m {:a 1}] (let [_ (merge m {:b 2})] (contains? m :b)))" "Bool" 'compound)
+   (list "immut-disj"   "(let [s #{1 2 3}] (let [_ (disj s 1)] (contains? s 1)))" "Bool" 'compound)
+   (list "immut-assoc-neq" "(not= (assoc {:a 1} :b 2) {:a 1})"                 "Bool" 'compound)
+   (list "immut-conj-eq"   "(= (conj [1 2] 3) [1 2 3])"                        "Bool" 'compound)
+
+   ;; ========================================================================
+   ;; E. DEDUP BY VALUE — distinct collapses equiv-duplicates, preserving
+   ;;    first-seen order; nested compound dups collapse; nil dedups too.
+   ;; ========================================================================
+   (list "dedup-scalar"      "(count (distinct [1 2 1 3]))"                    "Int" 'compound)
+   (list "dedup-nested-map"  "(count (distinct [{:a {:b 1}} {:a {:b 1}}]))"    "Int" 'compound)
+   (list "dedup-vecs"        "(count (distinct [[1 2] [1 2] [3 4]]))"          "Int" 'compound)
+   (list "dedup-order"       "(= (distinct [3 1 2 1 3]) [3 1 2])"              "Bool" 'compound)
+   (list "dedup-nil"         "(count (distinct [nil nil 1]))"                  "Int" 'compound)
+
+   ;; ========================================================================
+   ;; F. COMPOUND-VALUE MAP KEYS — KNOWN GAP. Native JS object keys coerce to
+   ;;    strings, so a map/vec used as a KEY cannot key by VALUE in general:
+   ;;    {:a 1} coerces to "[object Object]", so two DISTINCT-but-equiv keys
+   ;;    collide and a differently-spelled lookup key fails. Needs the P3 HAMT
+   ;;    (value-keyed map), in flight in another seam. Marked 'known-gap so the
+   ;;    harness SOFT-reports (no hard assert) until it lands.
+   ;;    NB (FINDING): these three exprs use the SAME literal for both store and
+   ;;    lookup, so the string-coercion is self-consistent and they CURRENTLY
+   ;;    return the oracle's value by accident (same coincidence as the
+   ;;    pre-existing map-by-vec-key). That coincidence is NOT real value-keying
+   ;;    — change the lookup spelling or add a distinct-but-equiv key and it
+   ;;    breaks — so they stay 'known-gap; the soft-report flags the (coercion-
+   ;;    coincidental) agreement rather than asserting it.
+   ;; ========================================================================
+   (list "key-by-map"      "(get {{:a 1} :found} {:a 1})"      "Keyword" 'known-gap)
+   (list "key-by-nested"   "(get {[[1] [2]] :x} [[1] [2]])"    "Keyword" 'known-gap)
+   (list "key-by-map-eq"   "(= (get {{:a 1} :x} {:a 1}) :x)"   "Bool"    'known-gap)))
 
 ;; ---------------------------------------------------------------------------
 ;; THE TEST. For each case: compute the CLJ ORACLE, then assert each non-oracle
@@ -270,6 +378,18 @@
                  (printf "KNOWN GAP [~a/~a]: ~a (~a)\n"
                          (target-name tgt) name st
                          (string-trim (car (string-split val "\n"))))]
+                [(eq? kind 'known-gap)
+                 ;; KNOWN GAP that DOES compile+run but is not GUARANTEED to
+                 ;; agree (no value-keyed map / count-of-set gap). Soft report,
+                 ;; do NOT hard-assert. Some F cases agree by string-coercion
+                 ;; COINCIDENCE (same literal both sides) — that is not a real
+                 ;; fix, so we note agreement without asserting it; a genuine
+                 ;; close happens when the HAMT lands and ALL key shapes agree.
+                 (if (equal? val clj-val)
+                     (printf "KNOWN GAP [~a/~a]: agrees with oracle (~a) — likely coercion-coincidental, NOT yet a real fix; keep as gap until the HAMT lands.\n"
+                             (target-name tgt) name clj-val)
+                     (printf "KNOWN GAP [~a/~a]: disagrees as expected (oracle ~a, ~a ~a)\n"
+                             (target-name tgt) name clj-val (target-name tgt) val))]
                 [else
                  ;; ACTUAL value-level agreement assertion against the oracle.
                  (check-equal? val clj-val
@@ -283,4 +403,83 @@
                                 (target-name tgt) name expr
                                 clj-val (target-name tgt) val kind))]))))))]))
 
+;; ===========================================================================
+;; DIVERGENCES — deliberate, pinned Beagle-JS ≠ Clojure differences.
+;;
+;; Unlike CORPUS (where every non-oracle target must AGREE with CLJ), these are
+;; places Beagle-JS INTENTIONALLY differs from Clojure — emergent from emitting
+;; idiomatic JS rather than re-implementing Clojure's runtime. Each is pinned in
+;; BOTH directions: clj must produce `clj-want` AND js must produce `js-want`.
+;; If js UNEXPECTEDLY matches clj, the test FAILS — the divergence was resolved
+;; and the entry should graduate into CORPUS as a real agreement.
+;;
+;; CRITICAL: the divergence runner compares RAW output (no keyword-stripping
+;; `normalize`) — `normalize` would collapse `:foo` and `"foo"` and MASK the
+;; kw-as-string divergence. We trim whitespace only.
+;;
+;; Each entry: (name expr return-type clj-want js-want)
+;;   - clj-want / js-want are the RAW printed tokens (clj via pr-str; js via
+;;     JSON.stringify), whitespace-trimmed.
+;; ===========================================================================
+
+(define (raw s) (string-trim s))
+
+(define DIVERGENCES
+  (list
+   ;; truthiness: Clojure treats 0 and "" as TRUTHY; JS treats them as FALSY.
+   (list "div-truthy-zero"  "(if 0 \"t\" \"f\")"  "String" "\"t\"" "\"f\"")
+   (list "div-truthy-empty" "(if \"\" \"t\" \"f\")" "String" "\"t\"" "\"f\"")
+   ;; keyword→string: (str :foo) is ":foo" in Clojure, "foo" in Beagle-JS
+   ;; (keywords emit as bare strings). RAW compare is mandatory here.
+   (list "div-kw-as-string" "(str :foo)" "String" "\":foo\"" "\"foo\"")))
+
+;; Evaluate a case on a target and return the RAW (un-normalized) printed token,
+;; or a status tag string on failure. Mirrors eval-case but skips `normalize`.
+(define (eval-case-raw tgt case-name expr ret)
+  (define src-text ((target-wrap tgt) expr ret))
+  (define src-path
+    (build-path tmp-dir (string-append case-name "-raw." (target-ext tgt))))
+  (define out-ext (if (string=? (target-name tgt) "js") "mjs" "clj"))
+  (define out-path
+    (build-path tmp-dir (string-append case-name "-raw." (target-name tgt) "." out-ext)))
+  (define-values (compiled? cerr) (compile-beagle src-text src-path out-path))
+  (cond
+    [(not (and compiled? (file-exists? out-path)))
+     (values 'compile-fail cerr)]
+    [else
+     (define-values (ran? out err) ((target-run tgt) out-path))
+     (if ran?
+         (values 'ok (raw out))
+         (values 'run-fail (string-append "stdout:\n" out "\nstderr:\n" err)))]))
+
+(define (run-divergences)
+  (run-tests
+   (test-suite "pinned Beagle-JS ≠ Clojure divergences"
+     (for/list ([d (in-list DIVERGENCES)])
+       (define name (list-ref d 0))
+       (define expr (list-ref d 1))
+       (define ret  (list-ref d 2))
+       (define clj-want (list-ref d 3))
+       (define js-want  (list-ref d 4))
+       (test-case (string-append name " :: " expr)
+         ;; ---- clj direction: oracle must produce the pinned clj value ----
+         (define-values (clj-st clj-val) (eval-case-raw CLJ-TARGET name expr ret))
+         (check-eq? clj-st 'ok
+                    (format "DIVERGENCE (clj) failed to evaluate ~a: ~a" name clj-val))
+         (check-equal? clj-val clj-want
+                       (format "~a: clj produced ~a, divergence pins clj at ~a"
+                               name clj-val clj-want))
+         ;; ---- js direction: must produce the pinned js value (≠ clj) ----
+         (define-values (js-st js-val) (eval-case-raw JS-TARGET name expr ret))
+         (check-eq? js-st 'ok
+                    (format "DIVERGENCE (js) failed to evaluate ~a: ~a" name js-val))
+         (check-equal? js-val js-want
+                       (format
+                        (string-append
+                         "~a: js produced ~a, divergence pins js at ~a.\n"
+                         "  If js now equals the clj value (~a), the DIVERGENCE\n"
+                         "  was RESOLVED — move this entry into CORPUS as an agreement.")
+                        name js-val js-want clj-want)))))))
+
 (run-conformance)
+(run-divergences)
