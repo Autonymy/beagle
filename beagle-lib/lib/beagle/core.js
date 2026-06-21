@@ -78,12 +78,26 @@ export function drop_while(pred, coll) {
 }
 
 export function memoize(f) {
-  const cache = new Map();
+  // Equiv-correct memoization: cache keys are the ARGS VALUE, compared by
+  // Clojure value-equality (equiv), not JSON.stringify. JSON.stringify is
+  // both lossy (Set/undefined/key-order) and wrong for value identity
+  // (distinct-but-equiv compound args must hit the same cache entry). We
+  // bucket by hash(args) for O(1) lookup, then equiv-confirm within the
+  // bucket so an equiv-but-distinct compound arg returns the cached result.
+  const buckets = new Map(); // hash(args) -> array of [argsArray, result]
   return (...args) => {
-    const k = JSON.stringify(args);
-    if (cache.has(k)) return cache.get(k);
+    const h = hash(args);
+    let bucket = buckets.get(h);
+    if (bucket) {
+      for (const entry of bucket) {
+        if (equiv(entry[0], args)) return entry[1];
+      }
+    } else {
+      bucket = [];
+      buckets.set(h, bucket);
+    }
     const v = f(...args);
-    cache.set(k, v);
+    bucket.push([args, v]);
     return v;
   };
 }
@@ -201,11 +215,161 @@ export function format(fmt, ...args) {
   return fmt.replace(/%[sd]/g, () => i < args.length ? String(args[i++]) : '');
 }
 
+export function equiv(a, b) {
+  // Clojure = semantics over Beagle EMITTED JS value representations.
+  // nil: both null and undefined represent Clojure nil.
+  if (a == null || b == null) return a == null && b == null;
+
+  // identical refs are trivially equal.
+  if (a === b) return true;
+
+  const ta = typeof a, tb = typeof b;
+
+  // scalars: numbers, strings (keywords emit as bare strings), booleans.
+  if (ta !== "object" || tb !== "object") return a === b;
+
+  // both are objects (arrays, plain objects/records, Sets, ...).
+  const aArr = Array.isArray(a), bArr = Array.isArray(b);
+  if (aArr || bArr) {
+    // arrays (vectors/lists/seqs): order-sensitive elementwise equiv.
+    if (!aArr || !bArr) return false;
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (!equiv(a[i], b[i])) return false;
+    return true;
+  }
+
+  const aSet = a instanceof Set, bSet = b instanceof Set;
+  if (aSet || bSet) {
+    // sets: value membership (NOT reference identity), same size.
+    if (!aSet || !bSet) return false;
+    if (a.size !== b.size) return false;
+    const bItems = [...b];
+    const used = new Array(bItems.length).fill(false);
+    outer: for (const x of a) {
+      for (let i = 0; i < bItems.length; i++) {
+        if (!used[i] && equiv(x, bItems[i])) { used[i] = true; continue outer; }
+      }
+      return false;
+    }
+    return true;
+  }
+
+  // plain objects: maps AND records (a record's tag is just another key,
+  // e.g. _tag) — same set of own enumerable keys, recursive equiv on values.
+  const ak = Object.keys(a), bk = Object.keys(b);
+  if (ak.length !== bk.length) return false;
+  for (const k of ak) {
+    if (!Object.prototype.hasOwnProperty.call(b, k)) return false;
+    if (!equiv(a[k], b[k])) return false;
+  }
+  return true;
+}
+
+export function contains(coll, x) {
+  // Clojure `contains?` semantics over Beagle EMITTED JS representations.
+  // Crucially, `contains?` tests for a KEY/INDEX, not a value — EXCEPT for
+  // sets, where the element IS the key.
+  if (coll == null) return false;
+
+  // Set (Clojure set): value membership by EQUIV, not Set.has (which is
+  // reference-eq and so misses distinct-but-equiv compound elements). This is
+  // the load-bearing fix.
+  if (coll instanceof Set) {
+    for (const e of coll) if (equiv(e, x)) return true;
+    return false;
+  }
+
+  // Array (Clojure vector): `contains?` checks whether x is a VALID INDEX
+  // (0 <= x < length), NOT element membership — matching Clojure.
+  if (Array.isArray(coll)) {
+    return Number.isInteger(x) && x >= 0 && x < coll.length;
+  }
+
+  // Map (plain object/record): key present. JS object keys are strings, and
+  // Beagle keywords emit as bare strings, so a keyword/string key matches.
+  if (typeof coll === "object") {
+    return Object.prototype.hasOwnProperty.call(coll, x);
+  }
+
+  return false;
+}
+
+export function distinct_equiv(coll) {
+  // Clojure `distinct` over Beagle EMITTED JS representations: a new array
+  // with EQUIV-duplicates removed, original order preserved. So
+  // (distinct [{:a 1} {:a 1}]) collapses to a single element. Bucketed by
+  // hash for O(n) average lookup, then equiv-confirmed within the bucket.
+  const out = [];
+  const seen = new Map(); // hash(x) -> array of already-kept values
+  for (const x of coll) {
+    const h = hash(x);
+    let bucket = seen.get(h);
+    if (bucket) {
+      let dup = false;
+      for (const y of bucket) { if (equiv(y, x)) { dup = true; break; } }
+      if (dup) continue;
+    } else {
+      bucket = [];
+      seen.set(h, bucket);
+    }
+    bucket.push(x);
+    out.push(x);
+  }
+  return out;
+}
+
+function mix(h, c) {
+  // order-sensitive 32-bit combine.
+  return ((h << 5) - h + c) | 0;
+}
+
 export function hash(x) {
-  const s = JSON.stringify(x);
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
-  return h;
+  // Structural recursive content hash CONSISTENT with equiv:
+  // equiv(a,b) implies hash(a) === hash(b). Returns a 32-bit integer.
+
+  // nil: null and undefined hash the same (equiv treats them equal).
+  if (x == null) return 0;
+
+  const t = typeof x;
+  if (t === "number") {
+    // tag numbers; coerce to a stable 32-bit value.
+    return mix(1, x | 0) ^ ((x * 2654435761) | 0);
+  }
+  if (t === "string") {
+    let h = 2;
+    for (let i = 0; i < x.length; i++) h = mix(h, x.charCodeAt(i));
+    return h | 0;
+  }
+  if (t === "boolean") return x ? 3 : 4;
+
+  if (Array.isArray(x)) {
+    // order-SENSITIVE combine.
+    let h = 5;
+    for (let i = 0; i < x.length; i++) h = mix(h, hash(x[i]));
+    return h | 0;
+  }
+
+  if (x instanceof Set) {
+    // order-INSENSITIVE combine (sum) so element order is irrelevant.
+    let acc = 0;
+    for (const e of x) acc = (acc + hash(e)) | 0;
+    return mix(6, acc);
+  }
+
+  if (t === "object") {
+    // maps AND records: order-INSENSITIVE over (key, value) pairs so that
+    // {a:1,b:2} and {b:2,a:1} hash equal. No special-casing for records.
+    let acc = 0;
+    for (const k of Object.keys(x)) {
+      // per-entry hash combines key + value order-sensitively, then the
+      // entries are summed (commutatively) across keys.
+      acc = (acc + mix(hash(k), hash(x[k]))) | 0;
+    }
+    return mix(7, acc);
+  }
+
+  // fallback for any other type: stable string coercion.
+  return mix(8, hash(String(x)));
 }
 
 export function get_in(m, path) {

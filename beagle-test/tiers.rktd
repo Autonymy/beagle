@@ -97,7 +97,14 @@
              "emit-matrix.rkt"
              ;; Query-tool extractors (beagle-sig/-fields/-callers) —
              ;; pinned against the canonical surface after rotting twice.
-             "query.rkt"))
+             "query.rkt"
+             ;; Cross-target VALUE-CONFORMANCE harness (2026-06-21): CLJ is the
+             ;; ORACLE (bb); each runnable target (currently JS via node) must AGREE
+             ;; on value semantics (=, hash, set-membership, map-by-value-key). 8/8
+             ;; GREEN after the emit-js value-equality routing landed — promoted to
+             ;; active as a real correctness gate (was demoted only during the RED
+             ;; window while the routing was in flight).
+             "conformance.rkt"))
 
   (demoted . (;; behavioral runs that hit external interpreters
               "emit-js-behavioral.rkt")) ; requires bun
