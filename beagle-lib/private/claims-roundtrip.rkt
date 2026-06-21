@@ -22,7 +22,8 @@
          racket/format
          "parse.rkt")
 
-(provide datum->claims claims->datum datum->src datum->pretty edn-triples->datum read-edn-triples)
+(provide datum->claims claims->datum datum->src datum->pretty edn-triples->datum read-edn-triples
+         datum->edn-lines)
 
 ;; --- datum -> claims --------------------------------------------------------
 (define (split-improper d)            ; pair -> (values proper-prefix tail) ; tail='() if proper

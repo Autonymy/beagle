@@ -10,7 +10,9 @@
          "lint.rkt"
          "error-format.rkt"
          "query.rkt"
-         "extensions.rkt")
+         "extensions.rkt"
+         ;; #33 datum-IR: build straight from claim triples, skipping the text trip
+         (only-in "claims-roundtrip.rkt" edn-triples->datum read-edn-triples))
 
 (define (extension-for-target target)
   (case target
@@ -25,7 +27,12 @@
   (string-append (regexp-replace* #rx"\\." (regexp-replace* #rx"-" s "_") "/")
                  (extension-for-target target)))
 
-(define (build-one-file path out-dir json? #:warn? [warn? #f] #:in-place? [in-place? #f])
+;; Compile a syntax list to a target file. Shared by the text path
+;; (build-one-file → read-beagle-syntax) and the datum-IR path (build-one-edn →
+;; claim triples). `path` is the SOURCE .b* path — used for require resolution
+;; (#:source-path), the extension/header check, in-place output naming, and error
+;; locations. The two front-ends differ ONLY in how they obtain `stxs`.
+(define (build-from-stxs stxs path out-dir json? warn? in-place?)
   (define type-errors 0)
 
   (define (handle-error e [loc-stx #f])
@@ -49,7 +56,6 @@
 
   (with-handlers
     ([exn:fail? (lambda (e) (handle-error e #f))])
-    (define stxs (read-beagle-syntax path))
     (define prog (parse-program stxs #:source-path path))
 
     ;; Extension/header mismatch check
@@ -103,6 +109,42 @@
           (eprintf "  ~a -> ~a\n" path (path->string out-path))
           #t))))
 
+;; Text front-end: read source text → syntax → shared compile tail.
+(define (build-one-file path out-dir json? #:warn? [warn? #f] #:in-place? [in-place? #f])
+  (with-handlers
+    ([exn:fail? (lambda (e)
+                  (if json? (write-json-error (exn-message e) #f)
+                      (eprintf "  ~a: ~a\n" path (exn-message e)))
+                  #f)])
+    (build-from-stxs (read-beagle-syntax path) path out-dir json? warn? in-place?)))
+
+;; The `@file <path>` header line an --emit-edn dump carries (the original source
+;; path) — used as #:source-path so cross-module requires still resolve.
+(define (edn-file-source triples-path)
+  (for/or ([line (in-list (file->lines triples-path))])
+    (and (>= (string-length line) 6)
+         (string=? (substring line 0 6) "@file ")
+         (string-trim (substring line 6)))))
+
+;; #33 datum-IR front-end: compile straight from claim triples (the --emit-edn
+;; shape), skipping the text round-trip. edn-triples->datum rebuilds the
+;; (beagle-file form ...) datum the reader would have produced; we drop the
+;; wrapper head and hand the forms — as syntax — to the SAME compile tail, so the
+;; output is identical to the text path (KEYSTONE-B). Slice-1: the datum is bare,
+;; so blame/srclocs degrade (closed later by adding line/col/pos claims).
+(define (build-one-edn triples-path out-dir json? #:warn? [warn? #f] #:in-place? [in-place? #f])
+  (with-handlers
+    ([exn:fail? (lambda (e)
+                  (if json? (write-json-error (exn-message e) #f)
+                      (eprintf "  ~a: ~a\n" triples-path (exn-message e)))
+                  #f)])
+    (define src-path (or (edn-file-source triples-path) triples-path))
+    (define wrapped (edn-triples->datum (read-edn-triples triples-path)))
+    (define form-datums
+      (if (and (pair? wrapped) (eq? (car wrapped) 'beagle-file)) (cdr wrapped) wrapped))
+    (define stxs (map (lambda (d) (datum->syntax #f d)) form-datums))
+    (build-from-stxs stxs src-path out-dir json? warn? in-place?)))
+
 (define (expand-args args)
   (sort
     (apply append
@@ -119,6 +161,7 @@
   (define out-dir #f)
   (define warn? #f)
   (define in-place? #f)
+  (define build-edn? #f)   ; #33: treat file-args as --emit-edn triple dumps
   (define file-args '())
 
   (let loop ([rest args])
@@ -136,6 +179,9 @@
       [(string=? (car rest) "--in-place")
        (set! in-place? #t)
        (loop (cdr rest))]
+      [(string=? (car rest) "--build-edn")
+       (set! build-edn? #t)
+       (loop (cdr rest))]
       [else
        (set! file-args (append file-args (list (car rest))))
        (loop (cdr rest))]))
@@ -148,10 +194,13 @@
     (eprintf "usage: beagle-build-all <file-or-dir> ... [--out <dir>] [--in-place] [--warn]\n")
     (exit 2))
 
-  (define files (expand-args file-args))
+  ;; --build-edn args are triple dumps (any extension), not .b* source — take
+  ;; them verbatim; the text path globs/filters for beagle source files.
+  (define files (if build-edn? file-args (expand-args file-args)))
 
   (when (null? files)
-    (eprintf "beagle-build-all: no beagle source files found\n")
+    (eprintf "beagle-build-all: no ~a found\n"
+             (if build-edn? "triple dumps" "beagle source files"))
     (exit 2))
 
   (define json? (json-error-mode?))
@@ -159,9 +208,11 @@
   (define errors 0)
 
   (for ([f (in-list files)])
-    (if (build-one-file f out-dir json? #:warn? warn? #:in-place? in-place?)
-        (set! built (+ built 1))
-        (set! errors (+ errors 1))))
+    (define ok?
+      (if build-edn?
+          (build-one-edn f out-dir json? #:warn? warn? #:in-place? in-place?)
+          (build-one-file f out-dir json? #:warn? warn? #:in-place? in-place?)))
+    (if ok? (set! built (+ built 1)) (set! errors (+ errors 1))))
 
   (unless json?
     (eprintf "\n~a built, ~a error(s)\n" built errors))
