@@ -201,3 +201,32 @@ export function hamtMapReduce(m, f, init) {
   for (const [k, v] of nodeSeq(m.root)) acc = f(acc, k, v);
   return acc;
 }
+
+// --- public, tree-shakeable set API ------------------------------------------
+// A set reuses the map trie: the element is the key (value slot holds it too, so
+// seq yields elements). Membership and dedup are by $$bc.equiv exactly like map
+// keys — so #{[1 2] [1 2]} collapses to one element, which a native JS Set cannot.
+
+export function hamtSet(values) {
+  let s = { _bg: 'hamtSet', root: null, count: 0 };
+  if (values) for (const x of values) s = hamtSetAdd(s, x);
+  return s;
+}
+
+export function hamtSetAdd(s, x) {
+  const { node, added } = nodeAssoc(s.root, x, x, bcHash(x) >>> 0, 0);
+  return added ? { _bg: 'hamtSet', root: node, count: s.count + added } : s;
+}
+
+export function hamtSetDisjoin(s, x) {
+  const { node, removed } = nodeDissoc(s.root, x, bcHash(x) >>> 0, 0);
+  return removed ? { _bg: 'hamtSet', root: node, count: s.count - removed } : s;
+}
+
+export function hamtSetHas(s, x) {
+  return nodeGet(s.root, x, bcHash(x) >>> 0, 0) !== NOT_FOUND;
+}
+
+export function hamtSetCount(s) { return s.count; }
+
+export function hamtSetSeq(s) { return [...nodeSeq(s.root)].map(([k]) => k); }
