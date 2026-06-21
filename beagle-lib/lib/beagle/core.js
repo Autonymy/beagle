@@ -436,6 +436,51 @@ export function count(x) {
   return Object.keys(x).length;
 }
 
+export function get(coll, k, notFound = null) {
+  // Clojure `get`, rep-dispatched at runtime — the POLYMORPHIC read used when the
+  // collection's rep isn't statically known (an Any/union/type-var/Float/Nil key
+  // type, where a NATIVE scalar map can flow in by Map-key covariance but a HAMT
+  // can too). Handles both reps + native vec/set. Import-free (traverses the HAMT
+  // node structure directly, like equiv/hash/contains). nil-safe.
+  if (coll == null) return notFound;
+  if (isHamt(coll)) {
+    if (coll._bg === "hamtMap") {
+      for (const [kk, vv] of hamtWalk(coll.root, [])) if (equiv(kk, k)) return vv;
+      return notFound;
+    }
+    // hamtSet: (get set x) -> x if present (by value), else notFound.
+    for (const [e] of hamtWalk(coll.root, [])) if (equiv(e, k)) return e;
+    return notFound;
+  }
+  if (Array.isArray(coll)) {
+    return (Number.isInteger(k) && k >= 0 && k < coll.length) ? coll[k] : notFound;
+  }
+  if (coll instanceof Set) {
+    for (const e of coll) if (equiv(e, k)) return e;
+    return notFound;
+  }
+  if (typeof coll === "object") { // native map / record
+    return Object.prototype.hasOwnProperty.call(coll, k) ? coll[k] : notFound;
+  }
+  return notFound;
+}
+
+export function keys(coll) {
+  // map keys, rep-polymorphic: HAMT -> traversed keys; native object map -> own keys.
+  if (coll == null) return [];
+  if (isHamt(coll) && coll._bg === "hamtMap") return hamtWalk(coll.root, []).map(p => p[0]);
+  if (typeof coll === "object" && !Array.isArray(coll) && !(coll instanceof Set)) return Object.keys(coll);
+  return [];
+}
+
+export function vals(coll) {
+  // map values, rep-polymorphic: HAMT -> traversed values; native object map -> own values.
+  if (coll == null) return [];
+  if (isHamt(coll) && coll._bg === "hamtMap") return hamtWalk(coll.root, []).map(p => p[1]);
+  if (typeof coll === "object" && !Array.isArray(coll) && !(coll instanceof Set)) return Object.values(coll);
+  return [];
+}
+
 function mix(h, c) {
   // order-sensitive 32-bit combine.
   return ((h << 5) - h + c) | 0;
