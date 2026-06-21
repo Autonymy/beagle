@@ -159,6 +159,24 @@
      (check-true (string-contains? js "$$bc.get(")
                  (format "Any-typed coll read must be polymorphic $$bc.get (a native scalar map can flow into an Any read), got:\n~a" js)))
 
+   ;; (b'') a SCALAR keyword read on a HAMT-repped map must still hit the HAMT —
+   ;; (get m :a) / (:a m) canonicalize to kw-access (native dot `m.a`); on a
+   ;; hamtMap object that reads `undefined`. Dispatch on the COLL's rep, not the
+   ;; (scalar) key. (Regression caught by beagle-2's adversarial corpus.)
+   (test-case "scalar keyword read on a HAMT-repped map -> hamtMapGet (not native dot)"
+     (define-values (js tbl prog)
+       (emit+types (list `(defn f () :- Int
+                            (let (m ,(mt ':a 1 (mt ':b 2) 5)) (get m :a))))))
+     (check-true (string-contains? js "hamtMapGet(m,")
+                 (format "scalar-key read on a HAMT map must be hamtMapGet, got:\n~a" js))
+     (check-false (regexp-match? #rx"m\\.a" js)
+                  (format "must NOT emit native dot-access m.a on a HAMT:\n~a" js)))
+   (test-case "scalar keyword read on an Any-typed param -> polymorphic $$bc.get"
+     (define-values (js tbl prog)
+       (emit+types (list `(defn f ((m :- (Map Any Int))) :- Int (get m :a)))))
+     (check-true (string-contains? js "$$bc.get(m,")
+                 (format "scalar-key read on an Any-typed map must be $$bc.get, got:\n~a" js)))
+
    ;; ---- (c) read-through-var consistency (the corruption crux) ----
    (test-case "read through let-bound compound map routes to hamtMapGet (not native index)"
      (define-values (js tbl prog)

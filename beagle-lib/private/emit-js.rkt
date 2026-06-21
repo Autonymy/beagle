@@ -1622,14 +1622,30 @@
              (string-join (map emit-expr (new-form-args e)) ", "))]
 
     [(kw-access? e)
+     ;; (:kw m) / (get m :kw) — REP-AWARE: a scalar keyword read still hits the
+     ;; HAMT when the COLLECTION is HAMT-repped (the key being scalar is a red
+     ;; herring — dispatch on the COLL's rep, not the key). Native dot-access on a
+     ;; hamtMap object would read `undefined`.
+     (define target (kw-access-target e))
      (define prop (kw->prop (kw-access-kw e)))
-     (define target-str (emit-expr (kw-access-target e)))
-     (cond
-       [(kw-access-default e)
-        (format "(~a.~a != null ? ~a.~a : ~a)"
-                target-str prop target-str prop
-                (emit-expr (kw-access-default e)))]
-       [else (format "~a.~a" target-str prop)])]
+     (define keystr (~v prop))
+     (define default (kw-access-default e))
+     (case (classify-rep target)
+       [(hmap)
+        (if default
+            (hamt-call "hamtMapGet" (emit-expr target) keystr (emit-expr default))
+            (hamt-call "hamtMapGet" (emit-expr target) keystr))]
+       [(poly)
+        (use-runtime!)
+        (if default
+            (format "$$bc.get(~a, ~a, ~a)" (emit-expr target) keystr (emit-expr default))
+            (format "$$bc.get(~a, ~a)" (emit-expr target) keystr))]
+       [else
+        (define target-str (emit-expr target))
+        (if default
+            (format "(~a.~a != null ? ~a.~a : ~a)"
+                    target-str prop target-str prop (emit-expr default))
+            (format "~a.~a" target-str prop))])]
 
     [(match-form? e)
      (emit-match e)]
