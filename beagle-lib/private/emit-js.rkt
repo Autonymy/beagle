@@ -651,6 +651,16 @@
       (if refer (set-union s (list->set refer)) s)))
   (set-union from-forms from-externs from-refers))
 
+;; The JS runtime ($$bc) import specifier. Default 'beagle/core.js' resolves under
+;; node (node_modules/beagle) + esbuild --bundle (which also tree-shakes core.js to
+;; the reachable fns). Hosts with NO node-resolution and NO bundler step — e.g.
+;; Firefox chrome .sys.mjs ES modules — cannot resolve a bare specifier, so they
+;; set BEAGLE_JS_RUNTIME_SPECIFIER to a resolvable path (a resource:// URL or a
+;; relative path) and ship core.js there. A relative/resolvable specifier is
+;; tree-shake-neutral under esbuild, so the bundle-size headline is unaffected.
+(define js-runtime-specifier
+  (or (getenv "BEAGLE_JS_RUNTIME_SPECIFIER") "beagle/core.js"))
+
 (define (js-emit-program prog)
   (validate-js-target! prog)
   (parameterize ([current-js-context 'stmt]
@@ -670,7 +680,7 @@
        "\n\n"))
     (define runtime-import
       (if (needs-runtime?)
-        "import * as $$bc from 'beagle/core.js';\n"
+        (format "import * as $$bc from '~a';\n" js-runtime-specifier)
         ""))
     (string-append header runtime-import "\n" body "\n")))
 
