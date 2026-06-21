@@ -70,6 +70,7 @@
              "purity.rkt"               ; `!`-purity enforcement (Phase 6, dark by default)
              "quasi-quote-reader.rkt"
              "reader-conditionals.rkt"
+             "reader-path-parity.rkt"   ; #19 guard — parse path & #lang path read identically (one table)
              "reader-shorthand.rkt"     ; #() fn shorthand (2026-06-12)
              "sourcemap-fidelity.rkt"   ; diagnostic srcloc fidelity benchmark
              "syntax.rkt"

@@ -15,8 +15,12 @@
          "parse-js-quote.rkt"
          "parse-sql.rkt"
          "diagnostic-kind.rkt"
-         ;; #(...) fn-shorthand rewrite shared with the #lang reader.
-         (only-in "../lang/reader-impl.rkt" fn-shorthand->fn reading-fn-shorthand?))
+         ;; THE single beagle readtable lives in reader-impl.rkt (the #lang
+         ;; reader). read-beagle-syntax / read-beagle-datums (the --agent / build
+         ;; / repair / hook path) parse with the SAME table — no second copy to
+         ;; drift out of sync (#19; the #18 dynamic-var divergence was a symptom).
+         (only-in "../lang/reader-impl.rkt"
+                  fn-shorthand->fn reading-fn-shorthand? beagle-readtable))
 
 ;; --- structured parse errors ------------------------------------------------
 ;;
@@ -76,181 +80,10 @@
           effective-kind
           details)))
 
-(define BT BRACKET-TAG)
-(define MT MAP-TAG)
-(define ST SET-TAG)
-
-;; Readtable for parsing beagle source: intercepts #"...", {...}, and #{...}.
-(define (read-regex-pattern port)
-  (let loop ([acc '()])
-    (define c (read-char port))
-    (cond
-      [(eof-object? c) (error 'beagle "unterminated regex literal")]
-      [(char=? c #\")  (list->string (reverse acc))]
-      [(char=? c #\\)
-       (define next (read-char port))
-       (cond
-         [(eof-object? next) (error 'beagle "unterminated regex literal")]
-         [else (loop (cons next (cons #\\ acc)))])]
-      [else (loop (cons c acc))])))
-
-(define (skip-ws port)
-  (let loop ()
-    (define c (peek-char port))
-    ;; `,` is Clojure whitespace; this manual loop (curly/brace reader) doesn't
-    ;; consult the readtable, so skip it explicitly (handles `{k v,}` close edge).
-    (when (and (char? c) (or (char-whitespace? c) (char=? c #\,)))
-      (read-char port)
-      (loop))))
-
-(define (read-until-brace port)
-  (let loop ([acc '()])
-    (skip-ws port)
-    (define c (peek-char port))
-    (cond
-      [(eof-object? c) (error 'beagle "unterminated map/set literal (missing `}`)")]
-      [(char=? c #\})
-       (read-char port)
-       (reverse acc)]
-      [else
-       (define val (read port))
-       (loop (cons val acc))])))
-
-(define (curly-reader-local ch port src line col pos)
-  (define items (read-until-brace port))
-  (define result (cons MT items))
-  (if src
-    (datum->syntax #f result (vector src line col pos #f))
-    result))
-
-;; #r#"...raw..."#  — Rust-style raw string. Opener is `#r` + N `#` + `"`;
-;; closer is `"` + N `#`. The body is read verbatim (no escape processing), so
-;; JS/SQL/Nix emitter templates can carry quotes, backslashes, and newlines
-;; literally. Restores the raw-string syntax the (removed) beagle-bun reader
-;; provided; the racket reader had only #{ #( #" before.
-(define (read-raw-string port hashes)
-  (define tail (make-string hashes #\#))
-  (let loop ([acc '()])
-    (define c (read-char port))
-    (cond
-      [(eof-object? c)
-       (error 'beagle "unterminated raw string (missing closing \"~a)" tail)]
-      [(char=? c #\")
-       (define peeked (peek-string hashes 0 port))
-       (if (and (string? peeked) (string=? peeked tail))
-         (begin (read-string hashes port)
-                (list->string (reverse acc)))
-         (loop (cons c acc)))]
-      [else (loop (cons c acc))])))
-
-(define (hash-dispatch-local ch port src line col pos)
-  (define next (peek-char port))
-  (cond
-    [(and (char? next) (char=? next #\{))
-     (read-char port)
-     (define items (read-until-brace port))
-     (define result (cons ST items))
-     (if src
-       (datum->syntax #f result (vector src line col pos #f))
-       result)]
-    ;; #(...) anonymous fn shorthand → (fn [%1 ...] body). Mirrors the
-    ;; #lang reader's arm (beagle-lib/lang/reader-impl.rkt).
-    [(and (char? next) (char=? next #\())
-     (when (reading-fn-shorthand?)
-       (error 'beagle
-              "nested #(...) is not supported — use (fn [x] ...) for the inner function"))
-     (define lst
-       (parameterize ([reading-fn-shorthand? #t])
-         (read port)))
-     (define result (fn-shorthand->fn lst))
-     (if src
-       (datum->syntax #f result (vector src line col pos #f))
-       result)]
-    [(and (char? next) (char=? next #\"))
-     (read-char port)
-     (define pattern (read-regex-pattern port))
-     (define result (list '#%regex pattern))
-     (if src
-       (datum->syntax #f result (vector src line col pos
-                                        (+ 3 (string-length pattern))))
-       result)]
-    ;; #r#"..."# raw string (verbatim body, N matching #s). See read-raw-string.
-    [(and (char? next) (char=? next #\r))
-     (read-char port) ; consume r
-     (define hashes
-       (let loop ([n 0])
-         (define p (peek-char port))
-         (if (and (char? p) (char=? p #\#))
-           (begin (read-char port) (loop (add1 n)))
-           n)))
-     (when (zero? hashes)
-       (error 'beagle "raw string: write #r#\"...\"# (at least one #)"))
-     (define oq (read-char port))
-     (unless (and (char? oq) (char=? oq #\"))
-       (error 'beagle "raw string: expected \" after #r~a" (make-string hashes #\#)))
-     (define s (read-raw-string port hashes))
-     (if src
-       (datum->syntax #f s (vector src line col pos #f))
-       s)]
-    [else
-     (error 'beagle "unexpected dispatch sequence: #~a" next)]))
-
-;; Metadata-prefix reader — MUST mirror reader-impl.rkt's meta-reader. There are
-;; two beagle readtables (this one drives read-beagle-syntax → check --agent /
-;; build / repair loop / hooks; reader-impl.rkt's drives #lang module loading).
-;; A reader feature added to one but not the other silently diverges the two
-;; parse entries (this `^` macro was added to reader-impl first and `^:dynamic`
-;; read as a bare symbol here → "malformed def" on every dynamic-var file under
-;; --agent/build). Keep them in sync. `^META FORM` → (#%meta META FORM).
-(define (meta-reader-local ch port src line col pos)
-  (define meta
-    (parameterize ([current-readtable beagle-readtable])
-      (if src (read-syntax src port) (read port))))
-  (when (eof-object? meta)
-    (error 'beagle "unexpected EOF after `^` (metadata needs a value and a target form)"))
-  (define form
-    (parameterize ([current-readtable beagle-readtable])
-      (if src (read-syntax src port) (read port))))
-  (when (eof-object? form)
-    (error 'beagle "unexpected EOF after `^` metadata (needs a target form to attach to)"))
-  (define result (list '#%meta meta form))
-  (if src
-    (datum->syntax #f result (vector src line col pos #f))
-    result))
-
-;; Unquote reader — MUST mirror reader-impl.rkt's unquote-reader. `~X` →
-;; (unquote X), `~@X` → (unquote-splicing X). Clojure syntax-quote unquote; `,`
-;; is whitespace (set in the readtable below). Kept in sync across both
-;; readtables (the #18/#19 two-readtable lesson).
-(define (unquote-reader-local ch port src line col pos)
-  (define next (peek-char port))
-  (cond
-    [(and (char? next) (char=? next #\@))
-     (read-char port)
-     (define inner (parameterize ([current-readtable beagle-readtable])
-                     (if src (read-syntax src port) (read port))))
-     (when (eof-object? inner)
-       (error 'beagle "unexpected EOF after `~~@` (unquote-splicing needs a following datum)"))
-     (define result (list 'unquote-splicing inner))
-     (if src (datum->syntax #f result (vector src line col pos #f)) result)]
-    [else
-     (define inner (parameterize ([current-readtable beagle-readtable])
-                     (if src (read-syntax src port) (read port))))
-     (when (eof-object? inner)
-       (error 'beagle "unexpected EOF after `~~` (unquote needs a following datum)"))
-     (define result (list 'unquote inner))
-     (if src (datum->syntax #f result (vector src line col pos #f)) result)]))
-
-(define beagle-readtable
-  (make-readtable #f
-    #\^ 'terminating-macro meta-reader-local
-    ;; `,` is Clojure WHITESPACE (not unquote); unquote is `~` / `~@`.
-    #\, #\space #f
-    #\~ 'terminating-macro unquote-reader-local
-    #\{ 'terminating-macro curly-reader-local
-    #\} 'terminating-macro (lambda (ch port src line col pos)
-                             (error 'beagle "unexpected `}`"))
-    #\# 'non-terminating-macro hash-dispatch-local))
+;; The beagle readtable (regex / raw-string / #(...) fn-shorthand / #? reader
+;; conditionals / quote / quasiquote / unquote / [ ] { } #{ } containers) is
+;; imported from reader-impl.rkt — see the require above. There is exactly ONE
+;; table; read-beagle-syntax / read-beagle-datums below parameterize on it.
 
 ;; --- cross-file type import ------------------------------------------------
 
@@ -316,8 +149,7 @@
       (define first-line (read-line))
       (unless (and (string? first-line) (regexp-match? #rx"^#lang " first-line))
         (file-position (current-input-port) 0))
-      (parameterize ([read-square-bracket-with-tag BT]
-                     [current-readtable beagle-readtable])
+      (parameterize ([current-readtable beagle-readtable])
         (let loop ([acc '()])
           (define d (read))
           (if (eof-object? d) (reverse acc) (loop (cons d acc))))))))
@@ -356,8 +188,7 @@
           [(nix) (dynamic-require 'beagle/nix/lang/reader-impl
                                   'beagle-nix-readtable)]
           [else beagle-readtable]))
-      (parameterize ([read-square-bracket-with-tag BT]
-                     [current-readtable target-readtable])
+      (parameterize ([current-readtable target-readtable])
         (define forms
           (let loop ([acc '()])
             (define d (read-syntax src))

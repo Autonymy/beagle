@@ -216,7 +216,16 @@
 
 ;; Read items until the given close character, using the beagle readtable
 ;; recursively so nested forms parse the same way.
-(define (read-until-close port close-ch)
+;;
+;; When SRC is non-#f, items are read with read-syntax so container CONTENTS
+;; keep their true source positions. This matters for `[…]`: the type-view
+;; delaborator injects `:- T` at a let-binding value's syntax-position, which is
+;; lost if the contents are read as bare data (the injection then lands at the
+;; `let` head). parse.rkt's old readtable got real `[…]` content srclocs for
+;; free via Racket's native read-square-bracket-with-tag; this explicit reader
+;; must match it so the two reader paths are truly identical (#19). datum->syntax
+;; in the container readers preserves these inner syntax srclocs.
+(define (read-until-close port close-ch [src #f])
   (let loop ([acc '()])
     (skip-whitespace-and-comments port)
     (define c (peek-char port))
@@ -227,7 +236,7 @@
        (read-char port)
        (reverse acc)]
       [else
-       (define item (read port))
+       (define item (if src (read-syntax src port) (read port)))
        (loop (cons item acc))])))
 
 (define (skip-whitespace-and-comments port)
@@ -247,7 +256,9 @@
       [else (void)])))
 
 (define (bracket-reader ch port src line col pos)
-  (define items (read-until-close port #\]))
+  ;; Pass src so contents carry real srclocs (see read-until-close) — the
+  ;; type-view delaborator needs let-binding value positions inside `[…]`.
+  (define items (read-until-close port #\] src))
   (define result (cons '#%brackets items))
   (if src
     (datum->syntax #f result (vector src line col pos #f))
