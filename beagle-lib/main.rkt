@@ -98,7 +98,10 @@
          (with-handlers ([exn:fail? void])
            (import-same-ns-siblings! prog user-src-path)))
 
-       (type-check-with-locs! prog handle-error)
+       ;; #:capture-types? #t feeds the per-node type table to emit (P3
+       ;; scalar-=== rep-selection). Emit-path opt-in only — diagnostic-only
+       ;; callers (lsp/file-load/check) stay #f and pay nothing.
+       (type-check-with-locs! prog handle-error #:capture-types? #t)
 
        ;; Lint passes after type-check so warnings only appear on programs
        ;; that are otherwise valid. Skipped via BEAGLE_NO_LINT env var (for

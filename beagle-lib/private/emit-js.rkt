@@ -7,6 +7,7 @@
          racket/format
          racket/list
          racket/set
+         "types.rkt"          ; type-prim?/type-prim-name for scalar-=== dispatch
          "parse.rkt"
          "emit-dispatch.rkt"
          "js-capabilities.rkt"
@@ -506,6 +507,34 @@
 (define current-js-scalar-fns (make-parameter (set)))
 (define current-js-symbol-ns (make-parameter (hasheq)))
 
+;; --- type-based scalar equality optimization (P3) ---------------------------
+;; A type is ===-safe iff its core.js value-equality (equiv) coincides with JS
+;; ===.  ===-SAFE: Int + integer widths, String, Bool, Keyword (emits as a bare
+;; string).  EXCLUDED by design:
+;;   - Nil: equiv(null,undefined)=true but null===undefined=false; Beagle nil has
+;;     two runtime reps (null AND undefined), so === would mis-compare.
+;;   - Float/F32: NaN===NaN is false (equiv(NaN,NaN) too — they only coincide);
+;;     excluded to avoid relying on coincidence (float = is rare).
+;;   - Any / type vars / unions / functions / parametric (Vec/Map/Set/List): structural.
+;; DEFAULT-TO-EQUIV: any type off this closed allowlist, and any operand with a
+;; missing/#f type-table entry, falls back to $$bc.equiv. Nothing uncertain is ===.
+(define SCALAR-EQ-SAFE-PRIMS
+  '(Int U8 U16 U32 U64 I8 I16 I32 String Bool Keyword))
+(define (scalar-eq-safe-type? ty)
+  (and (type-prim? ty)
+       (and (memq (unqualify-type-name (type-prim-name ty)) SCALAR-EQ-SAFE-PRIMS) #t)))
+;; Both operands provably ===-safe scalar? Looks up each AST node in the per-node
+;; type table (ast.rkt current-type-table, bound during emit to program-type-table).
+;; #f when the table is #f (capture not requested) or either node is absent/non-
+;; scalar — conservative default-to-equiv. Bare literals (5,"x",true) are NOT keyed
+;; (store-type! excludes interned leaves), so (= 5 5) stays equiv; correct, just an
+;; unoptimized micro-case (no unsound syntactic literal fast-path).
+(define (both-scalar-eq-safe? node-a node-b)
+  (define tbl (current-type-table))
+  (and tbl
+       (scalar-eq-safe-type? (hash-ref tbl node-a #f))
+       (scalar-eq-safe-type? (hash-ref tbl node-b #f))))
+
 ;; --- runtime import tracking -----------------------------------------------
 
 (define needs-runtime? (make-parameter #f))
@@ -630,6 +659,7 @@
                  [current-js-record-ns (program-imported-record-ns prog)]
                  [current-js-scalar-fns (build-scalar-fns prog)]
                  [current-js-symbol-ns (program-imported-symbol-ns prog)]
+                 [current-type-table (program-type-table prog)]  ; P3: per-node arg types for scalar-=== dispatch (#f when capture off)
                  [needs-runtime? #f]
                  [current-js-bound (collect-top-level-names prog)])
     (define header (emit-module-header prog))
@@ -1274,19 +1304,34 @@
        ;; identity by design and stays `===` via the generic js-infix? branch
        ;; below. Variadic = matches Clojure: all consecutive pairs equal,
        ;; short-circuiting with &&. not= is `(not (apply = args))`.
+       ;; P3 scalar-=== optimization: per consecutive pair, emit bare === when
+       ;; BOTH operands are statically ===-safe scalars, else $$bc.equiv.
+       ;; use-runtime! fires ONLY on an equiv pair, so a fully-scalar = emits no
+       ;; runtime import. Variadic = = all consecutive pairs equal, joined with &&.
+       ;; identical? is NOT here (stays === via the generic js-infix branch below —
+       ;; reference identity by design).
        [(and (memq fn-sym '(= ==)) (>= (length args) 2))
-        (use-runtime!)
         (define strs (map emit-expr args))
         (define pairs
-          (for/list ([a (in-list strs)] [b (in-list (cdr strs))])
-            (format "$$bc.equiv(~a, ~a)" a b)))
+          (for/list ([an (in-list args)] [bn (in-list (cdr args))]
+                     [as (in-list strs)] [bs (in-list (cdr strs))])
+            (if (both-scalar-eq-safe? an bn)
+                (format "~a === ~a" as bs)
+                (begin (use-runtime!)
+                       (format "$$bc.equiv(~a, ~a)" as bs)))))
         (format "(~a)" (string-join pairs " && "))]
+       ;; not= = not(all consecutive pairs equal): keep inner pairs POSITIVE
+       ;; (=== or equiv) and negate the whole conjunction. Do NOT switch the
+       ;; scalar branch to !== per-pair — that would change variadic semantics.
        [(and (eq? fn-sym 'not=) (>= (length args) 2))
-        (use-runtime!)
         (define strs (map emit-expr args))
         (define pairs
-          (for/list ([a (in-list strs)] [b (in-list (cdr strs))])
-            (format "$$bc.equiv(~a, ~a)" a b)))
+          (for/list ([an (in-list args)] [bn (in-list (cdr args))]
+                     [as (in-list strs)] [bs (in-list (cdr strs))])
+            (if (both-scalar-eq-safe? an bn)
+                (format "~a === ~a" as bs)
+                (begin (use-runtime!)
+                       (format "$$bc.equiv(~a, ~a)" as bs)))))
         (format "(!(~a))" (string-join pairs " && "))]
        [(and (js-infix? fn-sym) (>= (length args) 2))
         (define op (hash-ref JS-INFIX-OPS fn-sym))

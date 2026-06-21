@@ -19,7 +19,14 @@
     (parse-program
      (map (lambda (f) (datum->syntax #f f)) src-forms)
      #:source-path "test.rkt"))
-  (type-check! prog)
+  ;; Mirror the real emit path (build-all/daemon pass #:capture-types? #t):
+  ;; bind current-type-table during check so store-type! populates per-node
+  ;; types, then register it on the program so emit reads it. Without this the
+  ;; P3 scalar-=== optimization can't fire in tests (table would be #f).
+  (define tbl (make-hasheq))
+  (parameterize ([current-type-table tbl])
+    (type-check! prog))
+  (register-program-type-table! prog tbl)
   (emit-program prog))
 
 (define-syntax-rule (check-js name expected-rx form ...)
@@ -493,6 +500,25 @@
      '(declare-extern coll Any)
      '(declare-extern k Any)
      '(defn f [] :- Bool (contains? coll k)))
+
+   ;; P3 scalar-=== optimization: when BOTH = operands are statically ===-safe
+   ;; scalars (per the per-node type table), emit bare === instead of a runtime
+   ;; $$bc.equiv call. Fires for non-leaf keyed operands (computed scalars).
+   (check-js-contains "= of two computed Ints -> bare === (no runtime equiv)"
+     "(xs.length === ys.length)"
+     '(defn f [xs :- (Vec Int) ys :- (Vec Int)] :- Bool (= (count xs) (count ys))))
+   ;; KNOWN GAP (sound fallback): bare var/param refs are symbol AST leaves, which
+   ;; store-type! excludes from the type table, so they can't be proven scalar at
+   ;; emit and fall back to $$bc.equiv. Correct, just unoptimized — closing this
+   ;; needs an emit-side param/local type env (follow-up). Asserting current
+   ;; behavior so the follow-up flips it intentionally.
+   (check-js-contains "= of two Int VAR refs -> equiv (var-refs not yet type-keyed)"
+     "$$bc.equiv(a, b)"
+     '(defn f [a :- Int b :- Int] :- Bool (= a b)))
+   ;; non-scalar operands always use equiv (value semantics).
+   (check-js-contains "= of two vectors -> equiv (non-scalar)"
+     "$$bc.equiv(a, b)"
+     '(defn f [a :- (Vec Int) b :- (Vec Int)] :- Bool (= a b)))
 
    (check-js-contains "letfn -> IIFE with function decls"
      "function f(x)"

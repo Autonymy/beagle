@@ -599,7 +599,8 @@
       (define type-errs 0)
       (type-check-with-locs! prog
         (lambda (e loc-stx)
-          (set! type-errs (+ type-errs 1))))
+          (set! type-errs (+ type-errs 1)))
+        #:capture-types? #t)  ; emit-path: feed type table to emit-program below
 
       (define source (emit-program prog))
       (define ns (program-namespace prog))

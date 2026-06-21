@@ -67,7 +67,8 @@
       (lambda (e loc-stx)
         (set! ok? #f)
         (set! type-errors (+ type-errors 1))
-        (handle-error e loc-stx)))
+        (handle-error e loc-stx))
+      #:capture-types? #t)  ; emit-path: feed type table to emit-program below
     (unless (or ok? warn?) (error "type errors"))
 
     (unless (getenv "BEAGLE_NO_LINT")
