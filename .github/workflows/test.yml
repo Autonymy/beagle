@@ -31,6 +31,14 @@ jobs:
           raco pkg install --auto --link \
             beagle-lib/ beagle-test/ beagle/
 
+      # Babashka must be installed BEFORE the tiered suite: conformance.rkt's
+      # cross-target value-conformance harness uses bb as the real-Clojure ORACLE.
+      # Without it the oracle silently skips AND the pinned-divergence tests error
+      # (a missing #f exec path -> system* contract violation). It is also used by
+      # the graph-native gates further down. (Was installed too late, after the suite.)
+      - name: Install babashka (CLJ oracle + graph-native repair tooling)
+        run: curl -sL https://raw.githubusercontent.com/babashka/babashka/master/install | sudo bash
+
       - name: Run tiered test suite
         env:
           CI: 'true'
@@ -50,13 +58,10 @@ jobs:
 
       # Graph-native repair: beagle-cascade derives its call graph from the Fram
       # claim graph (scope-correct), not regex over text. That runs on the Fram
-      # engine, so we install babashka + check out fram's committed classpath and
-      # gate the scope-correctness proof (a change to mod_a/helper must NOT blast
-      # mod_b's same-named helper). This is the load-bearing test for the thesis
-      # that graph-backed repair beats text-backed repair.
-      - name: Install babashka (graph-native repair tooling)
-        run: curl -sL https://raw.githubusercontent.com/babashka/babashka/master/install | sudo bash
-
+      # engine, so we check out fram's committed classpath and gate the
+      # scope-correctness proof (a change to mod_a/helper must NOT blast mod_b's
+      # same-named helper). This is the load-bearing test for the thesis that
+      # graph-backed repair beats text-backed repair. (babashka installed above.)
       - name: Checkout fram (the claim engine cascade runs on)
         uses: actions/checkout@v5
         with:
