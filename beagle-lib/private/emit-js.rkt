@@ -651,15 +651,17 @@
       (if refer (set-union s (list->set refer)) s)))
   (set-union from-forms from-externs from-refers))
 
-;; The JS runtime ($$bc) import specifier. Default 'beagle/core.js' resolves under
-;; node (node_modules/beagle) + esbuild --bundle (which also tree-shakes core.js to
-;; the reachable fns). Hosts with NO node-resolution and NO bundler step — e.g.
-;; Firefox chrome .sys.mjs ES modules — cannot resolve a bare specifier, so they
-;; set BEAGLE_JS_RUNTIME_SPECIFIER to a resolvable path (a resource:// URL or a
-;; relative path) and ship core.js there. A relative/resolvable specifier is
-;; tree-shake-neutral under esbuild, so the bundle-size headline is unaffected.
-(define js-runtime-specifier
-  (or (getenv "BEAGLE_JS_RUNTIME_SPECIFIER") "beagle/core.js"))
+;; Base path for beagle's JS runtime modules. The emit imports 'beagle/core.js'
+;; (and 'beagle/hamt.js' once rep-selection lands); this prefix replaces the
+;; 'beagle/' so the WHOLE namespace remaps with one setting. Default 'beagle/'
+;; keeps the bare specifiers that node (node_modules/beagle) + esbuild --bundle
+;; resolve and tree-shake. Hosts with no resolver — Firefox chrome .sys.mjs —
+;; set BEAGLE_JS_RUNTIME_PREFIX to a resolvable base (a resource:// URL or a
+;; relative dir) and vendor the runtime there; one prefix covers core.js today +
+;; hamt.js later, so no future HAMT-using module dangles on a bare specifier.
+;; Relative/resolvable prefix is tree-shake-neutral under esbuild (headline holds).
+(define js-runtime-prefix
+  (or (getenv "BEAGLE_JS_RUNTIME_PREFIX") "beagle/"))
 
 (define (js-emit-program prog)
   (validate-js-target! prog)
@@ -680,7 +682,7 @@
        "\n\n"))
     (define runtime-import
       (if (needs-runtime?)
-        (format "import * as $$bc from '~a';\n" js-runtime-specifier)
+        (format "import * as $$bc from '~a';\n" (string-append js-runtime-prefix "core.js"))
         ""))
     (string-append header runtime-import "\n" body "\n")))
 
