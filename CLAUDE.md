@@ -156,6 +156,34 @@ the bare namespace with target-specific forms teaches agents to hallucinate
 arbitrary bare forms — a dumpster fire. Keep the firewall: **bare ⇒ Clojure,
 prefix ⇒ target.**
 
+### Surface stewardship — governed divergence + periodic audit
+
+Beagle MAY diverge from Clojure at the stdlib/form level — but ONLY through
+Clojure's own extension mechanism, and governed:
+
+- **The vehicle is a macro/fn in a REQUIRED, namespaced lib**
+  (`(require [beagle.x :refer [...]])`), NEVER a bare core form. A required
+  namespaced form is maximally Clojure-coherent (it is how Clojure — and the
+  models trained on it — expect new forms to arrive), so it diverges in
+  *capability* without diverging from the *language*. A divergent form must lower
+  soundly to **every** emission target (it is sugar over typed IR).
+- **Escalation hierarchy:** target-specific behavior → target prefix
+  (`js/`, `nix/`); a cross-target Beagle-original form → a required `beagle.*`
+  namespace, promoted *from* a per-target prefix only when it earns it. **The bare
+  top-level namespace stays Clojure-only, forever — nothing is ever promoted to a
+  bare global form** (that breaches the hallucination firewall above).
+- **Admission bar — high + DEMAND-DRIVEN.** Default REJECT. A form earns a
+  `beagle.*` home only after the *corpus* proves the pattern recurs AND has no
+  clean existing Clojure expression. "Nice in language X" is not enough — keep it
+  a local macro. Every admitted form is a small permanent cost outside the model's
+  priors.
+- **Periodic surface audit (the stewardship cadence).** Review across targets and
+  their bespoke surfaces: enumerate the per-target surfaces, flag/fix any
+  bare-namespace pollution, promote earned forms to `beagle.*`, **REMOVE** unearned
+  ones (zero-users → delete, per zero-backwards-compat), and confirm every
+  divergent form is queryable (`bin/beagle sig`) and reversible. The audit removes
+  as much as it adds — accretion is the enemy.
+
 ### Test tiering during surface iteration
 
 `bin/beagle test` runs the **active tier only**; opt into dormant/gated
