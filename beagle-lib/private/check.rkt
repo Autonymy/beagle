@@ -673,6 +673,20 @@
          (hash-set! SCALAR-PREDS name preds))]
       [_ (void)]))
 
+  ;; clojure.core's built-in dynamic vars. *out*/*err*/*in*/*ns*/… ARE dynamic on
+  ;; the clj target (Clojure declares them ^:dynamic; the backend emits valid
+  ;; `(binding [*out* …] …)`), so seed them — else idiomatic
+  ;; `(binding [*out* *err*] (println …))` (rt.clj uses it) is wrongly rejected as
+  ;; "not a dynamic var". clj only (js/nix have no *out*/*err*); typed Any.
+  (when (eq? (program-target prog) 'clj)
+    (for ([d (in-list '(*out* *err* *in* *ns* *print-length* *print-level*
+                        *print-readably* *print-dup* *print-meta* *flush-on-newline*
+                        *warn-on-reflection* *unchecked-math* *math-context*
+                        *read-eval* *command-line-args* *file* *assert*
+                        *data-readers* *default-data-reader-fn* *compile-path*
+                        *source-path* *clojure-version* *agent*))])
+      (set-add! dyn-vars d)
+      (unless (hash-has-key? env d) (hash-set! env d ANY))))
   (hash-set! env '#%dynamic-vars dyn-vars)
 
   ;; bare JVM class name -> FQCN, from (import ...) — lets a bare imported

@@ -235,7 +235,10 @@
     (define c (peek-char port))
     (cond
       [(eof-object? c) (void)]
-      [(char-whitespace? c) (read-char port) (loop)]
+      ;; `,` is Clojure whitespace. This manual loop doesn't consult the
+      ;; readtable, so it must skip `,` explicitly — else a trailing comma
+      ;; before a close (`[a b,]` / `{k v,}` / `#{x,}`) errors.
+      [(or (char-whitespace? c) (char=? c #\,)) (read-char port) (loop)]
       [(char=? c #\;) ; line comment
        (let inner ()
          (define cc (read-char port))
@@ -289,10 +292,10 @@
     (datum->syntax #f result (vector src line col pos #f))
     result))
 
-;; Unquote-prefix reader. `,X` reads as `(unquote X)`.
-;; If the next char after `,` is `@`, dispatches to unquote-splicing:
-;; `,@X` → `(unquote-splicing X)`. Inside a quasiquoted template
-;; (`` `(... ,x ...) ``) the unquote escapes back to the surrounding
+;; Unquote-prefix reader. `~X` reads as `(unquote X)` (Clojure syntax-quote
+;; unquote). If the next char after `~` is `@`, dispatches to unquote-splicing:
+;; `~@X` → `(unquote-splicing X)`. Inside a quasiquoted template
+;; (`` `(... ~x ...) ``) the unquote escapes back to the surrounding
 ;; evaluation context for the duration of one datum.
 (define (unquote-reader ch port src line col pos)
   (define next (peek-char port))
@@ -303,7 +306,7 @@
        (parameterize ([current-readtable beagle-readtable])
          (if src (read-syntax src port) (read port))))
      (when (eof-object? inner)
-       (error 'beagle "unexpected EOF after `,@` (unquote-splicing needs a following datum)"))
+       (error 'beagle "unexpected EOF after `~~@` (unquote-splicing needs a following datum)"))
      (define result (list 'unquote-splicing inner))
      (if src
        (datum->syntax #f result (vector src line col pos #f))
@@ -313,7 +316,7 @@
        (parameterize ([current-readtable beagle-readtable])
          (if src (read-syntax src port) (read port))))
      (when (eof-object? inner)
-       (error 'beagle "unexpected EOF after `,` (unquote needs a following datum)"))
+       (error 'beagle "unexpected EOF after `~~` (unquote needs a following datum)"))
      (define result (list 'unquote inner))
      (if src
        (datum->syntax #f result (vector src line col pos #f))
@@ -356,7 +359,13 @@
                               (error 'beagle "unexpected `}`"))
     #\' 'terminating-macro quote-reader
     #\` 'terminating-macro quasiquote-reader
-    #\, 'terminating-macro unquote-reader
+    ;; `,` is WHITESPACE in Clojure (ignored), NOT unquote. Unquote is `~` /
+    ;; `~@` (Clojure's syntax-quote unquote). Beagle had the CL-style `,`=unquote
+    ;; — a SILENT surface divergence from Clojure that taxes every AI keystroke.
+    ;; (`~"…"`/`~''…''` tilde-strings are nix-only — handled by the nix readtable,
+    ;; so `~`=unquote here does not collide.)
+    #\, #\space #f
+    #\~ 'terminating-macro unquote-reader
     #\# 'non-terminating-macro hash-dispatch))
 
 (define (beagle-read in)
@@ -368,4 +377,4 @@
     (read-syntax src in)))
 
 (provide beagle-read beagle-read-syntax beagle-readtable
-         fn-shorthand->fn reading-fn-shorthand?)
+         fn-shorthand->fn reading-fn-shorthand? unquote-reader)

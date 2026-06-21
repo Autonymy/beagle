@@ -69,7 +69,9 @@
    'char-escape-string (fn-of '(Any) 'Any)
    ;; --- clojure.string -----------------------------------------------------
    'clojure.string/join     (fn-of '(Any) 'String #:rest 'Any)
-   'clojure.string/split    (type-fn (list (p 'String) (p 'Any)) #f
+   ;; (split s re) and (split s re limit) — Clojure's 3-arg form takes an Int
+   ;; limit (-1 keeps trailing empties). Optional 3rd arg via a rest Int.
+   'clojure.string/split    (type-fn (list (p 'String) (p 'Any)) (p 'Int)
                                      (type-app 'Vec (list (p 'String))))
    'clojure.string/replace  (fn-of '(String Any Any) 'String)
    'clojure.string/trim     (fn-of '(String) 'String)

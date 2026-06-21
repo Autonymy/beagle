@@ -97,7 +97,9 @@
 (define (skip-ws port)
   (let loop ()
     (define c (peek-char port))
-    (when (and (char? c) (char-whitespace? c))
+    ;; `,` is Clojure whitespace; this manual loop (curly/brace reader) doesn't
+    ;; consult the readtable, so skip it explicitly (handles `{k v,}` close edge).
+    (when (and (char? c) (or (char-whitespace? c) (char=? c #\,)))
       (read-char port)
       (loop))))
 
@@ -216,9 +218,35 @@
     (datum->syntax #f result (vector src line col pos #f))
     result))
 
+;; Unquote reader — MUST mirror reader-impl.rkt's unquote-reader. `~X` →
+;; (unquote X), `~@X` → (unquote-splicing X). Clojure syntax-quote unquote; `,`
+;; is whitespace (set in the readtable below). Kept in sync across both
+;; readtables (the #18/#19 two-readtable lesson).
+(define (unquote-reader-local ch port src line col pos)
+  (define next (peek-char port))
+  (cond
+    [(and (char? next) (char=? next #\@))
+     (read-char port)
+     (define inner (parameterize ([current-readtable beagle-readtable])
+                     (if src (read-syntax src port) (read port))))
+     (when (eof-object? inner)
+       (error 'beagle "unexpected EOF after `~~@` (unquote-splicing needs a following datum)"))
+     (define result (list 'unquote-splicing inner))
+     (if src (datum->syntax #f result (vector src line col pos #f)) result)]
+    [else
+     (define inner (parameterize ([current-readtable beagle-readtable])
+                     (if src (read-syntax src port) (read port))))
+     (when (eof-object? inner)
+       (error 'beagle "unexpected EOF after `~~` (unquote needs a following datum)"))
+     (define result (list 'unquote inner))
+     (if src (datum->syntax #f result (vector src line col pos #f)) result)]))
+
 (define beagle-readtable
   (make-readtable #f
     #\^ 'terminating-macro meta-reader-local
+    ;; `,` is Clojure WHITESPACE (not unquote); unquote is `~` / `~@`.
+    #\, #\space #f
+    #\~ 'terminating-macro unquote-reader-local
     #\{ 'terminating-macro curly-reader-local
     #\} 'terminating-macro (lambda (ch port src line col pos)
                              (error 'beagle "unexpected `}`"))

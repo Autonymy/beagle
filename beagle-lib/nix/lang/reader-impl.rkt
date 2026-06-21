@@ -254,6 +254,13 @@
      (string->symbol rest)]))
 
 (define beagle-nix-readtable
+  ;; Inherits the base readtable (so `,` is Clojure whitespace here too —
+  ;; coherent with clj/js/odin). On nix `~` is the TILDE-STRING reader
+  ;; (`~"…"`/`~''…''`), a backend-justified divergence, so `~` can't double as
+  ;; unquote the way it does on the base. nix unquote-in-quasiquote is therefore
+  ;; the one OPEN surface question (flagged to beagle-4): either teach
+  ;; nix-tilde-reader to disambiguate `~x`=unquote vs `~"…"`=string, or pick
+  ;; another spelling. No .bnix corpus uses quasiquote-unquote today.
   (make-readtable beagle-readtable
     #\~ 'non-terminating-macro nix-tilde-reader))
 

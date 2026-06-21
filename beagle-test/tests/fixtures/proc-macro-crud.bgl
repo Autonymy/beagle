@@ -15,9 +15,9 @@
      (map (lambda (f)
             (let ((fname (car f))
                   (ftype (caddr f)))
-              `(defn ,(string->symbol (format "~a-~a" name fname))
-                 ((obj : ,name)) : ,ftype
-                 (get obj ,(sym->kw fname)))))
+              `(defn ~(string->symbol (format "~a-~a" name fname))
+                 ((obj : ~name)) : ~ftype
+                 (get obj ~(sym->kw fname)))))
           fields))))
 
 (defentity User ((name : String) (age : Int) (active : Bool)))
