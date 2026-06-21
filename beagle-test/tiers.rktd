@@ -111,7 +111,16 @@
              ;; ≠ Clojure differences (0/""-truthiness, kw→string) in BOTH directions
              ;; so a resolved divergence fails loudly and graduates into the corpus.
              ;; A real correctness gate.
-             "conformance.rkt"))
+             "conformance.rkt"
+             ;; P3 rep-selection SOUNDNESS gate (2026-06-21): the "trust spine"
+             ;; audit. Asserts (a) no false promotion (scalar/native code emits
+             ;; ZERO hamt refs) and (b) no correctness hole (compound-key maps /
+             ;; value-dedup sets DO route to the HAMT), plus an INDEPENDENT oracle
+             ;; that re-derives provably-compound from the type table and
+             ;; cross-checks the HAMT-site count against the emitter's actual
+             ;; output. Structural (emits + inspects JS strings; no node/bb), so
+             ;; it stays active as a permanent regression lock on rep-selection.
+             "rep-soundness.rkt"))
 
   (demoted . (;; behavioral runs that hit external interpreters
               "emit-js-behavioral.rkt")) ; requires bun

@@ -128,16 +128,19 @@
               [(< n 2) #f]
               ;; conj onto a value-set -> fold hamtSetAdd (value dedup)
               [(eq? (classify-rep (car args)) 'hset)
+               (tally-rep! 'hamt)
                (for/fold ([acc (emit-expr (car args))]) ([x (in-list (cdr args))])
                  (use-hamt! "hamtSetAdd")
                  (format "hamtSetAdd(~a, ~a)" acc (emit-expr x)))]
-              [else (format "[...~a, ~a]"
+              [else (tally-rep! 'native)
+                    (format "[...~a, ~a]"
                             (emit-expr (car args))
                             (string-join (map emit-expr (cdr args)) ", "))])]
     [(assoc) (cond
                [(not (and (>= n 3) (odd? n))) #f]
                ;; compound-keyed -> fold hamtMapAssoc (coerce a native coll input)
                [(assoc-hmap? args)
+                (tally-rep! 'hamt)
                 (let loop ([acc (emit-as-hamt-map (car args))] [kvs (cdr args)])
                   (if (< (length kvs) 2)
                       acc
@@ -146,7 +149,8 @@
                         (loop (format "hamtMapAssoc(~a, ~a, ~a)"
                                       acc (emit-expr (car kvs)) (emit-expr (cadr kvs)))
                               (cddr kvs)))))]
-               [else (format "({...~a, ~a})"
+               [else (tally-rep! 'native)
+                     (format "({...~a, ~a})"
                              (emit-expr (car args))
                              (emit-kv-entries (cdr args)))])]
     [(inc) (if (= n 1) (format "(~a + 1)" (emit-expr (car args))) #f)]
@@ -160,8 +164,8 @@
     [(set) (cond
              [(not (= n 1)) #f]
              ;; compound elements -> value-keyed HAMT set (value dedup)
-             [(set-hset? args) (hamt-call "hamtSet" (emit-expr (car args)))]
-             [else (format "new Set(~a)" (emit-expr (car args)))])]
+             [(set-hset? args) (tally-rep! 'hamt) (hamt-call "hamtSet" (emit-expr (car args)))]
+             [else (tally-rep! 'native) (format "new Set(~a)" (emit-expr (car args)))])]
     ;; value-semantic membership: routes to runtime $$bc.contains, which
     ;; dispatches on coll type per Clojure contains? — Set: equiv-membership
     ;; (not reference Set.has); Array: valid-index; object/map: key present.
@@ -729,6 +733,17 @@
       (begin (use-hamt! "hamtMap")
              (format "hamtMap(Object.entries(~a))" (emit-expr coll-node)))))
 
+;; --- PHASE D: static per-alloc-site rep metric (fraction-native) ------------
+;; OPT-IN (BEAGLE_REP_METRIC=1): when set, js-emit-program threads a counter and
+;; every collection ALLOCATION site (literal map/set/vec + set/assoc/conj
+;; constructors) tallies native-vs-HAMT, emitting a `// collection-rep: N/M
+;; native (P%)` header. Off by default so normal output is byte-unchanged.
+(define rep-metric? (and (getenv "BEAGLE_REP_METRIC") #t))
+(define rep-counts (make-parameter #f))  ; mutable hasheq 'native/'hamt -> count, or #f
+(define (tally-rep! kind)
+  (define t (rep-counts))
+  (when t (hash-update! t kind add1 0)))
+
 ;; --- runtime import tracking -----------------------------------------------
 
 (define needs-runtime? (make-parameter #f))
@@ -868,6 +883,7 @@
                  [current-type-table (program-type-table prog)]  ; P3: per-node arg types for scalar-=== dispatch (#f when capture off)
                  [needs-runtime? #f]
                  [hamt-ops-used (make-hash)]
+                 [rep-counts (and rep-metric? (make-hasheq))]
                  [current-js-bound (collect-top-level-names prog)])
     (define header (emit-module-header prog))
     (define body
@@ -875,6 +891,17 @@
        (for/list ([form (in-list (program-forms prog))])
          (emit-form form))
        "\n\n"))
+    ;; PHASE D: opt-in static per-alloc-site rep metric header.
+    (define rep-comment
+      (let ([t (rep-counts)])
+        (if t
+          (let* ([nat (hash-ref t 'native 0)]
+                 [ham (hash-ref t 'hamt 0)]
+                 [tot (+ nat ham)]
+                 [pct (if (zero? tot) 100 (round (/ (* 100.0 nat) tot)))])
+            (format "// collection-rep: ~a/~a native (~a%) — ~a HAMT site(s)\n"
+                    nat tot (inexact->exact pct) ham))
+          "")))
     (define runtime-import
       (if (needs-runtime?)
         (format "import * as $$bc from '~a';\n" (string-append js-runtime-prefix "core.js"))
@@ -887,7 +914,7 @@
           (format "import { ~a } from '~a';\n"
                   (string-join ops ", ")
                   (string-append js-runtime-prefix "hamt.js")))))
-    (string-append header runtime-import hamt-import "\n" body "\n")))
+    (string-append rep-comment header runtime-import hamt-import "\n" body "\n")))
 
 ;; --- module header ---------------------------------------------------------
 
@@ -1099,6 +1126,7 @@
      (format "/~a/" pat)]
 
     [(vec-form? e)
+     (tally-rep! 'native)  ; vectors are always native (COW arrays)
      (format "[~a]"
              (string-join (map emit-expr (vec-form-items e)) ", "))]
     [(map-form? e)
@@ -1106,6 +1134,7 @@
        ;; Compound-keyed map literal -> value-keyed HAMT (native object keys would
        ;; stringify distinct-but-equiv keys to the same "[object Object]").
        [(eq? (classify-rep e) 'hmap)
+        (tally-rep! 'hamt)
         (use-hamt! "hamtMap")
         (format "hamtMap([~a])"
                 (string-join
@@ -1114,6 +1143,7 @@
                       (map-form-pairs e))
                  ", "))]
        [else
+        (tally-rep! 'native)
         (format "{~a}"
                 (string-join
                  (map (lambda (p)
@@ -1127,6 +1157,7 @@
                       (map-form-pairs e))
                  ", "))])]
     [(set-form? e)
+     (tally-rep! 'native)  ; set literal (distinct elems by construction)
      (format "new Set([~a])"
              (string-join (map emit-expr (set-form-items e)) ", "))]
 
