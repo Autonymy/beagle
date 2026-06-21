@@ -59,6 +59,10 @@
 ;; file lives at <repo>/beagle-test/tests/conformance.rkt, so the core is at
 ;; <repo>/beagle-lib/lib/beagle/core.js.
 (define-runtime-path beagle-core-js "../../beagle-lib/lib/beagle/core.js")
+;; The P3 persistent collections (hamtMap/hamtSet/...). Compound-key map and
+;; value-set cases emit `import { ... } from 'beagle/hamt.js'`, so the scaffold
+;; must resolve it alongside core.js.
+(define-runtime-path beagle-hamt-js "../../beagle-lib/lib/beagle/hamt.js")
 
 (define BB-PATH   (find-executable-path "bb"))
 (define NODE-PATH
@@ -84,12 +88,13 @@
   (call-with-output-file (build-path beagle-mod-dir "package.json")
     #:exists 'truncate
     (lambda (p) (display "{\"type\":\"module\"}\n" p)))
-  (define link-path (build-path beagle-mod-dir "core.js"))
-  (when (or (file-exists? link-path) (link-exists? link-path))
-    (delete-file link-path))
-  (make-file-or-directory-link
-   (path->string (simplify-path beagle-core-js))
-   link-path))
+  (define (link-runtime! src name)
+    (define link-path (build-path beagle-mod-dir name))
+    (when (or (file-exists? link-path) (link-exists? link-path))
+      (delete-file link-path))
+    (make-file-or-directory-link (path->string (simplify-path src)) link-path))
+  (link-runtime! beagle-core-js "core.js")
+  (link-runtime! beagle-hamt-js "hamt.js"))
 
 (setup-beagle-node-module!)
 
@@ -174,8 +179,12 @@
 ;; JS target: header `#lang beagle/js`, export the fn, run via node, print via
 ;; JSON.stringify so compound structure is visible (and arrays/objects don't
 ;; collapse to `[object Object]`).
+;; strict mode is REQUIRED: per-node type capture (and thus P3 rep-selection —
+;; compound-key map -> hamtMap, value-set -> hamtSet) only runs under
+;; (define-mode strict). Without it the JS target emits native objects/Sets and
+;; the compound-key cases would silently fall back to string-coercion.
 (define (js-wrap expr ret)
-  (string-append "#lang beagle/js\n(ns conf)\n"
+  (string-append "#lang beagle/js\n(ns conf)\n(define-mode strict)\n"
                  "(js/export (defn result [] :- " ret " " expr "))\n"))
 
 (define (js-run out-path)
@@ -293,8 +302,11 @@
    ;; there is no value-dedup either. RED on JS. Marked 'known-gap (soft-report)
    ;; because the fix lives in emit-js/check.rkt (count-of-set + value-Set),
    ;; owned by another seam; the oracle still computes the truthful 1.
-   (list "count-set-vec-dedup"  "(count (set [[1 2] [1 2]]))"        "Int"  'known-gap)
-   (list "count-set-map-dedup"  "(count (set [{:a 1} {:a 1}]))"      "Int"  'known-gap)
+   ;; P3 rep-selection: `set` over compound elements -> value-keyed hamtSet
+   ;; (value dedup); `count` -> hamtSetCount. Was 'known-gap (native `new Set`
+   ;; ref-dedup kept both + `.length` on a Set -> undefined). NOW asserted-green.
+   (list "count-set-vec-dedup"  "(count (set [[1 2] [1 2]]))"        "Int"  'compound)
+   (list "count-set-map-dedup"  "(count (set [{:a 1} {:a 1}]))"      "Int"  'compound)
 
    ;; ========================================================================
    ;; D. IMMUTABILITY — ops must NOT mutate their input. The sharpest Squint
@@ -321,23 +333,29 @@
    (list "dedup-nil"         "(count (distinct [nil nil 1]))"                  "Int" 'compound)
 
    ;; ========================================================================
-   ;; F. COMPOUND-VALUE MAP KEYS — KNOWN GAP. Native JS object keys coerce to
-   ;;    strings, so a map/vec used as a KEY cannot key by VALUE in general:
-   ;;    {:a 1} coerces to "[object Object]", so two DISTINCT-but-equiv keys
-   ;;    collide and a differently-spelled lookup key fails. Needs the P3 HAMT
-   ;;    (value-keyed map), in flight in another seam. Marked 'known-gap so the
-   ;;    harness SOFT-reports (no hard assert) until it lands.
-   ;;    NB (FINDING): these three exprs use the SAME literal for both store and
-   ;;    lookup, so the string-coercion is self-consistent and they CURRENTLY
-   ;;    return the oracle's value by accident (same coincidence as the
-   ;;    pre-existing map-by-vec-key). That coincidence is NOT real value-keying
-   ;;    — change the lookup spelling or add a distinct-but-equiv key and it
-   ;;    breaks — so they stay 'known-gap; the soft-report flags the (coercion-
-   ;;    coincidental) agreement rather than asserting it.
+   ;; F. COMPOUND-VALUE MAP KEYS — NOW ASSERTED-GREEN via P3 rep-selection.
+   ;;    A map keyed by a COMPOUND value routes to the value-keyed hamtMap
+   ;;    (lib/beagle/hamt.js), so distinct-but-equiv keys stay distinct and a
+   ;;    differently-constructed lookup key matches by VALUE. Native JS object
+   ;;    keys coerce every map/vec to "[object Object]" and collide; the HAMT
+   ;;    keys by $$bc.hash/$$bc.equiv.
+   ;;    The first three previously agreed by string-coercion COINCIDENCE (same
+   ;;    literal store+lookup); they are now genuinely value-keyed. The
+   ;;    DISCRIMINATING cases below would FAIL on native (proving it's real):
+   ;;      - collision: two distinct compound keys; native collapses them (2nd
+   ;;        write wins) -> wrong value; HAMT keeps both.
+   ;;      - count:     two distinct compound keys; native -> 1 key; HAMT -> 2.
+   ;;      - absent:    a compound lookup key not present; native collides onto
+   ;;        an existing slot (some? -> true); HAMT misses (some? -> false).
+   ;;        (Tested via `some?` so the result is Bool, not nil — nil renders as
+   ;;        "nil" in clj vs "null" in JSON, an unrelated rendering divergence.)
    ;; ========================================================================
-   (list "key-by-map"      "(get {{:a 1} :found} {:a 1})"      "Keyword" 'known-gap)
-   (list "key-by-nested"   "(get {[[1] [2]] :x} [[1] [2]])"    "Keyword" 'known-gap)
-   (list "key-by-map-eq"   "(= (get {{:a 1} :x} {:a 1}) :x)"   "Bool"    'known-gap)))
+   (list "key-by-map"        "(get {{:a 1} :found} {:a 1})"          "Keyword" 'compound)
+   (list "key-by-nested"     "(get {[[1] [2]] :x} [[1] [2]])"        "Keyword" 'compound)
+   (list "key-by-map-eq"     "(= (get {{:a 1} :x} {:a 1}) :x)"       "Bool"    'compound)
+   (list "key-map-collision" "(get {{:a 1} :x {:a 2} :y} {:a 1})"    "Keyword" 'compound)
+   (list "key-map-count"     "(count {{:a 1} :x {:a 2} :y})"         "Int"     'compound)
+   (list "key-map-absent"    "(some? (get {{:a 1} :x} {:b 9}))"      "Bool"    'compound)))
 
 ;; ---------------------------------------------------------------------------
 ;; THE TEST. For each case: compute the CLJ ORACLE, then assert each non-oracle

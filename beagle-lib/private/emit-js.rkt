@@ -89,7 +89,28 @@
     [(neg?) (if (= n 1) (format "(~a < 0)" (emit-expr (car args))) #f)]
     [(even?) (if (= n 1) (format "(~a % 2 === 0)" (emit-expr (car args))) #f)]
     [(odd?) (if (= n 1) (format "(~a % 2 !== 0)" (emit-expr (car args))) #f)]
-    [(count) (if (= n 1) (format "~a.length" (emit-expr (car args))) #f)]
+    [(count)
+     (if (= n 1)
+       (let ([coll (car args)])
+         (case (classify-rep coll)
+           [(hmap) (hamt-call "hamtMapCount" (emit-expr coll))]
+           [(hset) (hamt-call "hamtSetCount" (emit-expr coll))]
+           [else
+            (define ty (node-type coll))
+            (cond
+              ;; native Set -> .size (NOT .length, which is undefined on a Set)
+              [(or (set-form? coll)
+                   (and (call-form? coll) (memq (call-form-fn coll) '(set hash-set sorted-set)))
+                   (and (type-app? ty) (eq? (type-app-ctor ty) 'Set)))
+               (format "~a.size" (emit-expr coll))]
+              ;; native object (map) -> own-key count (NOT .length)
+              [(or (map-form? coll)
+                   (and (type-app? ty) (eq? (type-app-ctor ty) 'Map)))
+               (format "Object.keys(~a).length" (emit-expr coll))]
+              ;; array/string/unknown -> .length (today's default; var-of-set/map
+              ;; and cross-fn HAMT counts are the $$bc.count follow-up)
+              [else (format "~a.length" (emit-expr coll))])]))
+       #f)]
     [(empty?) (if (= n 1) (format "(~a.length === 0)" (emit-expr (car args))) #f)]
     [(first) (if (= n 1) (format "~a[0]" (emit-expr (car args))) #f)]
     [(second) (if (= n 1) (format "~a[1]" (emit-expr (car args))) #f)]
@@ -103,16 +124,31 @@
                               (emit-expr (car args)) (emit-expr (cadr args))
                               (emit-expr (caddr args)))]
              [else #f])]
-    [(conj) (if (>= n 2)
-              (format "[...~a, ~a]"
-                      (emit-expr (car args))
-                      (string-join (map emit-expr (cdr args)) ", "))
-              #f)]
-    [(assoc) (if (and (>= n 3) (odd? n))
-                 (format "({...~a, ~a})"
-                         (emit-expr (car args))
-                         (emit-kv-entries (cdr args)))
-                 #f)]
+    [(conj) (cond
+              [(< n 2) #f]
+              ;; conj onto a value-set -> fold hamtSetAdd (value dedup)
+              [(eq? (classify-rep (car args)) 'hset)
+               (for/fold ([acc (emit-expr (car args))]) ([x (in-list (cdr args))])
+                 (use-hamt! "hamtSetAdd")
+                 (format "hamtSetAdd(~a, ~a)" acc (emit-expr x)))]
+              [else (format "[...~a, ~a]"
+                            (emit-expr (car args))
+                            (string-join (map emit-expr (cdr args)) ", "))])]
+    [(assoc) (cond
+               [(not (and (>= n 3) (odd? n))) #f]
+               ;; compound-keyed -> fold hamtMapAssoc (coerce a native coll input)
+               [(assoc-hmap? args)
+                (let loop ([acc (emit-as-hamt-map (car args))] [kvs (cdr args)])
+                  (if (< (length kvs) 2)
+                      acc
+                      (begin
+                        (use-hamt! "hamtMapAssoc")
+                        (loop (format "hamtMapAssoc(~a, ~a, ~a)"
+                                      acc (emit-expr (car kvs)) (emit-expr (cadr kvs)))
+                              (cddr kvs)))))]
+               [else (format "({...~a, ~a})"
+                             (emit-expr (car args))
+                             (emit-kv-entries (cdr args)))])]
     [(inc) (if (= n 1) (format "(~a + 1)" (emit-expr (car args))) #f)]
     [(dec) (if (= n 1) (format "(~a - 1)" (emit-expr (car args))) #f)]
     [(abs) (if (= n 1) (format "Math.abs(~a)" (emit-expr (car args))) #f)]
@@ -121,14 +157,34 @@
     [(rand) (if (= n 0) "Math.random()" #f)]
     [(rand-int) (if (= n 1) (format "Math.floor(Math.random() * ~a)" (emit-expr (car args))) #f)]
     [(vec) (if (= n 1) (format "Array.from(~a)" (emit-expr (car args))) #f)]
-    [(set) (if (= n 1) (format "new Set(~a)" (emit-expr (car args))) #f)]
+    [(set) (cond
+             [(not (= n 1)) #f]
+             ;; compound elements -> value-keyed HAMT set (value dedup)
+             [(set-hset? args) (hamt-call "hamtSet" (emit-expr (car args)))]
+             [else (format "new Set(~a)" (emit-expr (car args)))])]
     ;; value-semantic membership: routes to runtime $$bc.contains, which
     ;; dispatches on coll type per Clojure contains? — Set: equiv-membership
     ;; (not reference Set.has); Array: valid-index; object/map: key present.
     ;; (Compound map keys by value are the P3 representation gap.)
-    [(contains?) (if (= n 2) (begin (use-runtime!) (format "$$bc.contains(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)))) #f)]
-    [(keys) (if (= n 1) (format "Object.keys(~a)" (emit-expr (car args))) #f)]
-    [(vals) (if (= n 1) (format "Object.values(~a)" (emit-expr (car args))) #f)]
+    [(contains?)
+     (if (= n 2)
+       (case (classify-rep (car args))
+         ;; $$bc.contains is NOT HAMT-aware -> dispatch HAMT colls statically
+         [(hmap) (hamt-call "hamtMapHas" (emit-expr (car args)) (emit-expr (cadr args)))]
+         [(hset) (hamt-call "hamtSetHas" (emit-expr (car args)) (emit-expr (cadr args)))]
+         [else (begin (use-runtime!)
+                      (format "$$bc.contains(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args))))])
+       #f)]
+    [(keys) (if (= n 1)
+                (if (eq? (classify-rep (car args)) 'hmap)
+                    (hamt-call "hamtMapKeys" (emit-expr (car args)))
+                    (format "Object.keys(~a)" (emit-expr (car args))))
+                #f)]
+    [(vals) (if (= n 1)
+                (if (eq? (classify-rep (car args)) 'hmap)
+                    (hamt-call "hamtMapVals" (emit-expr (car args)))
+                    (format "Object.values(~a)" (emit-expr (car args))))
+                #f)]
     [(map) (if (= n 2)
             (format "~a.map(~a)" (emit-expr (cadr args)) (emit-expr (car args)))
             #f)]
@@ -199,6 +255,10 @@
     [(mapv) (if (= n 2) (format "~a.map(~a)" (emit-expr (cadr args)) (emit-expr (car args))) #f)]
     [(filterv) (if (= n 2) (format "~a.filter(~a)" (emit-expr (cadr args)) (emit-expr (car args))) #f)]
     [(get) (cond
+             [(and (= n 2) (eq? (classify-rep (car args)) 'hmap))
+              (hamt-call "hamtMapGet" (emit-expr (car args)) (emit-expr (cadr args)))]
+             [(and (= n 3) (eq? (classify-rep (car args)) 'hmap))
+              (hamt-call "hamtMapGet" (emit-expr (car args)) (emit-expr (cadr args)) (emit-expr (caddr args)))]
              [(= n 2) (format "~a[~a]" (emit-expr (car args)) (emit-expr (cadr args)))]
              [(= n 3) (format "(() => { const _x = ~a, _k = ~a; return _x[_k] != null ? _x[_k] : ~a; })()"
                               (emit-expr (car args)) (emit-expr (cadr args))
@@ -211,10 +271,12 @@
     [(merge) (if (>= n 1)
               (format "Object.assign({}, ~a)" (string-join (map emit-expr args) ", "))
               #f)]
-    [(dissoc) (if (= n 2)
-               (format "(() => { const _r = {...~a}; delete _r[~a]; return _r; })()"
-                       (emit-expr (car args)) (emit-expr (cadr args)))
-               #f)]
+    [(dissoc) (cond
+                [(not (= n 2)) #f]
+                [(eq? (classify-rep (car args)) 'hmap)
+                 (hamt-call "hamtMapDissoc" (emit-expr (car args)) (emit-expr (cadr args)))]
+                [else (format "(() => { const _r = {...~a}; delete _r[~a]; return _r; })()"
+                              (emit-expr (car args)) (emit-expr (cadr args)))])]
     [(subvec) (cond
                 [(= n 2) (format "~a.slice(~a)" (emit-expr (car args)) (emit-expr (cadr args)))]
                 [(= n 3) (format "~a.slice(~a, ~a)" (emit-expr (car args)) (emit-expr (cadr args)) (emit-expr (caddr args)))]
@@ -360,7 +422,13 @@
     [(map-vals)    (if (= n 2) (runtime-call "map_vals" args) #f)]
     [(update-keys) (if (= n 2) (runtime-call "map_keys" args) #f)]
     [(update-vals) (if (= n 2) (runtime-call "map_vals" args) #f)]
-    [(disj)        (if (>= n 2) (runtime-call "disj" args) #f)]
+    [(disj)        (cond
+                     [(< n 2) #f]
+                     [(eq? (classify-rep (car args)) 'hset)
+                      (for/fold ([acc (emit-expr (car args))]) ([x (in-list (cdr args))])
+                        (use-hamt! "hamtSetDisjoin")
+                        (format "hamtSetDisjoin(~a, ~a)" acc (emit-expr x)))]
+                     [else (runtime-call "disj" args)])]
     [(find) (if (= n 2) (format "(() => { const _m = ~a, _k = ~a; return _k in _m ? [_k, _m[_k]] : null; })()"
                                 (emit-expr (car args)) (emit-expr (cadr args))) #f)]
     [(key) (if (= n 1) (format "~a[0]" (emit-expr (car args))) #f)]
@@ -535,6 +603,132 @@
        (scalar-eq-safe-type? (hash-ref tbl node-a #f))
        (scalar-eq-safe-type? (hash-ref tbl node-b #f))))
 
+;; --- P3 representation selection (native vs HAMT persistent) ----------------
+;;
+;; A map keyed by a COMPOUND value, or a set of compound values built by
+;; dedup, has NO sound native-JS representation: object keys stringify to
+;; "[object Object]" (distinct-but-equiv keys collide; an absent key "hits");
+;; `new Set` dedups by reference (value-equal elements both survive). Such a
+;; value must be a value-keyed HAMT (lib/beagle/hamt.js, $$bc-backed identity).
+;;
+;; CLASSIFIER (sound, PROVABLY-COMPOUND -> persistent):
+;;   - HAMT iff the key (map) / element (set) type is a CONCRETE compound ctor
+;;     (Map/Set/Vec/List). Scalar-eq-safe, Any, type-var, union, Float, Nil are
+;;     NOT provably-compound -> native (today's emit, unchanged).
+;;   - This is the dual of "unprovable -> persistent" applied to the
+;;     CORRECTNESS driver: we promote ONLY what we can prove native cannot hold.
+;;     Consequence: a HAMT value has no native equivalent of the SAME value, so
+;;     a HAMT and a native collection never represent the same value -> $$bc
+;;     equiv/hash need no HAMT-awareness for this ship (no cross-rep mismatch).
+;;   - assoc/conj erase key/elem types to Any (stdlib sig), so an assoc-built
+;;     map is classified from its KEY ARGUMENT's type (precise where the key is
+;;     a literal) plus its coll input's rep (a hamt coll stays hamt). The
+;;     unhelpful Any RESULT type is never consulted.
+;;   - Bindings propagate: a let binding's rep is its value's rep (current-rep-env),
+;;     so a read through a var (bare symbol, absent from the type table) resolves
+;;     consistently — the soundness crux the per-node type table alone can't give.
+;;
+;; SCOPE (intraprocedural): a HAMT passed to a function arg typed non-compound
+;; is read native inside the callee (documented boundary; not exercised by the
+;; conformance gate, which is local). Polymorphic $$bc fallback + assoc key-type
+;; preservation are the fraction-native follow-ups.
+
+(define COMPOUND-CTORS '(Map Set Vec Vector List))
+
+(define (provably-compound-type? ty)
+  (and (type-app? ty) (and (memq (type-app-ctor ty) COMPOUND-CTORS) #t)))
+
+(define (node-type node)
+  (define tbl (current-type-table))
+  (and tbl (hash-ref tbl node #f)))
+
+;; (Map K V) -> K ; else #f
+(define (map-key-type ty)
+  (and (type-app? ty) (eq? (type-app-ctor ty) 'Map)
+       (pair? (type-app-args ty)) (car (type-app-args ty))))
+
+;; (Vec E)/(List E)/(Set E) -> E ; else #f
+(define (seq-elem-type ty)
+  (and (type-app? ty) (memq (type-app-ctor ty) '(Vec Vector List Set))
+       (pair? (type-app-args ty)) (car (type-app-args ty))))
+
+;; binding-name -> rep tag (set at let/param scopes); default 'native
+(define current-rep-env (make-parameter (hasheq)))
+(define (rep-of-binding sym) (hash-ref (current-rep-env) sym 'native))
+
+;; Classify a NODE's collection representation: 'hmap | 'hset | 'native.
+;; Recurses over node structure (the type table stores Any for constructive
+;; ops, so we read LEAF key/elem types and the rep-env for var refs).
+(define (classify-rep e)
+  (cond
+    [(symbol? e) (rep-of-binding e)]
+    [(map-form? e)
+     (define pairs (map-form-pairs e))
+     (cond
+       [(null? pairs) 'native]          ; empty map: native; assoc-coerced if upgraded
+       [(let ([kt (map-key-type (node-type e))])
+          (and kt (provably-compound-type? kt))) 'hmap]
+       [else 'native])]
+    [(set-form? e) 'native]             ; set LITERAL: distinct by construction; $$bc handles it
+    [(call-form? e)
+     (define fn (call-form-fn e))
+     (define args (call-form-args e))
+     (case fn
+       [(assoc assoc!) (if (assoc-hmap? args) 'hmap 'native)]
+       [(dissoc update merge into-map) (classify-rep (and (pair? args) (car args)))]
+       [(set) (if (set-hset? args) 'hset 'native)]
+       [(conj) (if (eq? (classify-rep (and (pair? args) (car args))) 'hset) 'hset 'native)]
+       [(disj) (if (eq? (classify-rep (and (pair? args) (car args))) 'hset) 'hset 'native)]
+       [else 'native])]
+    [else 'native]))
+
+;; An assoc call yields a HAMT map iff its coll input is already one OR any of
+;; its key arguments is provably compound. (Result type is erased to Any, so we
+;; classify from the key args + coll rep, never the node's own type.)
+(define (assoc-hmap? args)
+  (and (pair? args)
+       (or (eq? (classify-rep (car args)) 'hmap)
+           (any-key-arg-compound? args))))
+
+;; (set X) builds a value-deduped HAMT set iff X's element type is provably
+;; compound (native `new Set` dedups by reference, keeping value-equal elements).
+(define (set-hset? args)
+  (and (pair? args)
+       (let ([et (seq-elem-type (node-type (car args)))])
+         (and et (provably-compound-type? et) #t))))
+
+;; assoc key args sit at odd indices (coll k0 v0 k1 v1 ...): any provably compound?
+(define (any-key-arg-compound? args)
+  (and (pair? args)
+       (let loop ([rest (cdr args)])
+         (cond
+           [(null? rest) #f]
+           [(provably-compound-type? (node-type (car rest))) #t]
+           [(or (null? (cdr rest)) (null? (cddr rest))) #f]
+           [else (loop (cddr rest))]))))
+
+;; --- HAMT op import tracking (tree-shakeable named imports) -----------------
+;; Mirrors needs-runtime?: a mutable set of hamt.js export names actually emitted,
+;; so the module header imports ONLY those (esbuild drops the rest).
+(define hamt-ops-used (make-parameter #f))
+(define (use-hamt! name)
+  (define t (hamt-ops-used))
+  (when t (hash-set! t name #t))
+  name)
+
+;; Emit a HAMT op call, recording the op for the import set.
+(define (hamt-call op . arg-strs)
+  (use-hamt! op)
+  (format "~a(~a)" op (string-join arg-strs ", ")))
+
+;; Emit a coll node already known to need HAMT-map rep: pass through if it is
+;; one, else coerce a native object's entries (empty {} -> empty hamtMap).
+(define (emit-as-hamt-map coll-node)
+  (if (eq? (classify-rep coll-node) 'hmap)
+      (emit-expr coll-node)
+      (begin (use-hamt! "hamtMap")
+             (format "hamtMap(Object.entries(~a))" (emit-expr coll-node)))))
+
 ;; --- runtime import tracking -----------------------------------------------
 
 (define needs-runtime? (make-parameter #f))
@@ -673,6 +867,7 @@
                  [current-js-symbol-ns (program-imported-symbol-ns prog)]
                  [current-type-table (program-type-table prog)]  ; P3: per-node arg types for scalar-=== dispatch (#f when capture off)
                  [needs-runtime? #f]
+                 [hamt-ops-used (make-hash)]
                  [current-js-bound (collect-top-level-names prog)])
     (define header (emit-module-header prog))
     (define body
@@ -684,7 +879,15 @@
       (if (needs-runtime?)
         (format "import * as $$bc from '~a';\n" (string-append js-runtime-prefix "core.js"))
         ""))
-    (string-append header runtime-import "\n" body "\n")))
+    ;; Tree-shakeable named import of ONLY the HAMT ops this module emitted.
+    (define hamt-import
+      (let ([ops (sort (hash-keys (hamt-ops-used)) string<?)])
+        (if (null? ops)
+          ""
+          (format "import { ~a } from '~a';\n"
+                  (string-join ops ", ")
+                  (string-append js-runtime-prefix "hamt.js")))))
+    (string-append header runtime-import hamt-import "\n" body "\n")))
 
 ;; --- module header ---------------------------------------------------------
 
@@ -899,18 +1102,30 @@
      (format "[~a]"
              (string-join (map emit-expr (vec-form-items e)) ", "))]
     [(map-form? e)
-     (format "{~a}"
-             (string-join
-              (map (lambda (p)
-                     (define k (car p))
-                     (define v (cdr p))
-                     (define key-str
-                       (cond
-                         [(keyword-symbol? k) (kw->prop k)]
-                         [else (format "[~a]" (emit-expr k))]))
-                     (format "~a: ~a" key-str (emit-expr v)))
-                   (map-form-pairs e))
-              ", "))]
+     (cond
+       ;; Compound-keyed map literal -> value-keyed HAMT (native object keys would
+       ;; stringify distinct-but-equiv keys to the same "[object Object]").
+       [(eq? (classify-rep e) 'hmap)
+        (use-hamt! "hamtMap")
+        (format "hamtMap([~a])"
+                (string-join
+                 (map (lambda (p)
+                        (format "[~a, ~a]" (emit-expr (car p)) (emit-expr (cdr p))))
+                      (map-form-pairs e))
+                 ", "))]
+       [else
+        (format "{~a}"
+                (string-join
+                 (map (lambda (p)
+                        (define k (car p))
+                        (define v (cdr p))
+                        (define key-str
+                          (cond
+                            [(keyword-symbol? k) (kw->prop k)]
+                            [else (format "[~a]" (emit-expr k))]))
+                        (format "~a: ~a" key-str (emit-expr v)))
+                      (map-form-pairs e))
+                 ", "))])]
     [(set-form? e)
      (format "new Set([~a])"
              (string-join (map emit-expr (set-form-items e)) ", "))]
@@ -1046,22 +1261,38 @@
      (define let-names (apply append (map (lambda (b) (names-from-binding-target (let-binding-name b))) bindings)))
      ;; A binding reassigned via `set!` in the body must emit `let`, not `const`.
      (define mutated-syms (collect-set!-target-syms body))
-     (define-values (bind-strs _ignored)
+     ;; Thread the rep-env (binding-name -> 'hmap|'hset) ALONGSIDE js-bound so a
+     ;; later binding's value (and the body) can classify a var-ref read of an
+     ;; earlier binding consistently with how that binding's value was emitted.
+     (define-values (bind-strs _ignored rep-env-out)
        (for/fold ([strs '()]
-                  [bound (current-js-bound)])
+                  [bound (current-js-bound)]
+                  [rep-env (current-rep-env)])
                  ([b (in-list bindings)])
          (define val-str (await-async-iife
-                           (parameterize ([current-js-bound bound])
+                           (parameterize ([current-js-bound bound]
+                                          [current-rep-env rep-env])
                              (emit-expr (let-binding-value b)))))
          (define new-names (names-from-binding-target (let-binding-name b)))
          (define mutable? (for/or ([nm (in-list new-names)]) (and (memq nm mutated-syms) #t)))
          (define stmts (emit-let-binding-stmts (let-binding-name b) val-str mutable?))
+         ;; Only a single-symbol binding names the collection itself; record its
+         ;; rep when non-native (destructures bind extracted sub-values -> native).
+         (define name (let-binding-name b))
+         (define rep (if (symbol? name)
+                         (parameterize ([current-rep-env rep-env])
+                           (classify-rep (let-binding-value b)))
+                         'native))
          (values (append strs stmts)
-                 (set-union bound (list->set new-names)))))
+                 (set-union bound (list->set new-names))
+                 (if (and (symbol? name) (not (eq? rep 'native)))
+                     (hash-set rep-env name rep)
+                     rep-env))))
      (with-bindings let-names
        (lambda ()
-         (iife (format "~a ~a" (string-join bind-strs " ") (emit-body-return body ""))
-                #:async? has-await)))]
+         (parameterize ([current-rep-env rep-env-out])
+           (iife (format "~a ~a" (string-join bind-strs " ") (emit-body-return body ""))
+                  #:async? has-await))))]
 
     [(loop-form? e)
      (define bindings (loop-form-bindings e))
@@ -1888,21 +2119,31 @@
        (format "return ~a;" (emit-expr e))
        (let ()
          (define mutated-syms (collect-set!-target-syms body))
-         (define-values (bind-strs _)
-           (for/fold ([strs '()] [bound (current-js-bound)])
+         (define-values (bind-strs _ rep-env-out)
+           (for/fold ([strs '()] [bound (current-js-bound)] [rep-env (current-rep-env)])
                      ([b (in-list bindings)])
              (define val-str (await-async-iife
-                               (parameterize ([current-js-bound bound])
+                               (parameterize ([current-js-bound bound]
+                                              [current-rep-env rep-env])
                                  (emit-expr (let-binding-value b)))))
              (define new-names (names-from-binding-target (let-binding-name b)))
              (define mutable? (for/or ([nm (in-list new-names)]) (and (memq nm mutated-syms) #t)))
              (define stmts (emit-let-binding-stmts (let-binding-name b) val-str mutable?))
+             (define name (let-binding-name b))
+             (define rep (if (symbol? name)
+                             (parameterize ([current-rep-env rep-env])
+                               (classify-rep (let-binding-value b)))
+                             'native))
              (values (append strs stmts)
-                     (set-union bound (list->set new-names)))))
+                     (set-union bound (list->set new-names))
+                     (if (and (symbol? name) (not (eq? rep 'native)))
+                         (hash-set rep-env name rep)
+                         rep-env))))
          (with-bindings let-names
            (lambda ()
              (parameterize ([current-js-inline-scope
-                             (set-union (current-js-inline-scope) (list->set let-names))])
+                             (set-union (current-js-inline-scope) (list->set let-names))]
+                            [current-rep-env rep-env-out])
                (string-append
                 (string-join bind-strs (string-append "\n" indent))
                 "\n" indent

@@ -964,6 +964,13 @@
     ;; AST so all type rules apply identically to a hand-written equivalent.
     [(? threading-marker?) (check-form (threading-marker-desugared form) env)]
 
+    ;; A top-level (js/export <form>) must DEEP-check its inner form (defer to
+    ;; check-form, not the infer-expr catch-all) so an exported defn's body is
+    ;; fully type-checked and its per-node types are captured — otherwise an
+    ;; exported defn skips the full check and rep-selection sees no key/elem types.
+    [(? jst-export?) (check-form (jst-export-form form) env)]
+    [(? jst-export-default?) (check-form (jst-export-default-form form) env)]
+
     [_ (infer-expr form env)]))
 
 (define (extend-with-params env params)
