@@ -1,84 +1,65 @@
+<div align="center">
+
 # Beagle
 
-Beagle is a typed Clojure subset that compiles one AST to idiomatic code
-for five language targets — Clojure, ClojureScript, JavaScript, Nix, and
-Odin.
+**Typed Clojure that compiles to idiomatic Clojure, ClojureScript, JavaScript, Nix, and Odin.**
+One AST, many back-ends — never a lowest-common-denominator transpile.
 
-Its types exist for a specific job: making authoring, diagnostics, and AI
-repair reliable. They check at compile time and erase before emit. The
-point isn't to reject bad code — it's to tell repair tools what kind of
-mistake happened, where in the source, after which canonicalization,
-against which target.
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![targets](https://img.shields.io/badge/targets-5%20live%20%2F%201%20dormant-success.svg)](#targets)
+[![Racket](https://img.shields.io/badge/Racket-8.x-9F1D20.svg)](https://racket-lang.org)
+[![status](https://img.shields.io/badge/status-pre--1.0-orange.svg)](#what-it-isnt)
 
-## Targets
+</div>
 
-One AST, idiomatic output per backend — Nix as lazy attrsets, Clojure as
-eager maps, ClojureScript as Clojure-shaped JS, Odin as structs and procs.
-Never a lowest-common-denominator transpile.
+Beagle's types exist for a specific job: making authoring, diagnostics, and AI
+repair reliable. They check at compile time and erase before emit. The point
+isn't to reject bad code — it's to tell repair tools *what* kind of mistake
+happened, *where* in the source, after *which* canonicalization, against
+*which* target.
 
-| Target        | Status  |
-|---------------|---------|
-| Clojure       | Live    |
-| ClojureScript | Live    |
-| JavaScript    | Live    |
-| Nix           | Live    |
-| Odin          | Live    |
-| SQL           | Dormant emitter (schema-typing live) |
+## One source, many back-ends
 
-SQL's schema-typing is live in the checker; its emitter is parked under
-`dormant/`, loadable with `BEAGLE_ALL_TARGETS=1`. Targets are removed, not
-deprecated, when they stop earning their place — reviving one means
-re-wiring `emit.rkt` and proving it against a real consumer, not flipping
-a switch.
-
-## How it compiles
-
-```
-.bclj / .bcljs / .bjs / .bnix / .bodin  ──▶  parse ──▶ check ──▶ emit  ──▶  .clj / .cljs / .js / .nix / .odin
-                                                          ▲
-                                            macros, schema, stdlib, type narrowing
-                                            all share one AST + diagnostic path
-```
-
-`check` is where the NixOS option schema (loaded from a cache at compile
-time) becomes typed context: unknown option paths fail at parse time,
-wrong-typed values fail at type-check time, ahead of any build. Sourcemap
-fidelity is preserved through every canonicalization, so diagnostics point
-at the author's position, not a desugared intermediate.
-
-## What it isn't
-
-- Not a schema language, not a validation runtime — types check at
-  compile time, then erase.
-- Not a new Lisp — a strict typed subset of Clojure. Where the surface
-  diverges from Clojure, that divergence must serve the type system or a
-  backend, or it dies.
-- Not stable. Pre-1.0, the surface still moves, and removals are hard
-  breaks — there is no deprecation path.
-
-## Quick taste
-
-Portable surface — parses for any target:
+The same source body, saved as `.bclj`, `.bjs`, and `.bnix`:
 
 ```clojure
-;; types ride on bindings; interiors inferred
-(defn double [n :- Int] :- Int
-  (* n 2))
-
-;; macros + quasi-quote (Scheme-style unquote: `,x`, splice `,@xs`)
-(defmacro inc1 [x] `(+ ,x 1))
-
-;; Clojure threading
-(-> 1 (+ 2) (* 3))
-
-;; reader conditionals for target-divergent code
-(def msg #?(:clj "hello" :cljs "hi" :nix "bonjour"))
-
-;; keyword access canonicalizes — `(:k m)` and `(get m :k)` are the same node
-(:name {:name "ada"})
+(defn even-doubles [xs :- (List Int)] :- (List Int)
+  (->> xs
+       (filter even?)
+       (map (fn [n :- Int] :- Int (* n 2)))))
 ```
 
-Nix flavor — a NixOS module authored against the typed schema:
+Each target renders it idiomatically — not transliterated:
+
+```clojure
+;; → Clojure: threading macro and seq fns preserved
+(defn even-doubles [xs]
+  (->> xs (filter even?) (map (fn [n] (* n 2)))))
+```
+
+```javascript
+// → JavaScript: array methods + arrow functions
+function even_doubles(xs) {
+  return xs.filter(((_x) => _x % 2 === 0)).map((n) => (n * 2));
+}
+```
+
+```nix
+# → Nix: lazy let-bindings and curried lambdas
+let
+  even-doubles = xs: builtins.map (n: (n * 2)) (builtins.filter even_p xs);
+in
+null
+```
+
+Same logic, three back-ends. Notice `even?` becomes `even_p` where the target's
+identifiers can't carry a `?` — names follow each language's rules, the shape
+follows each language's idiom. (Types erase: they did their job at check time.)
+
+## Typed against the target's real schema
+
+Types aren't just shapes you declare — they can come from the target itself. A
+NixOS module, authored against the typed option schema:
 
 ```clojure
 #lang beagle/nix
@@ -103,53 +84,95 @@ emits:
 }
 ```
 
-`services.openssh.enable` is typed `Bool` from the schema, so assigning a
-`String` fails at check time with file:line:col precision — before
-`nixos-rebuild` ever runs.
+`services.openssh.enable` is typed `Bool`, resolved from the schema cache.
+Assigning a `String` fails at check time with `file:line:col` precision —
+*before* `nixos-rebuild` is ever invoked. Unknown option paths fail at parse
+time; wrong-typed values fail at type-check time.
 
-Every snippet above passes `bin/beagle-syntax`.
+## Real codebases author against Beagle
+
+- **[firnos](https://github.com/tompassarelli/firnos)** — a complete NixOS
+  system, authored in `.bnix` and schema-typed end to end; it builds from
+  `flake.bnix` directly (Nix target).
+- **[gjoa](https://github.com/Autonymy/gjoa)** — a Firefox overlay browser UI,
+  ported from TypeScript to `.bjs` (JS target).
+- **[fram](https://github.com/Autonymy/fram)** — an append-only claim engine
+  (claims + stratified Datalog), authored in `.bclj` (Clojure target).
+
+## Targets
+
+One AST, idiomatic output per backend — Nix as lazy attrsets, Clojure as eager
+maps, ClojureScript as Clojure-shaped JS, Odin as structs and procs.
+
+| Target        | Status                                |
+|---------------|---------------------------------------|
+| Clojure       | Live                                  |
+| ClojureScript | Live                                  |
+| JavaScript    | Live                                  |
+| Nix           | Live                                  |
+| Odin          | Live                                  |
+| SQL           | Dormant emitter (schema-typing live)  |
+
+SQL's schema-typing is live in the checker; its emitter is parked under
+`dormant/`, loadable with `BEAGLE_ALL_TARGETS=1`. Targets are removed, not
+deprecated, when they stop earning their place — reviving one means re-wiring
+`emit.rkt` and proving it against a real consumer, not flipping a switch.
+
+## How it compiles
+
+```
+.bclj / .bcljs / .bjs / .bnix / .bodin  ──▶  parse ──▶ check ──▶ emit  ──▶  .clj / .cljs / .js / .nix / .odin
+                                                          ▲
+                                            macros, schema, stdlib, type narrowing
+                                            all share one AST + diagnostic path
+```
+
+`check` is where the NixOS option schema (loaded from a cache at compile time)
+becomes typed context: unknown option paths fail at parse time, wrong-typed
+values fail at type-check time, ahead of any build. Sourcemap fidelity is
+preserved through every canonicalization, so diagnostics point at the author's
+position — not a desugared intermediate.
 
 ## Surface highlights
 
-- **Inline `:-` annotations** on `def` / `defn` / `defonce`; record field
-  types ride in the fields list, `(defrecord Point [x :- Int y :- Int])`.
-  Interiors and `let`-locals are inferred.
-- **`defmacro`** with quasi-quote / unquote / unquote-splicing.
-- **The Clojure threading family** — `->`, `->>`, `as->`, `cond->`,
-  `cond->>`, `some->`, `some->>`.
-- **Reader conditionals** `#?(:clj … :cljs … :nix … :default …)` and
-  `#?@(…)` splice.
+A taste of the surface — every snippet here passes `bin/beagle syntax`:
+
+```clojure
+;; types ride on bindings; interiors inferred
+(defn double [n :- Int] :- Int (* n 2))
+
+;; macros + quasi-quote (Scheme-style unquote: `,x`, splice `,@xs`)
+(defmacro inc1 [x] `(+ ,x 1))
+
+;; Clojure threading family, reader conditionals, canonical keyword access
+(-> 1 (+ 2) (* 3))
+(def msg #?(:clj "hello" :cljs "hi" :nix "bonjour"))
+(:name {:name "ada"})
+```
+
+- **Inline `:-` annotations** on the typed boundaries `def` / `defn` /
+  `defonce` / `defrecord`; interiors and `let`-locals are inferred.
+- **`defmacro` + quasi-quote / unquote / unquote-splicing.**
+- **Clojure threading family:** `->`, `->>`, `as->`, `cond->`, `cond->>`,
+  `some->`, `some->>`.
+- **Reader conditionals** `#?(:clj … :cljs … :nix … :default …)` and `#?@(…)`.
 - **Quoted containers** `'[…]`, `'{…}`, `'#{…}` self-evaluate.
-- **Sourcemap fidelity** — the author's position survives every
+- **Sourcemap fidelity:** the author's position survives every
   canonicalization, guarded by a dedicated bench.
-- **Typo suggestions** for mistyped NixOS options — segment-aware
-  Levenshtein against the option schema.
-- **Per-target prefixes** (`nix/`, `js/`, …) for forms whose meaning
-  genuinely diverges per backend.
+- **Typo suggestions** for mistyped NixOS options: segment-aware Levenshtein
+  against the option schema.
+- **Per-target prefixes** (`nix/`, `js/`, …) for forms whose meaning genuinely
+  diverges per backend.
 
-## How it's organized
+## What it isn't
 
-- `beagle-lib/private/parse.rkt` — the surface form set, and the source of
-  truth; static docs go stale.
-- `beagle-lib/private/check.rkt` — the type checker.
-- `beagle-lib/private/emit-{clj,cljs,js,nix,odin}.rkt` — the live emitters;
-  `beagle-lib/private/dormant/` holds the parked ones.
-- `beagle-lib/private/nixos-schema.rkt` — the typed NixOS-option environment.
-- `beagle-lib/private/diagnostic-kind.rkt` — the `cause-class?` taxonomy.
-- `beagle-test/` — the tiered test suite; `beagle-test/tiers.rktd` is the
-  authoritative classification.
-- `CLAUDE.md` — the operating discipline, and the reference for any
-  question about the surface.
-- `docs/` — `INFLUENCES.md` (lineage + thesis) and the generated
-  `CHEATSHEET.md`.
-
-## Who authors against it
-
-- [firnos](https://github.com/tompassarelli/firnos) — a complete NixOS
-  system authored in `.bnix` and schema-typed end to end; it builds from
-  `flake.bnix` directly.
-- [gjoa](https://github.com/Autonymy/gjoa) — a Firefox overlay UI ported
-  from TypeScript to `.bjs`.
+- **Not a schema language, not a validation runtime** — types check at compile
+  time, then erase.
+- **Not a new Lisp in spirit** — a strict typed subset of Clojure. Where the
+  surface diverges from Clojure, that divergence must serve the type system or a
+  backend, or it dies.
+- **Not stable.** Pre-1.0, the surface still moves, and removals are hard
+  breaks — there is no deprecation path.
 
 ## Getting started
 
@@ -159,10 +182,15 @@ Requires Racket 8.x+.
 git clone https://github.com/Autonymy/beagle
 cd beagle
 raco pkg install --link beagle-lib/ beagle-test/ beagle/
-bin/beagle-test --active-only       # the active tier
+bin/beagle test --active-only       # active tier
 ```
 
-## Tooling
+For a real-world `.bnix` corpus, clone
+[firnos](https://github.com/tompassarelli/firnos) — schema-typed end to end; the
+NixOS system builds from `flake.bnix` directly.
+
+<details>
+<summary><b>The CLI &amp; repair loop</b></summary>
 
 Static reference docs are intentionally thin while the surface moves — the
 compiler is the source of truth, fronted by one CLI:
@@ -172,6 +200,7 @@ bin/beagle doctor               # is the repair loop online and working?
 bin/beagle syntax FILE          # parse check (+ --repair --emit-patch)
 bin/beagle check FILE           # typed checker
 bin/beagle validate [FILE...]   # parse + check + schema validation
+bin/beagle build [PATH...]      # compile to target (--out DIR)
 bin/beagle sig NAME FILE...     # typed signature
 bin/beagle fields RECORD FILE   # record fields, types, accessors
 bin/beagle callers NAME FILE... # call sites
@@ -179,29 +208,49 @@ bin/beagle expand FILE          # macro-expanded source
 bin/beagle explain-type FILE    # inferred types as a view
 ```
 
-`bin/beagle help` lists every command. The repair loop — a watch daemon,
-an on-edit syntax/type hook, and machine-applicable fixes — is where the
-type signal becomes applied edits; `bin/beagle doctor` health-checks it
-end to end. Deeper dev tools stay as `bin/beagle-*` (blame, specfix,
-trace, cascade).
+`bin/beagle help` lists every command. The repair loop — a watch daemon, an
+on-edit syntax/type hook, and machine-applicable fixes — is where the type
+signal becomes applied edits; `bin/beagle doctor` health-checks it end to end.
+Deeper dev tools stay as `bin/beagle-*` (blame, specfix, trace, cascade).
 
-The `bin/beagle-claims` / `bin/beagle-roundtrip` backends project Beagle
-source into a claim graph for Fram's
-[Chartroom](https://github.com/Autonymy/fram/tree/main/chartroom). The
-claim log is canonical there — the source text is a view onto the claims,
-not a graph derived from text after the fact.
+The `bin/beagle-claims` / `bin/beagle-roundtrip` backends project Beagle source
+into a claim graph for Fram's
+[Chartroom](https://github.com/Autonymy/fram/tree/main/chartroom). The claim log
+is canonical there — the source text is a view onto the claims, not a graph
+derived from text after the fact.
+
+</details>
+
+<details>
+<summary><b>Project layout</b></summary>
+
+- `beagle-lib/private/parse.rkt` — surface form set; the source of truth.
+- `beagle-lib/private/check.rkt` — type checker.
+- `beagle-lib/private/emit-{clj,cljs,js,nix,odin}.rkt` — live emitters;
+  `beagle-lib/private/dormant/` holds the parked ones.
+- `beagle-lib/private/nixos-schema.rkt` — the typed NixOS-option environment.
+- `beagle-lib/private/diagnostic-kind.rkt` — the `cause-class?` taxonomy.
+- `beagle-test/` — tiered test suite; `beagle-test/tiers.rktd` is the
+  authoritative tier classification.
+- `CLAUDE.md` — the operating discipline; its three-statement generative spec
+  (Clojure + types / load-bearing divergence / idiomatic per target) is the
+  canonical anchor for any surface question.
+- `docs/` — distilled, rot-resistant artifacts: `INFLUENCES.md` (lineage +
+  thesis) and the generated `CHEATSHEET.md`.
+
+</details>
 
 ## Design discipline
 
-- **Hard removal over deprecation.** No back-compat shims.
-- **Divergence from Clojure must serve types or a backend, or it dies.**
-  Inert syntactic novelty is rejected.
-- **Each target renders idiomatically** — same surface, faithful per
-  backend.
-- **Gates have stated jurisdiction.** When ambiguous, ask; don't silently
-  defer.
+The discipline is intentionally tight:
 
-See `CLAUDE.md` for the full rule set.
+- **Hard removal over deprecation.** No back-compat shims.
+- **Divergence from Clojure must serve types or a backend, or it dies.** Inert
+  syntactic novelty is rejected.
+- **Each target renders idiomatically** — same surface, faithful per backend.
+- **Gates have stated jurisdiction.** When ambiguous, ask; don't silently defer.
+
+See [`CLAUDE.md`](CLAUDE.md) for the full rule set.
 
 ## License
 
