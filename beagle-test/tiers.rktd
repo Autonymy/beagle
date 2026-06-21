@@ -56,6 +56,7 @@
   (active . (;; target-agnostic infrastructure
              "check.rkt"
              "cheatsheet.rkt"           ; capability cheatsheet — every example must parse+check
+             "claims-render-roundtrip.rkt" ; #17 — renderer reconstructs #lang from leading (define-target)
              "defmacro.rkt"
              "diagnostic-kind.rkt"
              "error-explanation.rkt"    ; in-compiler explanation registry

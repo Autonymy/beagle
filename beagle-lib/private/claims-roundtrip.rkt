@@ -536,9 +536,22 @@
       (datum->pretty (build fid) 0)
       (apply string-append (map (lambda (c) (string-append " " (cdr c))) (trail cs)))))
   (define file-cs (if wrapped? (comments-of props root) '()))   ; file header/footer comments
-  (display (string-join
-             (append (map cdr (lead file-cs)) (map block form-ids) (map cdr (trail file-cs)))
-             "\n\n"))
+  ;; #17: a leading (define-target X) form is how read-beagle-syntax canonicalizes
+  ;; `#lang beagle/X`. Render it BACK as the `#lang` header line (the absolute
+  ;; first line of the file) so the regenerated .bclj is a real #lang module — not
+  ;; a (define-target …)-leading file that `bin/beagle check`'s module loader
+  ;; rejects ("expected a `module' declaration"). Round-trips faithfully:
+  ;; read-beagle-syntax re-canonicalizes `#lang` → (define-target X), so the form
+  ;; set is unchanged through the graph.
+  (define first-built (and (pair? form-ids) (build (car form-ids))))
+  (define lang-line
+    (and (pair? first-built) (eq? (car first-built) 'define-target) (pair? (cdr first-built))
+         (format "#lang beagle/~a" (cadr first-built))))
+  (define body-ids (if lang-line (cdr form-ids) form-ids))
+  (define rendered (string-join
+                     (append (map cdr (lead file-cs)) (map block body-ids) (map cdr (trail file-cs)))
+                     "\n\n"))
+  (display (if lang-line (string-append lang-line "\n\n" rendered) rendered))
   (newline))
 
 ;; verify: reconstruct from (post-Fram) EDN, compare to the original source.
