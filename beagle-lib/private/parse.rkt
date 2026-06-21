@@ -220,6 +220,7 @@
                               #:union-members [imp-union-members #f]
                               #:parametric-unions [imp-param-unions #f]
                               #:enums [imp-enums #f]
+                              #:dynamic-vars [imp-dyn-vars #f]
                               #:refer-syms [refer-syms #f]
                               #:bare-all? [bare-all? #f]
                               #:datums [pre-datums #f])
@@ -261,6 +262,13 @@
   ;; annotations on def/defonce/defn are the only typed-binding surface.
   (define (defn-reg! name type)
     (reg! name type))
+  ;; Record an imported `^:dynamic` var so cross-module `binding` can see its
+  ;; dynamic-ness (G-A). Qualified to match the use site (prefix = alias or
+  ;; last ns segment, exactly what qualify-name uses); also bare when referred.
+  (define (note-dyn! name)
+    (when imp-dyn-vars
+      (set-add! imp-dyn-vars (qualify-name prefix name))
+      (when (referred? name) (set-add! imp-dyn-vars name))))
   (for ([d (in-list datums)])
     ;; One unparseable form must not erase the rest of the module's
     ;; types — warn and continue per form.
@@ -417,6 +425,16 @@
        (reg! name (parse-type type-expr))]
       [(list 'defonce (? symbol? name) ':- type-expr _)
        (reg! name (parse-type type-expr))]
+      ;; ^:dynamic defs — the name is wrapped in (#%meta MV name), so the plain
+      ;; (? symbol? name) arms above miss them. Import the var (typed or Any) AND
+      ;; record its dynamic-ness so a requiring module's `binding` resolves it
+      ;; across the module boundary, matching Clojure (G-A).
+      [(list 'def (list '#%meta mv (? symbol? name)) ':- type-expr _)
+       (reg! name (parse-type type-expr))
+       (when (meta-dynamic? mv) (note-dyn! name))]
+      [(list 'def (list '#%meta mv (? symbol? name)) _)
+       (reg! name (type-prim 'Any))
+       (when (meta-dynamic? mv) (note-dyn! name))]
       [(list 'defn (? symbol? name) params-form ':- return-type _ ...)
        (define-values (parsed rest-p) (parse-params params-form))
        (define ptypes (map (lambda (p) (or (param-type p) (type-prim 'Any))) parsed))
@@ -511,6 +529,7 @@
                                   #:union-members (program-imported-union-members prog)
                                   #:parametric-unions (program-imported-parametric-unions prog)
                                   #:enums (program-imported-enums prog)
+                                  #:dynamic-vars (program-imported-dynamic-vars prog)
                                   #:datums sib-datums
                                   #:bare-all? #t)))))))
 
@@ -747,6 +766,7 @@
   (define imp-union-members (make-hash))
   (define imp-param-unions (make-hash))
   (define imp-enums (make-hash))
+  (define imp-dyn-vars (mutable-seteq))  ; G-A: imported ^:dynamic vars (qualified)
 
   ;; Shared require registration: resolve sibling beagle modules for type
   ;; import, then record the require-entry. Used by the top-level
@@ -771,6 +791,7 @@
                               #:symbol-ns imp-symbol-ns
                               #:union-members imp-union-members
                               #:parametric-unions imp-param-unions
+                              #:dynamic-vars imp-dyn-vars
                               #:refer-syms refer-syms)))
     (set! requires (cons (require-entry rn alias refer-syms) requires)))
 
@@ -1095,7 +1116,7 @@
     (inject-hygiene-aliases parsed0 form-stxs0 hygiene-alias-table))
 
   (define prog
-    (program mode ns parsed registry externs (reverse requires) (reverse imports) form-stxs src-table imp-rec-fields imp-rec-field-order imp-rec-ns (hash-keys imp-scalar-fns) imp-scalar-preds imp-symbol-ns imp-union-members imp-param-unions imp-enums target gen-class?))
+    (program mode ns parsed registry externs (reverse requires) (reverse imports) form-stxs src-table imp-rec-fields imp-rec-field-order imp-rec-ns (hash-keys imp-scalar-fns) imp-scalar-preds imp-symbol-ns imp-union-members imp-param-unions imp-enums imp-dyn-vars target gen-class?))
   ;; Stash the macro-derived-table keyed by the program so check.rkt
   ;; can recover it via program-macro-derived-table after this call
   ;; returns and the parameterize unwinds.

@@ -687,6 +687,12 @@
                         *source-path* *clojure-version* *agent*))])
       (set-add! dyn-vars d)
       (unless (hash-has-key? env d) (hash-set! env d ANY))))
+  ;; G-A: `^:dynamic` vars imported from required modules — the importer keyed
+  ;; them by the use-site name (alias/last-segment-qualified, e.g. `a/*v*`), so a
+  ;; requiring module can `(binding [a/*v* ...] ...)` across the module boundary,
+  ;; matching Clojure (`(binding [other/*x* v] ...)` is standard there).
+  (for ([dv (in-set (or (program-imported-dynamic-vars prog) (seteq)))])
+    (set-add! dyn-vars dv))
   (hash-set! env '#%dynamic-vars dyn-vars)
 
   ;; bare JVM class name -> FQCN, from (import ...) — lets a bare imported
