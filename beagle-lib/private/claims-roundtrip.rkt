@@ -20,10 +20,17 @@
          racket/file
          racket/string
          racket/format
-         "parse.rkt")
+         "parse.rkt"
+         ;; #33 typed-AST (slice-3): check captures per-node types; join to the
+         ;; datum claims by (pos,span) to emit derived `[node "type" T]` claims.
+         (only-in "check.rkt" type-check-with-locs!)
+         (only-in "ast.rkt" program-type-table program-src-table
+                  src-loc? src-loc-pos src-loc-span)
+         (only-in "types.rkt" type->string))
 
 (provide datum->claims claims->datum datum->src datum->pretty edn-triples->datum read-edn-triples
-         datum->edn-lines stx->edn-lines stx->claims edn-triples->syntax)
+         datum->edn-lines stx->edn-lines stx->claims edn-triples->syntax
+         emit-edn-typed-file)
 
 ;; --- datum -> claims --------------------------------------------------------
 (define (split-improper d)            ; pair -> (values proper-prefix tail) ; tail='() if proper
@@ -618,6 +625,42 @@
   (for ([l (in-list (triples->edn-lines triples))]) (displayln l))
   (for ([l (in-list clines)]) (displayln l)))
 
+;; #33 slice-3: emit the slice-2 datum+srcloc claims PLUS the TYPED layer — each
+;; checked node's inferred type as a DERIVED `[node "type" T]` claim. The join key
+;; is (pos,span): check's type-table is keyed by AST-node, the datum claims by
+;; int node-id, and both carry a source (pos,span) — so a type attaches to the
+;; datum node sharing its span. Types are ADDITIVE + DERIVED (re-derive == re-check,
+;; zero staleness) — the build path ignores them (string-valued, not fN/child/tail),
+;; so a typed dump still builds byte-identically (consume = re-check, per fram-2 Q4).
+(define (emit-edn-typed-file path)
+  (define stxs (read-beagle-syntax path))
+  (define-values (root triples) (stx->claims (datum->syntax #f (cons 'beagle-file stxs))))
+  (define props (triples->props triples))
+  ;; (pos . span) -> datum node-id; pos-precedence on exact-span collision
+  ;; (lowest id = minted first = outermost, matching the delaborator).
+  (define key->id (make-hash))
+  (for ([(id h) (in-hash props)])
+    (define p (hash-ref h "pos" #f)) (define sp (hash-ref h "span" #f))
+    (when (and (number? p) (number? sp))
+      (hash-update! key->id (cons p sp) (lambda (cur) (min cur id)) id)))
+  ;; check with type capture, then join AST-node types onto datum nodes by (pos,span)
+  (define prog (parse-program stxs #:source-path path))
+  (type-check-with-locs! prog (lambda (e s) (void)) #:capture-types? #t)
+  (define tt (program-type-table prog))
+  (define st (program-src-table prog))
+  (define typed (make-hash))   ; datum node-id -> type string
+  (when (and tt st)
+    (for ([(node ty) (in-hash tt)])
+      (define loc (hash-ref st node #f))
+      (when (and (src-loc? loc) (src-loc-pos loc) (src-loc-span loc))
+        (define id (hash-ref key->id (cons (src-loc-pos loc) (src-loc-span loc)) #f))
+        (when id (hash-set! typed id (type->string ty))))))
+  (printf "@file ~a\n" path)
+  (for ([l (in-list (triples->edn-lines triples))]) (displayln l))
+  ;; type value is a STRING → quote it (the fN/child/tail else-branch emits raw ints)
+  (for ([id (in-list (sort (hash-keys typed) <))])
+    (displayln (format "[~a \"type\" ~a]" id (edn-string (hash-ref typed id))))))
+
 ;; render: reconstruct from EDN reader-claims and print idiomatic source. The EDN
 ;; may have come straight out of a (mutated) Fram store — this is the "project
 ;; source from the graph" half of graph-native authoring.
@@ -782,6 +825,7 @@
   (define argv (vector->list (current-command-line-arguments)))
   (cond
     [(and (pair? argv) (equal? (car argv) "--emit-edn"))    (emit-edn-file (cadr argv))]
+    [(and (pair? argv) (equal? (car argv) "--emit-edn-typed")) (emit-edn-typed-file (cadr argv))]
     [(and (pair? argv) (equal? (car argv) "--verify"))      (verify (cadr argv) (caddr argv))]
     [(and (pair? argv) (equal? (car argv) "--render"))      (render-edn (cadr argv))]
     [(and (pair? argv) (equal? (car argv) "--pretty"))      (pretty-file (cadr argv))]

@@ -16,10 +16,13 @@
 
 (require rackunit
          racket/file
+         racket/port
+         racket/string
          beagle/private/parse
          (only-in beagle/private/claims-roundtrip
                   datum->edn-lines edn-triples->datum
-                  stx->edn-lines edn-triples->syntax))
+                  stx->edn-lines edn-triples->syntax
+                  emit-edn-typed-file))
 
 ;; The forms the READER produces for a module.
 (define (reader-forms src)
@@ -94,3 +97,36 @@
                      (format "pos dropped for: ~s" (syntax->datum r)))
        (check-equal? (syntax-span c) (syntax-span r))))
    (lambda () (delete-file tmp))))
+
+;; --- slice-3: the TYPED layer — derived [node "type" T] claims, additive -------
+;; --emit-edn-typed emits the slice-2 datum+srcloc claims PLUS each checked node's
+;; inferred type, joined to the datum node by (pos,span). Types are DERIVED +
+;; ADDITIVE: the build path ignores them, so the datum still reconstructs.
+(define (typed-triples src)
+  (define tmp (make-temporary-file "edn33t-~a.bclj"))
+  (call-with-output-file tmp (lambda (o) (display src o)) #:exists 'truncate/replace)
+  (define out (with-output-to-string (lambda () (emit-edn-typed-file tmp))))
+  (delete-file tmp)
+  (for/list ([line (in-list (string-split out "\n"))]
+             #:when (and (> (string-length line) 0) (char=? (string-ref line 0) #\[)))
+    (read (open-input-string line))))
+
+(test-case "slice-3: typed dump carries [node \"type\" T] claims joined by (pos,span)"
+  (define triples (typed-triples SRC))
+  (define type-claims (filter (lambda (t) (equal? (cadr t) "type")) triples))
+  (check-true (>= (length type-claims) 1) "expected at least one inferred type claim")
+  ;; every type claim attaches to a node that ALSO has kind + pos + span (a real
+  ;; datum node, i.e. the (pos,span) join landed on a structural node)
+  (define by-id (make-hash))
+  (for ([t (in-list triples)])
+    (hash-update! by-id (car t) (lambda (h) (hash-set! h (cadr t) (caddr t)) h) (lambda () (make-hash))))
+  (for ([tc (in-list type-claims)])
+    (define h (hash-ref by-id (car tc)))
+    (check-true (and (hash-has-key? h "kind") (hash-has-key? h "pos") (hash-has-key? h "span"))
+                (format "type claim on node ~a lacks kind/pos/span" (car tc)))))
+
+(test-case "slice-3: type claims are ADDITIVE — datum still reconstructs (build ignores types)"
+  (define triples (typed-triples SRC))
+  (define wrapped (edn-triples->datum triples))   ; consumes the FULL typed dump
+  (check-equal? (cdr wrapped) (reader-forms SRC)
+                "type claims must not perturb the reconstructed datum"))
