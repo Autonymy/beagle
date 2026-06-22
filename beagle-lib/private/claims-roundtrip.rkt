@@ -602,16 +602,17 @@
   (reverse lines))
 
 ;; --- modes ------------------------------------------------------------------
-;; emit one file's whole form-list as a single wrapped datum -> one id space,
-;; then append comment claims (Turtle #6) attached to the form nodes by srcloc.
-(define (emit-edn-file path)
+;; the slice-2 lossless projection of ONE file as EDN lines: datum claims (each
+;; node carries line/col/pos/span — we walk the SYNTAX, not syntax->datum) THEN
+;; comment claims (Turtle #6) attached to form nodes by srcloc. The (beagle-file …)
+;; wrapper + its head symbol are synthetic (no srcloc); form stxs keep theirs
+;; (datum->syntax preserves inner syntax). ONE id space — emit-edn-typed's type
+;; overlay keys directly off these datum node-ids (comment ids are minted ABOVE
+;; max datum id, so type subjects never collide). Returns the bindings the typed
+;; path also needs so it doesn't re-walk: (values stxs root triples props lines).
+(define (file->datum-projection path)
   (define stxs (read-beagle-syntax path))
   (define src (file->string path))
-  ;; #33 slice-2: walk the SYNTAX (not syntax->datum) so each node carries its
-  ;; line/col/pos/span as claims. The (beagle-file …) wrapper + its head symbol
-  ;; are synthetic (no srcloc); the form stxs keep theirs (datum->syntax preserves
-  ;; inner syntax). Structure/ids are identical to datum->claims, so the comment
-  ;; machinery + root-kids below are unchanged.
   (define-values (root triples) (stx->claims (datum->syntax #f (cons 'beagle-file stxs))))
   (define props (triples->props triples))
   (define root-kids (ordered-fN props root))      ; [beagle-file-sym, form0-node, form1-node, ...]
@@ -621,21 +622,25 @@
   (define next (box (add1 (max-id triples))))
   (define (fresh!) (define v (unbox next)) (set-box! next (add1 v)) v)
   (define clines (comment-edn-lines comments form-node root fresh!))
-  (printf "@file ~a\n" path)
-  (for ([l (in-list (triples->edn-lines triples))]) (displayln l))
-  (for ([l (in-list clines)]) (displayln l)))
+  (values stxs root triples props (append (triples->edn-lines triples) clines)))
 
-;; #33 slice-3: emit the slice-2 datum+srcloc claims PLUS the TYPED layer — each
-;; checked node's inferred type as a DERIVED `[node "type" T]` claim. The join key
-;; is (pos,span): check's type-table is keyed by AST-node, the datum claims by
-;; int node-id, and both carry a source (pos,span) — so a type attaches to the
-;; datum node sharing its span. Types are ADDITIVE + DERIVED (re-derive == re-check,
-;; zero staleness) — the build path ignores them (string-valued, not fN/child/tail),
-;; so a typed dump still builds byte-identically (consume = re-check, per fram-2 Q4).
+(define (emit-edn-file path)
+  (define-values (_stxs _root _triples _props lines) (file->datum-projection path))
+  (printf "@file ~a\n" path)
+  (for ([l (in-list lines)]) (displayln l)))
+
+;; #33 slice-3: a strict SUPERSET of --emit-edn — the full slice-2 datum+comment
+;; projection PLUS the TYPED layer: each checked node's inferred type as a DERIVED
+;; `[node "type" T]` claim. Same id space, so the type subjects ARE the durable
+;; datum node-ids and fram just extracts the [id "type" T] lines for its warm
+;; overlay (no re-join fram-side). The join key is (pos,span): check's type-table
+;; is keyed by AST-node, the datum claims by int node-id, and both carry a source
+;; (pos,span) — so a type attaches to the datum node sharing its span. Types are
+;; ADDITIVE + DERIVED (re-derive == re-check, zero staleness) — the build path
+;; ignores them (string-valued, not fN/child/tail), so a typed dump still builds
+;; byte-identically (consume = re-check, per fram-2 Q4).
 (define (emit-edn-typed-file path)
-  (define stxs (read-beagle-syntax path))
-  (define-values (root triples) (stx->claims (datum->syntax #f (cons 'beagle-file stxs))))
-  (define props (triples->props triples))
+  (define-values (stxs _root _triples props lines) (file->datum-projection path))
   ;; (pos . span) -> datum node-id; pos-precedence on exact-span collision
   ;; (lowest id = minted first = outermost, matching the delaborator).
   (define key->id (make-hash))
@@ -656,7 +661,7 @@
         (define id (hash-ref key->id (cons (src-loc-pos loc) (src-loc-span loc)) #f))
         (when id (hash-set! typed id (type->string ty))))))
   (printf "@file ~a\n" path)
-  (for ([l (in-list (triples->edn-lines triples))]) (displayln l))
+  (for ([l (in-list lines)]) (displayln l))
   ;; type value is a STRING → quote it (the fN/child/tail else-branch emits raw ints)
   (for ([id (in-list (sort (hash-keys typed) <))])
     (displayln (format "[~a \"type\" ~a]" id (edn-string (hash-ref typed id))))))
