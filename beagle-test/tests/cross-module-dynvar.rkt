@@ -37,3 +37,11 @@
 ;; cross-dir case must populate imported-dynamic-vars too.
 (test-case "cross-DIRECTORY binding of an imported ^:dynamic var also type-checks"
   (check-not-exn (lambda () (check-file "sub/xconsumer.bclj"))))
+
+;; The repaired shape fram-2 actually hit: cross-DIRECTORY *and* via a macro whose
+;; syntax-quoted body binds the imported dynvar. The expander must keep the
+;; use-site alias (`p/*v*`, not `prov/*v*`) so the use-site-keyed import set
+;; resolves its dynamic-ness post-expansion. A "macro qualifies past the use-site
+;; key" regression — or a same-dir-only one — turns this red.
+(test-case "cross-DIRECTORY binding via a macro-expanded `binding` type-checks"
+  (check-not-exn (lambda () (check-file "sub/mac-xconsumer.bclj"))))
