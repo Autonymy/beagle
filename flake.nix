@@ -1,5 +1,5 @@
 {
-  description = "Beagle — typed authoring layer for dynamic languages";
+  description = "Beagle — typed authoring layer for dynamic languages (Clojure / ClojureScript / JavaScript / Nix / Odin)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -14,73 +14,176 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-        # Zig master-nightly (Tom 2026-06-12: "latest from unstable/master,
-        # I don't want a big rewrite because it's old"). Reproducible via
-        # flake.lock's zig-overlay revision; bump deliberately with
-        # `nix flake update zig-overlay`.
-        zig = zig-overlay.packages.${system}.master;
+
+        # --- THE PIN ---------------------------------------------------------
+        # Racket is pinned through this flake's locked nixpkgs. The whole point
+        # of packaging beagle is that its .zo bytecode is version-specific:
+        # compile under one racket, load under another, and racket dies with
+        # "version mismatch: expected X found Y / body of raco.rkt". Pinning
+        # racket HERE (and baking it into every wrapper below) guarantees the
+        # racket that COMPILES the bytecode is byte-for-byte the racket that
+        # LOADS it at runtime — the skew can never recur regardless of the
+        # ambient/system racket. Bump deliberately via `nix flake update`.
+        racket = pkgs.racket;
+
+        # Runtime tools the bin/* scripts shell out to. Kept minimal but
+        # complete for the core CLIs (build/validate/syntax/doctor): racket for
+        # the compiler, babashka for the .bb scripts, python3 + coreutils/grep/
+        # sed/awk/find for the bash glue (beagle-doctor parses JSON with python3).
+        runtimeDeps = [
+          racket
+          pkgs.babashka
+          pkgs.python3
+          pkgs.bash
+          pkgs.coreutils
+          pkgs.gnugrep
+          pkgs.gnused
+          pkgs.gawk
+          pkgs.findutils
+        ];
+        runtimePath = pkgs.lib.makeBinPath runtimeDeps;
 
         beagle = pkgs.stdenv.mkDerivation {
           pname = "beagle";
-          version = "0.9.1";
+          version = "0.17.1";
           src = ./.;
 
-          nativeBuildInputs = [ pkgs.makeWrapper ];
-          buildInputs = [ pkgs.racket pkgs.babashka ];
+          nativeBuildInputs = [ pkgs.makeWrapper racket ];
 
-          dontBuild = true;
+          dontConfigure = true;
 
-          installPhase = ''
-            mkdir -p $out/lib/beagle $out/bin
+          # Compile beagle-lib's .zo under the PINNED racket. raco needs a
+          # writable HOME for its compile cache + a collection search path that
+          # resolves `beagle` -> beagle-lib. We mirror the repo layout into $out
+          # first, expose the collection via a symlink, then `raco make` the
+          # entry points so .zo lands in $out/beagle-lib/**/compiled/.
+          buildPhase = ''
+            runHook preBuild
 
-            # Copy the racket package (core + target dialects)
-            cp -r beagle-lib/lang beagle-lib/private beagle-lib/main.rkt beagle-lib/info.rkt $out/lib/beagle/
-            for d in clj cljs js nix sql py; do
-              if [ -d "beagle-lib/$d" ]; then
-                cp -r "beagle-lib/$d" $out/lib/beagle/
-              fi
+            export HOME="$TMPDIR/beagle-home"
+            mkdir -p "$HOME"
+
+            # Mirror the repo into $out (scripts compute BEAGLE_ROOT=$out and
+            # reference $out/beagle-lib, $out/bin, $out/share at runtime).
+            mkdir -p "$out"
+            cp -r beagle-lib "$out/beagle-lib"
+            cp -r bin "$out/bin"
+            if [ -d share ]; then cp -r share "$out/share"; fi
+            chmod -R u+w "$out/beagle-lib" "$out/bin"
+
+            # Collection link: racket resolves a collection by directory NAME on
+            # the search path. The collection is named "beagle" but the dir is
+            # "beagle-lib"; a `beagle` symlink on PLTCOLLECTS bridges that.
+            mkdir -p "$out/share/racket-collects"
+            ln -sfn "$out/beagle-lib" "$out/share/racket-collects/beagle"
+            export PLTCOLLECTS=":$out/share/racket-collects"
+
+            raco="${racket}/bin/raco"
+
+            # Core roots — these MUST compile (the build fails loudly if not).
+            core_roots=(
+              "$out/beagle-lib/main.rkt"
+              "$out/beagle-lib/lang/reader.rkt"
+            )
+            for d in clj cljs js nix odin sql py; do
+              [ -f "$out/beagle-lib/$d/main.rkt" ] && core_roots+=("$out/beagle-lib/$d/main.rkt")
+              [ -f "$out/beagle-lib/$d/lang/reader.rkt" ] && core_roots+=("$out/beagle-lib/$d/lang/reader.rkt")
             done
+            echo "beagle: compiling core roots under racket $(${racket}/bin/racket --version)"
+            "$raco" make "''${core_roots[@]}"
 
-            # Copy runtime helpers
-            if [ -d beagle-lib/lib ]; then
-              cp -r beagle-lib/lib $out/lib/beagle/
+            # Directly-exec'd helper modules + bin/*.rkt scripts: compile if
+            # present, but tolerate per-file failures (peripheral/dev tooling
+            # must not break the core package). They still run under the pinned
+            # racket at runtime regardless.
+            extra=()
+            for f in \
+              private/syntax.rkt private/parse.rkt private/check.rkt \
+              private/emit.rkt private/rewrite-cli.rkt private/error-explanation.rkt \
+              private/type-view.rkt private/cheatsheet.rkt private/tier-runner.rkt \
+              private/daemon.rkt private/claims-roundtrip.rkt; do
+              [ -f "$out/beagle-lib/$f" ] && extra+=("$out/beagle-lib/$f")
+            done
+            for f in "$out"/bin/beagle*.rkt; do [ -f "$f" ] && extra+=("$f"); done
+            # racket-shebang bin scripts have no .rkt extension; pick them up too.
+            for f in "$out"/bin/beagle*; do
+              [ -f "$f" ] && head -1 "$f" | grep -q 'env racket' && extra+=("$f")
+            done
+            if [ ''${#extra[@]} -gt 0 ]; then
+              "$raco" make "''${extra[@]}" || \
+                echo "beagle: note — some peripheral modules did not precompile (will compile at first use under the pinned racket)"
             fi
 
-            # Install bin scripts, wrapping with PATH
-            for f in bin/beagle*; do
-              name=$(basename "$f")
-              cp "$f" "$out/bin/$name"
-              chmod +x "$out/bin/$name"
-              wrapProgram "$out/bin/$name" \
-                --prefix PATH : "${pkgs.lib.makeBinPath [ pkgs.racket pkgs.babashka ]}"
-            done
-
-            # Patch BEAGLE_DIR references to point to $out/lib/beagle
-            for f in $out/bin/beagle*; do
-              substituteInPlace "$f" \
-                --replace-quiet 'BEAGLE_DIR="$(cd "$(dirname "$0")/.." && pwd)"' \
-                                "BEAGLE_DIR=\"$out/lib/beagle\"" || true
-            done
+            runHook postBuild
           '';
 
+          # Skip the default install (we already populated $out in buildPhase);
+          # just wrap the executables so the pinned racket + collection path are
+          # baked in.
+          installPhase = ''
+            runHook preInstall
+
+            for f in "$out"/bin/beagle*; do
+              # Skip the sourced helper (it is `source`d, never exec'd — wrapping
+              # it would replace the file a wrapper sources) and non-executables.
+              base="$(basename "$f")"
+              [ "$base" = "_beagle-racket" ] && continue
+              [ -f "$f" ] || continue
+              [ -x "$f" ] || continue
+              case "$base" in *.wrapped) continue ;; esac
+
+              wrapProgram "$f" \
+                --set _BEAGLE_RACKET "${racket}/bin/racket" \
+                --set PLTCOLLECTS ":$out/share/racket-collects" \
+                --prefix PATH : "${runtimePath}"
+            done
+
+            runHook postInstall
+          '';
+
+          # The wrapped scripts use absolute store paths for racket; the bin
+          # scripts' `#!/usr/bin/env racket`/`bash` shebangs are satisfied by the
+          # PATH the wrapper prepends. patchShebangs still runs on the bash
+          # entrypoints for good measure.
           meta = {
-            description = "Typed authoring layer that compiles to Clojure";
+            description = "Agent-native typed authoring layer that compiles to Clojure / ClojureScript / JavaScript / Nix / Odin";
+            homepage = "https://github.com/Autonymy/beagle";
             license = pkgs.lib.licenses.mit;
             platforms = pkgs.lib.platforms.unix;
+            mainProgram = "beagle";
           };
+        };
+
+        # App helper: every key entrypoint resolves to the wrapped binary in
+        # the package's /bin.
+        mkApp = name: {
+          type = "app";
+          program = "${beagle}/bin/${name}";
         };
       in
       {
         packages.default = beagle;
+        packages.beagle = beagle;
+
+        apps = {
+          default = mkApp "beagle";
+          beagle = mkApp "beagle";
+          beagle-doctor = mkApp "beagle-doctor";
+          beagle-build = mkApp "beagle-build";
+          beagle-validate = mkApp "beagle-validate";
+          beagle-syntax = mkApp "beagle-syntax";
+          beagle-check = mkApp "beagle-check";
+          beagle-schema = mkApp "beagle-schema";
+        };
 
         devShells.default = pkgs.mkShell {
           buildInputs = [
-            pkgs.racket
+            racket
             pkgs.babashka
             pkgs.clojure
             pkgs.bun
             # Zig backend + tick kernel (thread 20260612232001)
-            zig
+            zig-overlay.packages.${system}.master
             # sokol_app X11/GLX link deps (kernel render harness)
             pkgs.libx11
             pkgs.libxi
