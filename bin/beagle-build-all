@@ -4,9 +4,11 @@
 # Usage:
 #   bin/beagle-build-all <file-or-dir> ... [--out <dir>] [--warn]
 #
-# Directories are expanded to their .rkt contents. Without --out, output
-# paths derive from each file's (ns ...) declaration. With --out, .clj
-# files land in the given directory with the same basename.
+# Directories are expanded to their .rkt contents. Output goes to a directory:
+# --out names it; --in-place writes beside each source. With neither, output
+# defaults to .beagle-out/ (gitignored) instead of the cwd — so a stray
+# invocation can't dump ns-shaped dirs into a tracked tree. Override the
+# default root with BEAGLE_OUT.
 #
 # --warn: emit Clojure despite type errors (diagnostics printed as warnings).
 #         Parse errors and unresolvable bindings still fail.
@@ -15,8 +17,22 @@ set -euo pipefail
 source "$(dirname "$0")/_beagle-racket"
 
 if [[ $# -lt 1 ]]; then
-    echo "usage: beagle-build-all <file-or-dir> ... [--out <dir>]" >&2
+    echo "usage: beagle-build-all <file-or-dir> ... [--out <dir>] [--in-place]" >&2
     exit 2
 fi
 
-"$RACKET" -e "(require beagle/private/build-all) (run-build-all (vector->list (current-command-line-arguments)))" -- "$@"
+beagle_root="$(cd "$(dirname "$0")/.." && pwd)"
+
+# Default to a gitignored output dir unless the caller picked one explicitly
+# (--out) or asked for in-place emit. Prevents cwd pollution (the footgun that
+# dumped luhn/, semver/, … at the repo root).
+args=("$@")
+explicit_dest=0
+for a in "$@"; do
+    [[ "$a" == "--out" || "$a" == "--in-place" ]] && explicit_dest=1
+done
+if [[ $explicit_dest -eq 0 ]]; then
+    args+=(--out "${BEAGLE_OUT:-$beagle_root/.beagle-out}")
+fi
+
+"$RACKET" -e "(require beagle/private/build-all) (run-build-all (vector->list (current-command-line-arguments)))" -- "${args[@]}"

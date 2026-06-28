@@ -28,9 +28,8 @@ __pycache__/
 *.pyc
 .odin-root/
 
-# Scratch + dogfood/emit output (regenerated; never source)
+# Scratch + default emit output (regenerated; never source).
+# beagle-build / beagle-build-all default here when no output is named, so
+# throwaway emit can't pollute the tracked tree (override root with BEAGLE_OUT).
 .scratch/
-beagle/user.clj
-runtime/src/callgraph.clj
-runtime/src/rename.clj
-runtime/src/roundtrip/
+.beagle-out/

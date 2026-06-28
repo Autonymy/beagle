@@ -5,7 +5,9 @@
 #   bin/beagle-build <source.bclj|.bjs|.bnix|.bcljs|.bsql|.bodin> [output]
 #
 # If the output path is omitted, it is derived from the namespace declared
-# in the source via (ns ...) and dropped under runtime/src/.
+# in the source via (ns ...) and dropped under .beagle-out/ (gitignored, so
+# throwaway emit never pollutes the tracked tree). Override the output root
+# with BEAGLE_OUT (e.g. BEAGLE_OUT=runtime/src to build into the runtime project).
 # Extension is determined by target: .clj (default), .cljs, .js, .py, .nix.
 
 set -euo pipefail
@@ -66,7 +68,7 @@ else
           tr -d '[:space:]')"
     [[ -z "$ns" ]] && ns="beagle.user"
     rel_path="$(echo "$ns" | tr '.-' '//_')"
-    out="$beagle_root/runtime/src/$rel_path.$ext"
+    out="${BEAGLE_OUT:-$beagle_root/.beagle-out}/$rel_path.$ext"
 fi
 
 mkdir -p "$(dirname "$out")"
