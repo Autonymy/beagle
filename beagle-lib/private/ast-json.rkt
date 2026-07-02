@@ -310,6 +310,21 @@
                        (letfn-form-fns e))
              'body (map expr->json (letfn-form-body e)))]
 
+    [(binding-form? e)
+     (hasheq 'node "binding"
+             'bindings (map binding->json (binding-form-bindings e))
+             'body (map expr->json (binding-form-body e)))]
+
+    [(with-open-form? e)
+     (hasheq 'node "with-open"
+             'bindings (map binding->json (with-open-form-bindings e))
+             'body (map expr->json (with-open-form-body e)))]
+
+    [(doto-form? e)
+     (hasheq 'node "doto"
+             'target (expr->json (doto-form-target e))
+             'forms (map expr->json (doto-form-forms e)))]
+
     [(when-let-form? e)
      (hasheq 'node "when-let"
              'name (symbol->string (when-let-form-name e))
@@ -514,6 +529,7 @@
   (hasheq 'target (symbol->string (program-target prog))
           'namespace (symbol->string (program-namespace prog))
           'mode (symbol->string (program-mode prog))
+          'gen-class (program-gen-class? prog)
           'requires (map (lambda (r)
                            (hasheq 'ns (symbol->string (require-entry-ns r))
                                    'alias (and (require-entry-alias r)
