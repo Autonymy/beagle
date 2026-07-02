@@ -56,13 +56,15 @@
 
 ;; --- nix-instantiate --parse syntactic check ----------------------------
 
-;; Fixtures with intentionally-undefined references (showcase syntax, not
-;; standalone evaluatable modules). nix-instantiate --parse does scope-check,
-;; so they fail that probe even though they're valid in their intended
-;; ambient scope (a real NixOS module with `pkgs` etc. in scope).
+;; Fixtures whose emitted output references a name bound only via `nix/with`
+;; dynamic scope. nix-instantiate --parse scope-checks, but `with EXPR;` defers
+;; name resolution to eval, so these are still valid modules — the free name is
+;; supplied by the with-attrset at instantiation. (Free dotted roots NOT under a
+;; `nix/with` are no longer showcased here: the checker rejects them (E021
+;; free-dotted-name) per @019f221f-8f10, and nix-interp-ms now let-binds its
+;; `vendor`, so it parses standalone and is no longer skipped.)
 (define EVAL-SKIP
-  '("nix-interp-ms.bnix"      ; uses `vendor.id`, undefined in isolation
-    "nix-kmod.bnix"           ; uses `framework-laptop-kmod`, defined elsewhere
+  '("nix-kmod.bnix"           ; `with config.boot.kernelPackages; [ framework-laptop-kmod ]`
     "nix-options.bnix"        ; uses `pkgs.runtimeShell`, expects ambient pkgs
     ))
 

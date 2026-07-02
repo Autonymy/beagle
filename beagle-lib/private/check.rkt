@@ -295,6 +295,7 @@
     [(unresolved-alias)    "E018"]
     [(purity-leak)         "E019"]
     [(swallowed-binding)   "E020"]
+    [(free-dotted-name)    "E021"]
     [else                 "E000"]))
 
 ;; Expected/actual detail pair carrying BOTH the human strings (kept verbatim,
@@ -459,6 +460,7 @@
     (check-qualified-resolution! prog env)
     (check-zig-world-escape! prog)
     (check-scalar-provenance! prog)
+    (check-nix-free-dotted! prog)
     (check-purity! prog)))
 
 ;; --- environment -----------------------------------------------------------
@@ -2762,6 +2764,12 @@
     ;; beagle-explain-type). When off, type-tbl is #f so store-type! no-ops.
     (define type-tbl (and capture-types? (make-hasheq)))
     (when type-tbl (register-program-type-table! prog type-tbl))
+    ;; Free dotted-name scope check (nix target) needs the program-wide set of
+    ;; bound symbols (a root bound in any form counts), computed once here and
+    ;; applied per-form below so each rejection reports with that form's stx.
+    (define nix-free-bound
+      (and (eq? (program-target prog) 'nix)
+           (nix-bound-symbols (program-forms prog))))
     (parameterize ([current-check-src-table (program-src-table prog)]
                    [current-body-locs-table body-locs-tbl]
                    [current-type-table type-tbl]
@@ -2775,7 +2783,9 @@
         (with-handlers ([exn:fail? (lambda (e) (error-handler e orig-stx))])
           (parameterize ([current-macro-expansion-ctx
                           (if (eq? macro-ctx #f) #f macro-ctx)])
-            (check-form form env))))
+            (check-form form env)
+            (when nix-free-bound
+              (check-nix-free-dotted-form! form nix-free-bound (program-src-table prog))))))
       ;; Qualified-call resolution runs program-wide (it aggregates all
       ;; violations into one diagnostic), so it reports through the same
       ;; handler with no specific form stx.
@@ -2990,6 +3000,117 @@
       (define src-table (program-src-table prog))
       (for ([form (in-list (program-forms prog))])
         (walk-for-provenance form src-table)))))
+
+;; --- free dotted-name rejection (nix target) -------------------------------
+;; A dotted name `root.a.b` on the nix target descends into an attrset, so its
+;; ROOT must resolve to a binding in scope: a nix/module formal, a let-binding,
+;; a defn/fn param, a top-level def, a nix/with-cfg alias (`cfg`), the nix
+;; global `builtins`, or a `/`-qualified stdlib name (`lib/…`). A dotted root
+;; bound nowhere — e.g. `vendor.id` — is not a "deliberate ambient accommodation":
+;; every real NixOS module gets its ambient roots (`config`/`pkgs`/`lib`) from
+;; declared formals, `let`, or `nix/with`. A free root silently emits
+;; `${vendor.id}`, which `nix-instantiate --parse` rejects as an undefined
+;; variable — the same silent-miscompile class as set!-on-get. Per the spec
+;; (types > idiom), it becomes a checker rejection that mirrors nix's own
+;; --parse scope check.
+;;
+;; EXEMPT: names lexically inside a `nix/with` body — their scope is dynamic
+;; (`with EXPR; …` injects EXPR's attrs), so neither beagle nor nix can resolve
+;; them statically; nix --parse accepts them too. BARE (non-dotted) free names
+;; are also NOT flagged: their legitimate sources (nix default-scope builtins,
+;; with-provided names, stdlib fns) can't be enumerated without false positives,
+;; and nix's own --parse (the conformance gate's validity dimension) backstops
+;; them. This rejection is decidable precisely where nix's is: a dotted root is
+;; an attrset that must be a declared binding.
+
+(define NIX-KNOWN-GLOBAL-ROOTS (seteq 'builtins))
+
+;; The ROOT of a dotted symbol `a.b.c` → 'a; #f if there is no dot, if the
+;; symbol is a keyword (`:services.foo` map key), or if the root is empty.
+(define (nix-dotted-root sym)
+  (define s (symbol->string sym))
+  (define n (string-length s))
+  (cond
+    [(and (> n 0) (char=? (string-ref s 0) #\:)) #f]   ; keyword, not a var ref
+    [else
+     (let loop ([i 0])
+       (cond
+         [(>= i n) #f]                                  ; no dot → not dotted
+         [(char=? (string-ref s i) #\.)
+          (and (> i 0) (string->symbol (substring s 0 i)))]
+         [else (loop (add1 i))]))]))
+
+;; Qualified names (`lib/foo`, or the canonicalizable `lib.`/`pkgs.`/`builtins.`
+;; doc-syntax) are namespace-resolved, not lexical vars — same skip the
+;; undefined-function note uses. canonicalize-qualified-sym turns `lib.foo` →
+;; `lib/foo`, so a `/` after canonicalization catches both spellings.
+(define (nix-qualified-name? sym)
+  (string-contains? (symbol->string (canonicalize-qualified-sym sym)) "/"))
+
+;; Collect every BARE symbol appearing anywhere in `form`. A binder's name
+;; (formal, let-name, param, top-level def) is a bare symbol at its binding
+;; site, so it lands here; a dotted reference `vendor.id` lands as the single
+;; symbol `vendor.id`, NOT as `vendor`, so a root bound nowhere never appears
+;; bare and is absent from the set. Over-collection is safe here (it only
+;; suppresses a rejection), so the traversal is deliberately generic (every
+;; transparent-struct field) rather than an enumerated binder list — a missed
+;; binder form yields a false negative, never a false positive.
+(define (nix-bound-symbols form)
+  (define acc (mutable-seteq))
+  (let walk ([x form])
+    (cond
+      [(symbol? x) (set-add! acc x)]
+      [(quoted? x) (void)]                              ; code-as-data, not refs
+      [(pair? x) (walk (car x)) (walk (cdr x))]
+      [(vector? x) (for ([e (in-vector x)]) (walk e))]
+      [(nix-with-cfg? x) (set-add! acc 'cfg) (walk (struct->vector x))]
+      [(struct? x) (walk (struct->vector x))]
+      [(hash? x) (for ([(k v) (in-hash x)]) (walk k) (walk v))]
+      [else (void)]))
+  acc)
+
+;; Walk ONE top-level form, raising on the first free dotted root. `bound` is
+;; the program-wide bound-symbol set (so a root bound in any form counts).
+;; A bare symbol node is not reliably keyed in src-table (symbols intern, so the
+;; parser keys expression STRUCTS); thread the nearest enclosing keyed node's
+;; srcloc as `cur-src` so the diagnostic points at the author's line.
+(define (check-nix-free-dotted-form! form bound src-table)
+  (let walk ([x form] [under-with? #f] [cur-src #f])
+    (define here (or (and src-table (struct? x) (hash-ref src-table x #f)) cur-src))
+    (cond
+      [(symbol? x)
+       (define root (nix-dotted-root x))
+       (when (and root
+                  (not under-with?)
+                  (not (nix-qualified-name? x))
+                  (not (set-member? bound root))
+                  (not (set-member? NIX-KNOWN-GLOBAL-ROOTS root)))
+         (raise-diag 'free-dotted-name
+           (format "unbound name `~a` on the nix target: it descends into `~a`, but `~a` is not a nix/module formal, a let-binding, or any other binding in scope. It emits `${~a}`, which nix rejects as an undefined variable. Declare `~a` as a `nix/module` formal, bind it with `let`, or fix the name. (Names inside `nix/with` are exempt — their scope is dynamic.)"
+                   x root root x root)
+           (hasheq 'name (symbol->string x)
+                   'root (symbol->string root))
+           #:src (or (and src-table (hash-ref src-table x #f)) cur-src)))]
+      [(quoted? x) (void)]
+      [(pair? x) (walk (car x) under-with? here) (walk (cdr x) under-with? here)]
+      [(vector? x) (for ([e (in-vector x)]) (walk e under-with? here))]
+      [(nix-with? x)
+       (walk (nix-with-ns-expr x) under-with? here)
+       (walk (nix-with-body x) #t here)]
+      [(struct? x) (walk (struct->vector x) under-with? here)]
+      [(hash? x) (for ([(k v) (in-hash x)]) (walk k under-with? here) (walk v under-with? here))]
+      [else (void)])))
+
+;; Program-wide entry (type-check! path — lets the diagnostic propagate).
+(define (check-nix-free-dotted! prog)
+  (when (and (eq? (program-target prog) 'nix)
+             (eq? (program-mode prog) 'strict)
+             (>= (current-check-profile) 1))
+    (define src-table (program-src-table prog))
+    (define forms (program-forms prog))
+    (define bound (nix-bound-symbols forms))
+    (for ([form (in-list forms)])
+      (check-nix-free-dotted-form! form bound src-table))))
 
 (define current-local-bindings (make-parameter (set)))
 

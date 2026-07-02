@@ -2,9 +2,10 @@
 (ns test.nix.interp-ms)
 
 (nix/module [pkgs]
-  {:script (pkgs/writeScriptBin "hello"
-             (ms (s "#!" pkgs.bash "/bin/bash")
-                 "echo hello world"))
-   :config {:services.udev.extraRules
-              (ms "ACTION==\"add\", SUBSYSTEM==\"usb\""
-                  (s "ATTR{idVendor}==\"" vendor.id "\""))}})
+  (let [vendor {:id "1d6b"}]
+    {:script (pkgs/writeScriptBin "hello"
+               (ms (s "#!" pkgs.bash "/bin/bash")
+                   "echo hello world"))
+     :config {:services.udev.extraRules
+                (ms "ACTION==\"add\", SUBSYSTEM==\"usb\""
+                    (s "ATTR{idVendor}==\"" vendor.id "\""))}}))

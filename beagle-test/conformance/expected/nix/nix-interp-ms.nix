@@ -1,5 +1,10 @@
 { pkgs, ... }:
 
+let
+  vendor = {
+    id = "1d6b";
+  };
+in
 {
   script = pkgs.writeScriptBin "hello" ''
     #!${pkgs.bash}/bin/bash

@@ -46,6 +46,9 @@
  ("nix-builtins"       "beagle-test/tests/fixtures/nix-builtins.bnix"      emit)
  ("nix-derivation"     "beagle-test/tests/fixtures/nix-derivation.bnix"    emit)
  ("nix-flake"          "beagle-test/tests/fixtures/nix-flake.bnix"         emit)
+ ;; A dotted name whose root is bound nowhere (not a formal/let/nix-with) is a
+ ;; free variable — reject row, golden is the E021 diagnostic (@019f221f-8f10).
+ ("nix-free-dotted"    "beagle-test/conformance/corpus/nix-free-dotted.bnix" reject)
  ("nix-interp-ms"      "beagle-test/tests/fixtures/nix-interp-ms.bnix"     emit)
  ("nix-kmod"           "beagle-test/tests/fixtures/nix-kmod.bnix"          emit)
  ("nix-let-cond"       "beagle-test/tests/fixtures/nix-let-cond.bnix"      emit)

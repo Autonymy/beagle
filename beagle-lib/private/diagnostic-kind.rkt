@@ -82,6 +82,18 @@
 ;;                        from generic type-error so the histogram can
 ;;                        track "macro hygiene/typing bugs" separately
 ;;                        from author-written type errors.
+;;   free-dotted-name   : (nix target) a dotted name `root.a.b` whose ROOT is
+;;                        bound nowhere in scope — not a nix/module formal,
+;;                        let-binding, param, top-level def, nix/with-cfg alias,
+;;                        the nix global `builtins`, or a `/`-qualified name —
+;;                        and which is not lexically inside a `nix/with` (whose
+;;                        scope is dynamic). It descends into an attrset that
+;;                        does not exist, emitting `${root.a.b}`, which
+;;                        nix-instantiate --parse rejects as an undefined
+;;                        variable (a silent miscompile). Type-error: the form
+;;                        parses; the rejection is scope resolution, mirroring
+;;                        nix's own --parse scope check. Analogous to
+;;                        unresolved-alias.
 ;;   purity-leak        : a defn/defn- whose name lacks a `!` suffix has a
 ;;                        body that lexically uses a mutation marker (set! or
 ;;                        a `!`-headed call). The `!`-suffix convention is the
@@ -105,7 +117,8 @@
    'nixos-type-mismatch 'type-error
    'nixos-unknown-option 'type-error
    'macro-expansion-type-error 'type-error
-   'purity-leak          'type-error))
+   'purity-leak          'type-error
+   'free-dotted-name     'type-error))
 
 ;; parse.rkt kinds — emitted by raise-parse-error helper that we add
 ;; in this phase to the high-traffic subset (removed-forms,
