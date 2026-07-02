@@ -12,7 +12,7 @@
 set -uo pipefail
 WT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$WT"
-OUT=self-host/out
+OUT=self-host/seed
 LAB=.lab
 mkdir -p "$LAB"
 
